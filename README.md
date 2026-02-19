@@ -113,4 +113,4 @@ AutoTradingApp/
 This project is licensed for personal and educational use.
 
 ---
-*Built with ❤️ by [Your Name]*
+*Built with ❤️ by Akhilesh Allewar*
