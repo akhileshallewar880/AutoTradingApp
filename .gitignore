@@ -1,0 +1,48 @@
+# General
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+build/
+dist/
+*.egg-info/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/app.flx
+ios/Flutter/app.zip
+ios/Flutter/flutter_assets/
+ios/Podfile.lock
+android/local.properties
+android/.gradle
+android/key.properties
+
+# Logs and Data
+logs/
+*.log
+data/trades.json
+data/analyses.json
+
+# Sensitive Files (CRITICAL)
+.env
+secret.key
+google-services.json
+firebase_options.dart
+key.jks
+keystore.jks
