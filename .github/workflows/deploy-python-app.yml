@@ -44,4 +44,4 @@ jobs:
           az webapp config set \
             --name ${{ secrets.AZURE_WEBAPP_NAME_PRODUCTION }} \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --startup-file "/antenv/bin/gunicorn --bind=0.0.0.0:8000 --worker-class uvicorn.workers.UvicornWorker app.main:app"
+            --startup-file "gunicorn --bind=0.0.0.0:8000 --timeout 600 --worker-class uvicorn.workers.UvicornWorker app.main:app"
