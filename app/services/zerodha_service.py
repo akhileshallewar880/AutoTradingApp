@@ -9,10 +9,11 @@ settings = get_settings()
 
 class ZerodhaService:
     def __init__(self):
-        self.api_key = settings.ZERODHA_API_KEY
-        self.api_secret = settings.ZERODHA_API_SECRET
+        self.api_key = settings.ZERODHA_API_KEY.strip()
+        self.api_secret = settings.ZERODHA_API_SECRET.strip()
         self.access_token = settings.ZERODHA_ACCESS_TOKEN
         self.kite = KiteConnect(api_key=self.api_key)
+        logger.info(f"ZerodhaService initialized with api_key length={len(self.api_key)}, api_secret length={len(self.api_secret)}")
 
         if self.access_token:
             self.kite.set_access_token(self.access_token)
@@ -31,7 +32,7 @@ class ZerodhaService:
         Returns session data including access_token, user details, etc.
         """
         try:
-            logger.info(f"Generating session with request_token")
+            logger.info(f"Generating session: token_length={len(request_token)}, api_key={self.api_key}, secret_length={len(self.api_secret)}")
             loop = asyncio.get_event_loop()
             
             # Generate session (this validates request_token and returns access_token)
