@@ -34,22 +34,24 @@ class ZerodhaService:
         try:
             logger.info(f"Generating session: token_length={len(request_token)}, api_key={self.api_key}, secret_length={len(self.api_secret)}")
             loop = asyncio.get_event_loop()
-            
-            # Generate session (this validates request_token and returns access_token)
-            # Use functools.partial to pass api_secret as a keyword argument
             from functools import partial
             data = await loop.run_in_executor(
                 None,
                 partial(self.kite.generate_session, request_token, api_secret=self.api_secret)
             )
-            
-            # Set access token for future requests
             self.kite.set_access_token(data["access_token"])
             logger.info(f"Session generated successfully for user: {data['user_id']}")
-            
             return data
         except Exception as e:
+            import traceback
             logger.error(f"Error generating session: {e}")
+            logger.error(traceback.format_exc())
+            # If the exception has a response attribute (like requests.exceptions.HTTPError), log it
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    logger.error(f"Zerodha API response: {e.response.text}")
+                except Exception:
+                    pass
             raise
 
     async def get_profile(self) -> Dict:
