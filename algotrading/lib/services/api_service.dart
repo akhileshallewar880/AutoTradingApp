@@ -73,6 +73,7 @@ class ApiService {
     required String accessToken,
     List<String> sectors = const ['ALL'],
     int holdDurationDays = 0,
+    double capitalToUse = 0,
   }) async {
     final response = await http.post(
       Uri.parse(ApiConfig.generateAnalysisUrl),
@@ -87,6 +88,7 @@ class ApiService {
         'access_token': accessToken,
         'sectors': sectors,
         'hold_duration_days': holdDurationDays,
+        if (capitalToUse > 0) 'capital_to_use': capitalToUse,
       }),
     ).timeout(ApiConfig.timeout);
 

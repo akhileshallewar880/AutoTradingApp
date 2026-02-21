@@ -3,6 +3,9 @@ import '../models/user_model.dart';
 import '../services/api_service.dart';
 import '../services/session_manager.dart';
 
+/// Sentinel token used for demo / guest mode. Never sent to any real API.
+const String kDemoAccessToken = 'demo';
+
 class AuthProvider with ChangeNotifier {
   UserModel? _user;
   bool _isLoading = false;
@@ -12,6 +15,9 @@ class AuthProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isAuthenticated => _user != null;
+
+  /// True when the user is exploring the app with dummy data (no Zerodha login).
+  bool get isDemoMode => _user?.accessToken == kDemoAccessToken;
 
   Future<void> checkSession() async {
     _isLoading = true;
@@ -45,7 +51,7 @@ class AuthProvider with ChangeNotifier {
       _error = e.toString();
       _isLoading = false;
       notifyListeners();
-      throw e;
+      rethrow;
     }
   }
 
@@ -61,20 +67,50 @@ class AuthProvider with ChangeNotifier {
       _error = null;
     } catch (e) {
       _error = e.toString();
-      throw e;
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
+  /// Signs in with pre-built dummy data — no Zerodha account required.
+  Future<void> loginWithDemoData() async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    // Brief delay so the loading indicator is visible
+    await Future.delayed(const Duration(milliseconds: 600));
+
+    _user = UserModel(
+      accessToken: kDemoAccessToken,
+      userId: 'demo_user_001',
+      userName: 'Demo User',
+      email: 'demo@vantrade.app',
+      userType: 'individual',
+      broker: 'Demo',
+      exchanges: ['NSE', 'BSE'],
+      products: ['MIS', 'CNC'],
+    );
+
+    // Persist so the demo session survives app restarts
+    await SessionManager.saveSession(_user!);
+
+    _isLoading = false;
+    notifyListeners();
+  }
+
   Future<void> logout() async {
-    try {
-      if (_user != null) {
-        await ApiService.logout(_user!.accessToken);
+    // Skip API call for demo mode — there is no real session to invalidate
+    if (!isDemoMode) {
+      try {
+        if (_user != null) {
+          await ApiService.logout(_user!.accessToken);
+        }
+      } catch (_) {
+        // Ignore logout errors
       }
-    } catch (e) {
-      // Ignore logout errors
     }
 
     await SessionManager.clearSession();

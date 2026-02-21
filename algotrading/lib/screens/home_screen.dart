@@ -4,11 +4,10 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/dashboard_provider.dart';
-import '../providers/analysis_provider.dart';
 import '../models/dashboard_model.dart';
 import 'analysis_input_screen.dart';
-import 'analysis_results_screen.dart';
 import 'gtt_analysis_screen.dart';
+import 'gtt_portfolio_analysis_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -92,7 +91,50 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       // ── Fixed bottom bar ───────────────────────────────────────────────
       bottomNavigationBar: _buildFixedBottomBar(context),
-      body: RefreshIndicator(
+      body: Column(
+        children: [
+          // ── Demo-mode banner ─────────────────────────────────────────
+          if (auth.isDemoMode)
+            Material(
+              color: const Color(0xFFFFF8E1), // amber[50]
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(Icons.science_outlined,
+                        color: Colors.orange[800], size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Demo Mode — Sample data only. '
+                        'Login with Zerodha to trade live.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange[900],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => _handleLogout(context),
+                      child: Text(
+                        'Login',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.green[700],
+                          fontWeight: FontWeight.bold,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          Expanded(
+            child: RefreshIndicator(
         onRefresh: _refresh,
         color: Colors.green[700],
         child: SingleChildScrollView(
@@ -134,6 +176,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+          ),   // Expanded
+        ],     // outer Column children
+      ),       // outer Column
     );
   }
 
@@ -765,8 +810,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Fixed bottom bar ──────────────────────────────────────────────────
   Widget _buildFixedBottomBar(BuildContext context) {
-    final analysis = context.watch<AnalysisProvider>();
-    final hasAnalysis = analysis.currentAnalysis != null;
+    final dash = context.watch<DashboardProvider>();
+    final gtts = dash.dashboard?.gtts ?? [];
+    final hasGtts = gtts.isNotEmpty;
 
     return SafeArea(
       child: Container(
@@ -775,7 +821,7 @@ class _HomeScreenState extends State<HomeScreen> {
           color: Colors.white,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withValues(alpha: 0.08),
               blurRadius: 12,
               offset: const Offset(0, -3),
             ),
@@ -819,17 +865,19 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(width: 10),
-            // View Current Analysis button
+            // View GTT Analysis button
             Expanded(
               child: Material(
-                color: hasAnalysis ? Colors.blue[700] : Colors.grey[300],
+                color: hasGtts ? Colors.deepPurple[700] : Colors.grey[300],
                 borderRadius: BorderRadius.circular(12),
                 child: InkWell(
-                  onTap: hasAnalysis
+                  onTap: hasGtts
                       ? () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => const AnalysisResultsScreen(),
+                              builder: (_) => GttPortfolioAnalysisScreen(
+                                gtts: gtts,
+                              ),
                             ),
                           )
                       : null,
@@ -840,7 +888,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(Icons.analytics_outlined,
-                            color: hasAnalysis
+                            color: hasGtts
                                 ? Colors.white
                                 : Colors.grey[500],
                             size: 18),
@@ -848,7 +896,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         Text(
                           'View Analysis',
                           style: TextStyle(
-                            color: hasAnalysis
+                            color: hasGtts
                                 ? Colors.white
                                 : Colors.grey[500],
                             fontSize: 13,
@@ -964,7 +1012,7 @@ class _ShimmerBox extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.3),
+        color: Colors.white.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(6),
       ),
     );

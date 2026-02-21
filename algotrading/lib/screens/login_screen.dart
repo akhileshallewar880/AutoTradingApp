@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/vantrade_logo.dart';
 import 'login_webview_screen.dart';
 
 class LoginScreen extends StatelessWidget {
@@ -16,11 +17,7 @@ class LoginScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Image.asset(
-                'assets/vantrade_logo.png',
-                width: 120,
-                height: 120,
-              ),
+              const VanTradeLogoWidget(size: 100),
               const SizedBox(height: 24),
               const Text(
                 'VanTrade',
@@ -64,26 +61,69 @@ class LoginScreen extends StatelessWidget {
                     return const CircularProgressIndicator();
                   }
 
-                  return ElevatedButton(
-                    onPressed: () => _handleLogin(context, authProvider),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green[700],
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets .symmetric(
-                        horizontal: 48,
-                        vertical: 16,
+                  return Column(
+                    children: [
+                      // ── Primary: Zerodha login ──────────────────────
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () => _handleLogin(context, authProvider),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green[700],
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Login with Zerodha',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+
+                      const SizedBox(height: 12),
+
+                      // ── Secondary: Demo mode ────────────────────────
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () =>
+                              _handleDemoLogin(context, authProvider),
+                          icon: Icon(Icons.science_outlined,
+                              color: Colors.green[700], size: 20),
+                          label: Text(
+                            'Test with Dummy Data',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.green[700],
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            side: BorderSide(
+                                color: Colors.green[700]!, width: 1.5),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                    child: const Text(
-                      'Login with Zerodha',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+
+                      const SizedBox(height: 8),
+                      Text(
+                        'No Zerodha account needed • Sample data only',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[500],
+                        ),
                       ),
-                    ),
+                    ],
                   );
                 },
               ),
@@ -140,6 +180,16 @@ class LoginScreen extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _handleDemoLogin(
+    BuildContext context,
+    AuthProvider authProvider,
+  ) async {
+    await authProvider.loginWithDemoData();
+    if (context.mounted) {
+      Navigator.pushReplacementNamed(context, '/home');
+    }
   }
 
   Future<void> _handleLogin(

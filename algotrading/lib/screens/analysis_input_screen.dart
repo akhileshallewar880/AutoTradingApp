@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/analysis_provider.dart';
+import '../providers/dashboard_provider.dart';
 import '../widgets/animated_loading_overlay.dart';
 import 'analysis_results_screen.dart';
 
@@ -15,11 +16,32 @@ class AnalysisInputScreen extends StatefulWidget {
 
 class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _capitalController = TextEditingController();
   DateTime _selectedDate = DateTime.now();
   int _numStocks = 5;
   double _riskPercent = 1.0;
   int _holdDurationDays = 0; // 0 = Intraday
   Set<String> _selectedSectors = {'ALL'};
+  double _availableBalance = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final balance =
+          context.read<DashboardProvider>().dashboard?.availableBalance ?? 0;
+      setState(() => _availableBalance = balance);
+      _capitalController.text = balance > 0
+          ? balance.toStringAsFixed(0)
+          : '';
+    });
+  }
+
+  @override
+  void dispose() {
+    _capitalController.dispose();
+    super.dispose();
+  }
 
   static const _sectors = [
     'ALL',
@@ -139,6 +161,10 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 16),
+
+                    // ── Capital Card ─────────────────────────────────────
+                    _buildCapitalCard(),
                     const SizedBox(height: 24),
 
                     // ── Generate Button ──────────────────────────────────
@@ -430,6 +456,107 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
     );
   }
 
+  Widget _buildCapitalCard() {
+    final currency = NumberFormat.currency(symbol: '₹', decimalDigits: 0);
+    final pcts = [25, 50, 75, 100];
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _sectionHeader(Icons.account_balance_wallet, 'Capital to Deploy'),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Text(
+                  'Available: ',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+                Text(
+                  _availableBalance > 0
+                      ? currency.format(_availableBalance)
+                      : '—',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.green[700],
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+
+            // Amount text field
+            TextFormField(
+              controller: _capitalController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                prefixText: '₹ ',
+                prefixStyle: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[700]),
+                hintText: 'Enter amount',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: Colors.grey[300]!),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: Colors.green[700]!, width: 2),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 14),
+              ),
+              validator: (val) {
+                if (val == null || val.trim().isEmpty) {
+                  return 'Please enter a capital amount';
+                }
+                final amount = double.tryParse(val.trim());
+                if (amount == null || amount <= 0) {
+                  return 'Enter a valid amount greater than 0';
+                }
+                if (_availableBalance > 0 && amount > _availableBalance) {
+                  return 'Cannot exceed available balance '
+                      '(${currency.format(_availableBalance)})';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+
+            // Quick-percentage chips
+            if (_availableBalance > 0)
+              Wrap(
+                spacing: 8,
+                children: pcts.map((pct) {
+                  final amount = (_availableBalance * pct / 100)
+                      .roundToDouble();
+                  return ActionChip(
+                    label: Text('$pct%'),
+                    backgroundColor: Colors.green[50],
+                    side: BorderSide(color: Colors.green[300]!),
+                    labelStyle: TextStyle(
+                      color: Colors.green[800],
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                    onPressed: () => setState(() {
+                      _capitalController.text = amount.toStringAsFixed(0);
+                    }),
+                  );
+                }).toList(),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _selectDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -458,6 +585,8 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
     if (_formKey.currentState!.validate()) {
       final authProvider = context.read<AuthProvider>();
       final analysisProvider = context.read<AnalysisProvider>();
+      final capitalToUse =
+          double.tryParse(_capitalController.text.trim()) ?? _availableBalance;
 
       // Persist hold duration and sectors to provider
       analysisProvider.setHoldDuration(_holdDurationDays);
@@ -470,6 +599,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           riskPercent: _riskPercent,
           accessToken: authProvider.user!.accessToken,
           sectors: _selectedSectors.toList(),
+          capitalToUse: capitalToUse,
         );
 
         if (mounted) {

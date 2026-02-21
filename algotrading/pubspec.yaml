@@ -76,7 +76,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   # To add assets to your application, add an assets section, like this:
   assets:
-    - assets/vantrade_logo.png
+    - assets/vantrade_launcher_icon.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
@@ -106,8 +106,8 @@ flutter:
 
 flutter_launcher_icons:
   android: "launcher_icon"
-  ios: true
-  image_path: "assets/vantrade_logo.png"
+  ios: false
+  image_path: "assets/vantrade_launcher_icon.png"
   min_sdk_android: 21 # android min sdk min:16, default 21
-  adaptive_icon_background: "#388E3C" # Green 700
-  adaptive_icon_foreground: "assets/vantrade_logo_padded_v2.png"
+  adaptive_icon_background: "#1B5E20" # matches icon gradient start
+  adaptive_icon_foreground: "assets/vantrade_launcher_icon.png"
