@@ -15,6 +15,7 @@ class LoginWebViewScreen extends StatefulWidget {
 class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
   late final WebViewController _controller;
   bool _isLoading = true;
+  bool _sessionCreated = false;
 
   @override
   void initState() {
@@ -35,10 +36,12 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
   }
 
   void _checkForRequestToken(String url) {
+    if (_sessionCreated) return;
     final uri = Uri.parse(url);
     final requestToken = uri.queryParameters['request_token'];
-    
+
     if (requestToken != null) {
+      _sessionCreated = true;
       _handleRequestToken(requestToken);
     }
   }

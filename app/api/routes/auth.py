@@ -64,6 +64,15 @@ async def get_user_profile():
             detail="Failed to fetch profile. Please login first or check if access_token is valid."
         )
 
+@router.get("/callback")
+async def zerodha_callback():
+    """
+    Redirect URL registered in Kite Connect developer portal.
+    The Flutter WebView intercepts this URL to extract the request_token.
+    This endpoint just returns a placeholder response.
+    """
+    return {"status": "ok", "message": "Login callback received. Return to the app."}
+
 @router.post("/logout")
 async def logout():
     """
