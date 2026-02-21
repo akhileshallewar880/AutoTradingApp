@@ -12,26 +12,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies into antenv
+      - name: Archive source for deployment
         run: |
-          python -m venv antenv
-          source antenv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Archive app for deployment
-        run: |
-          zip -r app.zip app requirements.txt antenv
+          zip -r app.zip app requirements.txt
 
       - name: Login to Azure
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Enable Oryx build during deployment
+        run: |
+          az webapp config appsettings set \
+            --name ${{ secrets.AZURE_WEBAPP_NAME_PRODUCTION }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --settings \
+              SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
+              OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY_PRODUCTION }}" \
+              ZERODHA_API_KEY="${{ secrets.ZERODHA_API_KEY_PRODUCTION }}" \
+              ZERODHA_API_SECRET="${{ secrets.ZERODHA_API_SECRET_PRODUCTION }}"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
@@ -40,18 +39,9 @@ jobs:
           publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE_PRODUCTION }}
           package: app.zip
 
-      - name: Set startup command and app settings
+      - name: Set startup command
         run: |
           az webapp config set \
             --name ${{ secrets.AZURE_WEBAPP_NAME_PRODUCTION }} \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --startup-file "antenv/bin/gunicorn --bind=0.0.0.0:8000 --worker-class uvicorn.workers.UvicornWorker app.main:app"
-
-          az webapp config appsettings set \
-            --name ${{ secrets.AZURE_WEBAPP_NAME_PRODUCTION }} \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --settings \
-              OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY_PRODUCTION }}" \
-              ZERODHA_API_KEY="${{ secrets.ZERODHA_API_KEY_PRODUCTION }}" \
-              ZERODHA_API_SECRET="${{ secrets.ZERODHA_API_SECRET_PRODUCTION }}" \
-              SCM_DO_BUILD_DURING_DEPLOYMENT="false"
+            --startup-file "/antenv/bin/gunicorn --bind=0.0.0.0:8000 --worker-class uvicorn.workers.UvicornWorker app.main:app"

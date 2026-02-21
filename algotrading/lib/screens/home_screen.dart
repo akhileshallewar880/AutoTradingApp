@@ -19,7 +19,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
-  final _compact = NumberFormat.compact(locale: 'en_IN');
 
   @override
   void initState() {
