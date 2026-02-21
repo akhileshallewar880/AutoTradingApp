@@ -46,7 +46,7 @@ class Database:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._write_to_file)
         except Exception as e:
-            logger.error(f"Failed to save DB: {e}")
+            logger.error(f"Failed to save DB, Please Check the Db Connection String !!: {e}")
 
     def _write_to_file(self):
         # Save trades
