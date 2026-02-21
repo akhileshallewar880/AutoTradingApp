@@ -17,14 +17,16 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install dependencies into antenv
         run: |
+          python -m venv antenv
+          source antenv/bin/activate
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Archive app for deployment
         run: |
-          zip -r app.zip app requirements.txt
+          zip -r app.zip app requirements.txt antenv
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
@@ -32,10 +34,17 @@ jobs:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME_PRODUCTION }}
           publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE_PRODUCTION }}
           package: app.zip
-        env:
-          OPENAPI_KEY: ${{ secrets.OPENAPI_KEY_PRODUCTION }}
-          ZERODHA_API_KEY: ${{ secrets.ZERODHA_API_KEY_PRODUCTION }}
-          ZERODHA_API_SECRET: ${{ secrets.ZERODHA_API_SECRET_PRODUCTION }}
 
-      # Optional: Set connection strings and app settings
-      # You can use Azure CLI or Azure App Service Settings action if needed
+      - name: Set startup command and app settings
+        uses: azure/appservice-settings@v1
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME_PRODUCTION }}
+          publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE_PRODUCTION }}
+          app-settings-json: |
+            [
+              {"name": "OPENAI_API_KEY", "value": "${{ secrets.OPENAPI_KEY_PRODUCTION }}", "slotSetting": false},
+              {"name": "ZERODHA_API_KEY", "value": "${{ secrets.ZERODHA_API_KEY_PRODUCTION }}", "slotSetting": false},
+              {"name": "ZERODHA_API_SECRET", "value": "${{ secrets.ZERODHA_API_SECRET_PRODUCTION }}", "slotSetting": false},
+              {"name": "SCM_DO_BUILD_DURING_DEPLOYMENT", "value": "false", "slotSetting": false}
+            ]
+          general-settings-json: '{"linuxFxVersion": "PYTHON|3.10", "appCommandLine": "antenv/bin/gunicorn --bind=0.0.0.0:8000 --worker-class uvicorn.workers.UvicornWorker app.main:app"}'
