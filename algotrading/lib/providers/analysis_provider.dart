@@ -14,6 +14,8 @@ class AnalysisProvider with ChangeNotifier {
   int _holdDurationDays = 0;
   // Selected sectors for stock universe
   List<String> _selectedSectors = ['ALL'];
+  // Track which stocks are selected for execution (by index)
+  Set<int> _selectedStockIndices = {};
 
   AnalysisResponseModel? get currentAnalysis => _currentAnalysis;
   ExecutionStatusModel? get executionStatus => _executionStatus;
@@ -22,6 +24,41 @@ class AnalysisProvider with ChangeNotifier {
   String? get error => _error;
   int get holdDurationDays => _holdDurationDays;
   List<String> get selectedSectors => _selectedSectors;
+  Set<int> get selectedStockIndices => _selectedStockIndices;
+
+  bool isStockSelected(int index) => _selectedStockIndices.contains(index);
+
+  int get selectedStockCount => _selectedStockIndices.length;
+
+  List<StockAnalysisModel> get selectedStocks {
+    if (_currentAnalysis == null) return [];
+    return _selectedStockIndices
+        .where((i) => i < _currentAnalysis!.stocks.length)
+        .map((i) => _currentAnalysis!.stocks[i])
+        .toList();
+  }
+
+  void toggleStockSelection(int index) {
+    if (_selectedStockIndices.contains(index)) {
+      _selectedStockIndices.remove(index);
+    } else {
+      _selectedStockIndices.add(index);
+    }
+    notifyListeners();
+  }
+
+  void selectAllStocks() {
+    if (_currentAnalysis == null) return;
+    _selectedStockIndices = Set<int>.from(
+      List.generate(_currentAnalysis!.stocks.length, (i) => i),
+    );
+    notifyListeners();
+  }
+
+  void deselectAllStocks() {
+    _selectedStockIndices.clear();
+    notifyListeners();
+  }
 
   void setHoldDuration(int days) {
     _holdDurationDays = days;
@@ -62,6 +99,12 @@ class AnalysisProvider with ChangeNotifier {
         );
         _currentAnalysis = analysis;
       }
+      // Select all stocks by default after generating analysis
+      if (_currentAnalysis != null) {
+        _selectedStockIndices = Set<int>.from(
+          List.generate(_currentAnalysis!.stocks.length, (i) => i),
+        );
+      }
       _error = null;
     } catch (e) {
       _error = e.toString();
@@ -90,7 +133,8 @@ class AnalysisProvider with ChangeNotifier {
           _executionStatus = _buildDemoExecutionStatus(analysisId);
         }
       } else {
-        final overrides = _currentAnalysis?.stocks.map((s) => {
+        // Only send selected stocks for execution
+        final overrides = selectedStocks.map((s) => {
           'stock_symbol': s.stockSymbol,
           'quantity': s.quantity,
         }).toList();
@@ -211,6 +255,7 @@ class AnalysisProvider with ChangeNotifier {
   void clearCurrentAnalysis() {
     _currentAnalysis = null;
     _executionStatus = null;
+    _selectedStockIndices.clear();
     notifyListeners();
   }
 

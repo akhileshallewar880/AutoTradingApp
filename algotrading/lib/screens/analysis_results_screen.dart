@@ -7,8 +7,15 @@ import '../models/analysis_model.dart';
 import '../widgets/stock_card.dart';
 import 'execution_tracking_screen.dart';
 
-class AnalysisResultsScreen extends StatelessWidget {
+class AnalysisResultsScreen extends StatefulWidget {
   const AnalysisResultsScreen({super.key});
+
+  @override
+  State<AnalysisResultsScreen> createState() => _AnalysisResultsScreenState();
+}
+
+class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
+  bool _allExpanded = false;
 
   @override
   Widget build(BuildContext context) {
@@ -37,19 +44,89 @@ class AnalysisResultsScreen extends StatelessWidget {
       body: Column(
         children: [
           _buildMetricsCard(context, analysis, analysisProvider),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${analysisProvider.selectedStockCount} of ${analysis.stocks.length} selected',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Expand All / Collapse All
+                    IconButton(
+                      onPressed: () {
+                        setState(() {
+                          _allExpanded = !_allExpanded;
+                        });
+                      },
+                      icon: Icon(
+                        _allExpanded ? Icons.unfold_less : Icons.unfold_more,
+                        size: 20,
+                        color: Colors.green[700],
+                      ),
+                      tooltip: _allExpanded ? 'Collapse All' : 'Expand All',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    // Select All / Deselect All
+                    TextButton.icon(
+                      onPressed: () {
+                        if (analysisProvider.selectedStockCount == analysis.stocks.length) {
+                          analysisProvider.deselectAllStocks();
+                        } else {
+                          analysisProvider.selectAllStocks();
+                        }
+                      },
+                      icon: Icon(
+                        analysisProvider.selectedStockCount == analysis.stocks.length
+                            ? Icons.deselect
+                            : Icons.select_all,
+                        size: 18,
+                      ),
+                      label: Text(
+                        analysisProvider.selectedStockCount == analysis.stocks.length
+                            ? 'Deselect All'
+                            : 'Select All',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.green[700],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: analysis.stocks.length,
               itemBuilder: (context, index) {
                 return StockCard(
-                    stock: analysis.stocks[index], stockIndex: index);
+                  key: ValueKey('stock_${index}_$_allExpanded'),
+                  stock: analysis.stocks[index],
+                  stockIndex: index,
+                  isSelected: analysisProvider.isStockSelected(index),
+                  initiallyExpanded: _allExpanded,
+                  onSelectionChanged: (_) {
+                    analysisProvider.toggleStockSelection(index);
+                  },
+                );
               },
             ),
           ),
         ],
       ),
-      bottomNavigationBar: _buildBottomBar(context, analysis),
+      bottomNavigationBar: _buildBottomBar(context, analysis, analysisProvider),
     );
   }
 
@@ -235,10 +312,20 @@ class AnalysisResultsScreen extends StatelessWidget {
   }
 
   Widget _buildBottomBar(
-      BuildContext context, AnalysisResponseModel analysis) {
+      BuildContext context, AnalysisResponseModel analysis, AnalysisProvider analysisProvider) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final selectedCount = analysisProvider.selectedStockCount;
+    final hasSelection = selectedCount > 0;
+    final currencyFormat = NumberFormat.currency(symbol: '₹', decimalDigits: 0);
+
+    // Calculate total investment for selected stocks only
+    double selectedInvestment = 0;
+    for (final stock in analysisProvider.selectedStocks) {
+      selectedInvestment += stock.entryPrice * stock.quantity;
+    }
+
     return Container(
-      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomPadding),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomPadding),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -249,44 +336,73 @@ class AnalysisResultsScreen extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => _handleCancel(context),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                side: BorderSide(color: Colors.grey[400]!),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'Cancel',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 2,
-            child: ElevatedButton.icon(
-              onPressed: () => _handleConfirm(context, analysis),
-              icon: const Icon(Icons.rocket_launch_rounded, size: 18),
-              label: const Text(
-                'Confirm & Execute',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green[700],
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 2,
+          if (hasSelection)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.info_outline, size: 14, color: Colors.grey[600]),
+                  const SizedBox(width: 6),
+                  Text(
+                    '$selectedCount stock${selectedCount == 1 ? '' : 's'} · ${currencyFormat.format(selectedInvestment)}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[700],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => _handleCancel(context),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    side: BorderSide(color: Colors.grey[400]!),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton.icon(
+                  onPressed: hasSelection
+                      ? () => _handleConfirm(context, analysis)
+                      : null,
+                  icon: const Icon(Icons.rocket_launch_rounded, size: 18),
+                  label: Text(
+                    hasSelection
+                        ? 'Execute $selectedCount Trade${selectedCount == 1 ? '' : 's'}'
+                        : 'Select Trades',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[700],
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: Colors.grey[300],
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 2,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

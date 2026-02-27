@@ -127,12 +127,13 @@ class DataService:
         sectors: Optional[List[str]] = None,
         batch_size: int = 50,
         max_candidates: int = 200,
+        hold_duration_days: int = 0,
     ) -> List[Dict]:
         """
         Two-pass screener over the full NSE universe:
           Pass 1: Fetch 5-day snapshot for all symbols in parallel batches.
-                  Filter by: volume > 200K, price ₹10–₹10000, 1-day change > 0%
-          Pass 2: Score by composite = volume_ratio × momentum × (1/volatility)
+                  Filter by: volume > 200K (500K for intraday), price ₹10–₹10000
+          Pass 2: Score by composite (hold-duration-aware)
                   Return top `limit` candidates enriched with metadata.
         """
         universe = await self.get_nse_universe(sectors)
@@ -149,8 +150,11 @@ class DataService:
         loop = asyncio.get_event_loop()
         batches = [universe[i:i+batch_size] for i in range(0, len(universe), batch_size)]
 
+        is_intraday = hold_duration_days == 0
+        min_volume = 500_000 if is_intraday else 200_000
+
         tasks = [
-            loop.run_in_executor(None, self._screen_batch, batch)
+            loop.run_in_executor(None, self._screen_batch, batch, min_volume, is_intraday)
             for batch in batches
         ]
         batch_results = await asyncio.gather(*tasks)
@@ -243,7 +247,7 @@ class DataService:
             logger.warning(f"NSE CSV download failed ({e}), using fallback list")
             return self.FALLBACK_SYMBOLS
 
-    def _screen_batch(self, symbols: List[str]) -> List[Dict]:
+    def _screen_batch(self, symbols: List[str], min_volume: int = 200_000, is_intraday: bool = False) -> List[Dict]:
         """
         Fetch a batch of symbols using yfinance and apply basic filters.
         Returns list of dicts with screening metrics.
@@ -294,7 +298,7 @@ class DataService:
                 # ── Basic filters ──────────────────────────────────────────
                 if close < 10 or close > 10_000:
                     continue
-                if volume < 200_000:
+                if volume < min_volume:
                     continue
 
                 # ── Metrics ───────────────────────────────────────────────
@@ -309,12 +313,21 @@ class DataService:
                 daily_returns = df["Close"].pct_change().dropna()
                 volatility = float(daily_returns.std() * 100) if len(daily_returns) > 1 else 1.0
 
-                # Composite score: reward volume surge + momentum, penalise volatility
-                composite_score = (
-                    volume_ratio * 0.5
-                    + max(momentum_5d, 0) * 0.3
-                    + max(day_change_pct, 0) * 0.2
-                ) / max(volatility, 0.1)
+                # Composite score: different formula for intraday vs swing
+                if is_intraday:
+                    # INTRADAY: reward volume surge AND volatility (big moves = good)
+                    composite_score = (
+                        volume_ratio * 0.5
+                        + max(volatility, 0.1) * 0.3
+                        + max(day_change_pct, 0) * 0.2
+                    )
+                else:
+                    # SWING/LONGTERM: reward volume + momentum, penalise excess volatility
+                    composite_score = (
+                        volume_ratio * 0.5
+                        + max(momentum_5d, 0) * 0.3
+                        + max(day_change_pct, 0) * 0.2
+                    ) / max(volatility, 0.1)
 
                 results.append({
                     "symbol": sym,

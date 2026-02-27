@@ -44,6 +44,37 @@ class LLMAgent:
             else "Search across the entire NSE market (all sectors)"
         )
 
+        # Build hold-duration-specific emphasis for system prompt
+        if hold_duration_days == 0:
+            hold_specific_section = """
+## ★ INTRADAY SELECTION — THIS IS THE MOST IMPORTANT SECTION ★
+You are picking stocks for SAME-DAY exit (MIS product). Apply these rules strictly:
+
+1. **Volume is KING** — ONLY select stocks with volume_ratio ≥ 2.0 (i.e. today's volume at least 2× the 20-day average). Higher is better. Reject any stock with volume_ratio < 1.5.
+2. **High ATR** — prefer stocks with high ATR relative to price (ATR/price > 1.5%). This ensures enough intraday range to hit targets within hours, not days.
+3. **Volatility is GOOD** — for intraday, you WANT volatile stocks. Higher volatility_5d = better candidate. Do NOT pick low-volatility, slow-moving stocks.
+4. **Intraday breakouts** — look for stocks breaking above resistance_20d or surging past EMA9/SMA20 with volume confirmation.
+5. **Momentum today** — day_change_pct should be positive and ideally > 1%. Stocks already moving today have momentum to continue.
+6. **Tight targets** — target should be achievable within 1 trading day. Use 1.5–2.5× ATR as target distance. Don't set unrealistic multi-day targets.
+7. **days_to_target MUST be 0** for all intraday picks (same-day exit).
+8. **Risk/Reward** — minimum 1:1.5 R:R for intraday (tighter than swing trades).
+9. DO NOT select stocks that are slow movers, low volume, or have narrow trading ranges. These are completely unsuitable for intraday trading.
+"""
+        elif hold_duration_days <= 7:
+            hold_specific_section = """
+## Short-Term Selection (1–7 days)
+- Prioritise momentum + volume surge, RSI 58–70, MACD crossover
+- Volume ratio > 1.5x preferred
+- Target achievable within the hold period
+"""
+        else:
+            hold_specific_section = """
+## Medium-Term Selection (8–30 days)
+- Prioritise trend strength (STRONG_BULLISH), RSI 55–68
+- Price near 52-week high signals momentum continuation
+- Volume ratio > 1.3x to confirm institutional interest
+"""
+
         system_prompt = f"""You are an elite AI trading analyst specialising in the Indian NSE stock market.
 
 Your SOLE OBJECTIVE: identify stocks with the **highest probability of maximum profit in the shortest number of trading days**.
@@ -51,7 +82,7 @@ Your SOLE OBJECTIVE: identify stocks with the **highest probability of maximum p
 Hold Duration Context: {hold_label}
 {sector_context}
 
-## Selection Criteria (rank by importance)
+## General Selection Criteria (rank by importance)
 1. **Volume Surge** — volume_ratio > 1.5x (institutional accumulation signal)
 2. **Momentum** — strong 5-day price momentum, MACD histogram turning positive
 3. **RSI Sweet Spot** — RSI between 55–72 (momentum zone, not overbought)
@@ -59,17 +90,14 @@ Hold Duration Context: {hold_label}
 5. **Risk/Reward** — minimum 1:2.5 R:R ratio; prefer 1:3 or better
 6. **Tight Stop** — stop-loss within 1.5–2× ATR of entry (limits downside)
 
-## Hold Duration Adjustments
-- **Intraday (0d)**: Prioritise high ATR, volume surge >2x, intraday breakouts
-- **Short (1–7d)**: Prioritise momentum + volume surge, RSI 58–70, MACD crossover
-- **Medium (8–30d)**: Prioritise trend strength, RSI 55–68, price near 52-week high
+{hold_specific_section}
 
 ## Output Rules
 - Select EXACTLY {num_stocks} stocks (or fewer only if truly insufficient quality candidates)
 - For each stock provide precise entry, stop-loss, and target based on technical levels
 - Entry = current last_close (market order)
 - Stop-loss = last_close − (1.5 × ATR) minimum, or nearest support level
-- Target = entry + (stop_loss_distance × 3) minimum (1:3 R:R)
+- Target = entry + (stop_loss_distance × 3) minimum (1:3 R:R) — for intraday, 1.5× ATR target is acceptable
 - Estimate realistic `days_to_target` based on recent momentum and ATR
 - Confidence score: 0.7+ only for genuinely high-conviction setups
 
@@ -97,17 +125,29 @@ IMPORTANT: Return ONLY valid JSON in this exact format:
 }}
 """
 
+        # Build hold-duration-specific user instructions
+        if hold_duration_days == 0:
+            hold_instruction = (
+                f"INTRADAY MODE: Pick the {num_stocks} stocks with the HIGHEST volume and intraday range. "
+                f"REJECT any stock with volume_ratio < 1.5. Prefer volume_ratio ≥ 2.0 and high ATR. "
+                f"All days_to_target must be 0. Only pick stocks suitable for same-day exit."
+            )
+        else:
+            hold_instruction = (
+                f"Pick the {num_stocks} best opportunities for maximum profit in {hold_label}. "
+                f"Prioritise stocks with volume surges, strong momentum, and clear technical setups."
+            )
+
         user_content = f"""
 Available Balance: ₹{available_balance:,.2f}
 Risk Per Trade: {risk_percent}%
 Hold Duration: {hold_label}
 Stocks Requested: {num_stocks}
 
-Pre-Screened NSE Market Data (sorted by volume×momentum composite score):
+Pre-Screened NSE Market Data (sorted by composite score):
 {json.dumps(market_data, default=str, indent=2)}
 
-From these pre-screened NSE stocks, pick the {num_stocks} best opportunities for maximum profit in {hold_label}.
-Prioritise stocks with volume surges, strong momentum, and clear technical setups.
+{hold_instruction}
 """
 
         try:

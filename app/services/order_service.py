@@ -67,9 +67,13 @@ class OrderService:
         price: float,
         stop_loss: float,
         target: float,
+        product: str = "CNC",
     ) -> str:
         """
         Execute a buy trade with proper price and market hours handling.
+
+        Args:
+            product: Zerodha product type — "MIS" for intraday, "CNC" for delivery/longterm.
 
         Raises:
             MarketClosedException: If called outside NSE market hours.
@@ -79,7 +83,7 @@ class OrderService:
             Order ID string on success.
         """
         try:
-            logger.info(f"Placing order: {symbol} BUY {quantity} @ ₹{price}")
+            logger.info(f"Placing order: {symbol} BUY {quantity} @ ₹{price} product={product}")
 
             if not self.is_market_open():
                 msg = self.market_status_message()
@@ -92,11 +96,11 @@ class OrderService:
                 transaction_type="BUY",
                 quantity=quantity,
                 order_type="MARKET",
-                product="CNC",
+                product=product,
                 exchange="NSE",
                 validity="DAY",
             )
-            logger.info(f"✅ MARKET order placed. Order ID: {order_id}")
+            logger.info(f"✅ MARKET order placed ({product}). Order ID: {order_id}")
             return order_id
 
         except MarketClosedException:

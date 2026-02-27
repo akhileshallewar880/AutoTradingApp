@@ -26,13 +26,14 @@ class ExecutionAgent:
         target: float,
         analysis_id: str,
         access_token: str,  # User's access token for real orders
-        update_callback: Callable = None
+        update_callback: Callable = None,
+        hold_duration_days: int = 0,
     ) -> Dict:
         """
         Execute a complete trade workflow:
-        1. Place buy order
+        1. Place buy order (MIS for intraday, CNC for delivery)
         2. Monitor until filled
-        3. Place GTT for target and stop-loss
+        3. Place GTT for target and stop-loss (delivery only — skipped for intraday)
         
         Args:
             stock_symbol: Trading symbol
@@ -43,10 +44,14 @@ class ExecutionAgent:
             analysis_id: Analysis ID for tracking
             access_token: User's Zerodha access token
             update_callback: Async function to call with status updates
+            hold_duration_days: 0 = intraday (MIS), >0 = delivery (CNC)
         
         Returns:
             Dict with execution status and order IDs
         """
+        # Determine product type based on hold duration
+        is_intraday = hold_duration_days == 0
+        product = "MIS" if is_intraday else "CNC"
         execution_log = {
             "stock_symbol": stock_symbol,
             "status": "STARTED",
@@ -71,7 +76,8 @@ class ExecutionAgent:
                 quantity=quantity,
                 price=entry_price,
                 stop_loss=stop_loss,
-                target=target
+                target=target,
+                product=product,
             )
             
             execution_log["buy_order_id"] = buy_order_id
@@ -110,35 +116,45 @@ class ExecutionAgent:
                 order_id=buy_order_id
             )
             
-            # Step 3: Place GTT for Target and Stop Loss
-            await self._send_update(
-                analysis_id, stock_symbol, "GTT_PLACING",
-                f"Placing GTT with SL: ₹{stop_loss}, Target: ₹{target}",
-                update_callback
-            )
-            
-            gtt_id = await self._place_gtt_order(
-                stock_symbol,
-                quantity,
-                entry_price,
-                stop_loss,
-                target
-            )
-            
-            execution_log["gtt_order_id"] = gtt_id
-            
-            await self._send_update(
-                analysis_id, stock_symbol, "GTT_PLACED",
-                f"GTT placed successfully. GTT ID: {gtt_id}",
-                update_callback,
-                order_id=gtt_id
-            )
+            # Step 3: Place GTT for Target and Stop Loss (delivery only)
+            if is_intraday:
+                # Intraday trades use MIS — no GTT needed.
+                # Positions are auto-squared off by the broker at market close.
+                await self._send_update(
+                    analysis_id, stock_symbol, "INTRADAY_NOTE",
+                    f"Intraday (MIS) trade — no GTT placed. "
+                    f"Position will auto-square off at 3:15 PM IST.",
+                    update_callback
+                )
+            else:
+                await self._send_update(
+                    analysis_id, stock_symbol, "GTT_PLACING",
+                    f"Placing GTT with SL: ₹{stop_loss}, Target: ₹{target}",
+                    update_callback
+                )
+                
+                gtt_id = await self._place_gtt_order(
+                    stock_symbol,
+                    quantity,
+                    entry_price,
+                    stop_loss,
+                    target
+                )
+                
+                execution_log["gtt_order_id"] = gtt_id
+                
+                await self._send_update(
+                    analysis_id, stock_symbol, "GTT_PLACED",
+                    f"GTT placed successfully. GTT ID: {gtt_id}",
+                    update_callback,
+                    order_id=gtt_id
+                )
             
             execution_log["status"] = "COMPLETED"
             
             await self._send_update(
                 analysis_id, stock_symbol, "COMPLETED",
-                f"Trade execution completed for {stock_symbol}",
+                f"Trade execution completed for {stock_symbol} ({product})",
                 update_callback
             )
             

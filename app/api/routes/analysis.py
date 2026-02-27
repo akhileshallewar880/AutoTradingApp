@@ -375,6 +375,7 @@ async def execute_trades(
                     analysis_id=analysis_id,
                     update_callback=update_callback,
                     access_token=access_token,
+                    hold_duration_days=hold_duration_days,
                 )
 
         await db.update_analysis_status(analysis_id, "COMPLETED")

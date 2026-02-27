@@ -44,6 +44,7 @@ class AnalysisService:
             candidates = await self.ds.screen_top_movers(
                 limit=screen_limit,
                 sectors=sectors,
+                hold_duration_days=hold_duration_days,
             )
 
             if not candidates:
