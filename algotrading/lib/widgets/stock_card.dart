@@ -101,18 +101,41 @@ class _StockCardState extends State<StockCard> {
               ),
               const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(
-                  color: widget.stock.action == 'BUY' ? Colors.green[50] : Colors.red[50],
+                  color: widget.stock.action == 'BUY'
+                      ? Colors.green[50]
+                      : Colors.red[50],
                   borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  widget.stock.action,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: widget.stock.action == 'BUY' ? Colors.green[700] : Colors.red[700],
+                  border: Border.all(
+                    color: widget.stock.action == 'BUY'
+                        ? Colors.green[300]!
+                        : Colors.red[300]!,
+                    width: 1,
                   ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.stock.action == 'BUY' ? 'BUY' : 'SHORT',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: widget.stock.action == 'BUY'
+                            ? Colors.green[700]
+                            : Colors.red[700],
+                      ),
+                    ),
+                    if (widget.stock.action == 'SELL')
+                      Text(
+                        'SELL',
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: Colors.red[500],
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ],
@@ -195,8 +218,16 @@ class _StockCardState extends State<StockCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildDetailRow('Entry Price', currencyFormat.format(widget.stock.entryPrice)),
-                  _buildDetailRow('Stop Loss', currencyFormat.format(widget.stock.stopLoss)),
-                  _buildDetailRow('Target', currencyFormat.format(widget.stock.targetPrice)),
+                  _buildDetailRow(
+                    widget.stock.action == 'SELL' ? 'Stop Loss (Cover)' : 'Stop Loss',
+                    currencyFormat.format(widget.stock.stopLoss),
+                    valueColor: Colors.red[700],
+                  ),
+                  _buildDetailRow(
+                    widget.stock.action == 'SELL' ? 'Target (Cover)' : 'Target',
+                    currencyFormat.format(widget.stock.targetPrice),
+                    valueColor: Colors.green[700],
+                  ),
                   // ── Editable Quantity Row ──────────────────────────────────
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),

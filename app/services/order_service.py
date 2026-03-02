@@ -14,12 +14,10 @@ class OrderService:
     Service for placing orders via Zerodha.
 
     Market hours: Mon–Fri, 09:15–15:30 IST
-    Raises MarketClosedException if called outside these hours so the
-    caller can surface a clear message to the user.
+    Raises MarketClosedException if called outside these hours.
     """
 
-    # NSE market hours (IST)
-    MARKET_OPEN  = time(9, 15)
+    MARKET_OPEN = time(9, 15)
     MARKET_CLOSE = time(15, 30)
     IST = pytz.timezone("Asia/Kolkata")
 
@@ -27,16 +25,13 @@ class OrderService:
         self.zs = zerodha_service
 
     def is_market_open(self) -> bool:
-        """Return True if NSE is currently open for trading."""
         now_ist = datetime.now(self.IST)
-        # Market is closed on weekends
-        if now_ist.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        if now_ist.weekday() >= 5:
             return False
         current_time = now_ist.time()
         return self.MARKET_OPEN <= current_time <= self.MARKET_CLOSE
 
     def market_status_message(self) -> str:
-        """Return a human-readable market status string."""
         now_ist = datetime.now(self.IST)
         weekday = now_ist.weekday()
         current_time = now_ist.time()
@@ -68,43 +63,52 @@ class OrderService:
         stop_loss: float,
         target: float,
         product: str = "CNC",
+        transaction_type: str = "BUY",
     ) -> str:
         """
-        Execute a buy trade with proper price and market hours handling.
+        Execute an entry order via Zerodha.
 
         Args:
-            product: Zerodha product type — "MIS" for intraday, "CNC" for delivery/longterm.
+            transaction_type: "BUY"  for long positions
+                              "SELL" for short sell positions (intraday only with MIS)
+            product:          "MIS"  for intraday (auto-squares off at 3:15 PM)
+                              "CNC"  for delivery / long-term
 
         Raises:
             MarketClosedException: If called outside NSE market hours.
-            Exception: For any other order placement failure.
 
         Returns:
             Order ID string on success.
         """
         try:
-            logger.info(f"Placing order: {symbol} BUY {quantity} @ ₹{price} product={product}")
+            action_label = "SHORT SELL" if transaction_type == "SELL" else "BUY"
+            logger.info(
+                f"Placing order: {symbol} {action_label} {quantity} @ ₹{price} "
+                f"product={product}"
+            )
 
             if not self.is_market_open():
                 msg = self.market_status_message()
                 logger.warning(f"Order rejected — market closed: {msg}")
                 raise MarketClosedException(msg)
 
-            # During market hours: Place MARKET order for instant execution
             order_id = await self.zs.place_order(
                 symbol=symbol,
-                transaction_type="BUY",
+                transaction_type=transaction_type,
                 quantity=quantity,
                 order_type="MARKET",
                 product=product,
                 exchange="NSE",
                 validity="DAY",
             )
-            logger.info(f"✅ MARKET order placed ({product}). Order ID: {order_id}")
+            logger.info(
+                f"{'SHORT SELL' if transaction_type == 'SELL' else 'BUY'} MARKET order "
+                f"placed ({product}). Order ID: {order_id}"
+            )
             return order_id
 
         except MarketClosedException:
-            raise  # Re-raise as-is so callers can handle specifically
+            raise
         except Exception as e:
             logger.error(f"Error placing order for {symbol}: {e}")
             raise Exception(f"Trade Execution Failed: {str(e)}")

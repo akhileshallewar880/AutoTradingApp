@@ -1,22 +1,54 @@
+import asyncio
+import yfinance as yf
 from app.services.data_service import data_service
 from app.core.logging import logger
 from typing import List, Dict, Optional
 import pandas as pd
-from datetime import datetime
+import pytz
+from datetime import datetime, timedelta
+
+
+# ── Intraday universe: Nifty 50 + top Nifty Next 50 (high-liquidity stocks) ──
+INTRADAY_UNIVERSE = [
+    # Nifty 50 — most liquid, high-volume, moderately volatile
+    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
+    "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK",
+    "LT", "AXISBANK", "ASIANPAINT", "MARUTI", "SUNPHARMA",
+    "TITAN", "BAJFINANCE", "ULTRACEMCO", "WIPRO", "HCLTECH",
+    "TECHM", "POWERGRID", "NTPC", "ONGC", "M&M",
+    "TATAMOTORS", "TATASTEEL", "BAJAJFINSV", "ADANIPORTS", "INDUSINDBK",
+    "DRREDDY", "CIPLA", "DIVISLAB", "EICHERMOT", "GRASIM",
+    "HEROMOTOCO", "JSWSTEEL", "BRITANNIA", "COALINDIA", "TATACONSUM",
+    "SBILIFE", "APOLLOHOSP", "HINDALCO", "BAJAJ-AUTO", "ADANIENT",
+    "BPCL", "SHREECEM", "HDFCLIFE", "BEL", "NESTLEIND",
+    # Nifty Next 50 highlights — also highly liquid
+    "PIDILITIND", "SIEMENS", "HAVELLS", "MUTHOOTFIN", "CHOLAFIN",
+    "TATAPOWER", "CANBK", "PNB", "BANKBARODA", "FEDERALBNK",
+    "IRCTC", "ZOMATO", "DMART", "TRENT", "DIXON",
+    "VOLTAS", "ESCORTS", "ASHOKLEY", "TVSMOTOR", "SAIL",
+    "NMDC", "VEDL", "GAIL", "RECLTD", "PFC",
+    "CONCOR", "DLF", "LTIM", "MPHASIS", "COFORGE",
+]
 
 
 class AnalysisService:
     """
     Service for market analysis and stock screening.
 
-    New pipeline:
-      1. screen_and_enrich() — calls data_service.screen_top_movers() then
-         fetches 60-day candles and calculates full technical indicators
-      2. calculate_technical_indicators() — ATR, RSI, SMA, MACD, volume metrics
+    Two pipelines:
+      Intraday (hold_duration_days=0):
+        screen_and_enrich_intraday() → Zerodha live quotes + 5min candles
+        → VWAP, BB, RSI, MACD, Stochastic, Pivot Points
+      Swing/Delivery (hold_duration_days > 0):
+        screen_and_enrich() → yfinance daily candles → standard indicators
     """
+
+    IST = pytz.timezone("Asia/Kolkata")
 
     def __init__(self):
         self.ds = data_service
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     async def screen_and_enrich(
         self,
@@ -26,20 +58,15 @@ class AnalysisService:
         hold_duration_days: int = 0,
     ) -> List[Dict]:
         """
-        Full pipeline:
-          1. Screen entire NSE universe for top movers (by volume × momentum)
-          2. Fetch 60-day candle history for each candidate
-          3. Calculate technical indicators
-          4. Re-rank by composite score that factors in hold_duration_days
-          5. Return top `limit` stocks enriched with all data for LLM
-
-        The hold_duration_days hint adjusts scoring:
-          - Intraday (0): prefer high intraday volatility + volume
-          - Short (1–7d): prefer strong momentum + volume surge
-          - Medium (7–30d): prefer trend strength + RSI positioning
+        Full pipeline — branches on hold_duration_days:
+          0  → intraday Zerodha pipeline (live prices + 5min candles)
+          >0 → swing yfinance pipeline  (60-day daily candles)
         """
+        if hold_duration_days == 0:
+            return await self.screen_and_enrich_intraday(limit=limit)
+
+        # ── Swing / Delivery pipeline ──────────────────────────────────────
         try:
-            # Stage 1: Screen — fetch 3× limit candidates so we have room to drop bad data
             screen_limit = min(limit * 3, 150)
             candidates = await self.ds.screen_top_movers(
                 limit=screen_limit,
@@ -49,9 +76,10 @@ class AnalysisService:
 
             if not candidates:
                 logger.warning("Screener returned no candidates, falling back to NIFTY 50")
-                candidates = await self.ds.screen_top_movers(limit=screen_limit, sectors=["NIFTY 50"])
+                candidates = await self.ds.screen_top_movers(
+                    limit=screen_limit, sectors=["NIFTY 50"]
+                )
 
-            # Stage 2: Enrich with 60-day candle data + indicators
             enriched = []
             for c in candidates:
                 symbol = c["symbol"]
@@ -65,39 +93,455 @@ class AnalysisService:
                 if not indicators:
                     continue
 
-                # Merge screener data + indicators
                 enriched.append({
                     **c,
                     "historical_data": df,
                     "indicators": indicators,
-                    # Override last_price with most recent close from candles
                     "last_price": indicators.get("last_close", c["last_price"]),
                     "high": float(df["high"].iloc[-1]) if "high" in df.columns else c["high"],
                     "low": float(df["low"].iloc[-1]) if "low" in df.columns else c["low"],
                 })
 
             logger.info(f"Enriched {len(enriched)} stocks with 60-day candle data")
-
-            # Stage 3: Re-rank using hold-duration-aware scoring
             enriched = self._rank_by_hold_duration(enriched, hold_duration_days)
-
-            # Return top `limit`
             return enriched[:limit]
 
         except Exception as e:
             logger.error(f"screen_and_enrich failed: {e}")
             return []
 
+    # ── Intraday pipeline ─────────────────────────────────────────────────────
+
+    async def screen_and_enrich_intraday(self, limit: int) -> List[Dict]:
+        """
+        Intraday pipeline:
+          1. Live quotes for Nifty 50 + Next 50 via Zerodha quote API
+          2. Filter by volume (>200K today), price range
+          3. Fetch today's 5-minute candles for top candidates via Zerodha historical
+          4. Calculate VWAP, BB, RSI, MACD, Stochastic, Pivot Points
+          5. Generate preliminary BUY/SELL signal per stock
+          6. Return top `limit` stocks sorted by signal strength + volume
+        """
+        # Import here to avoid circular import at module level
+        from app.services.zerodha_service import zerodha_service
+        from app.engines.strategy_engine import strategy_engine
+
+        logger.info(
+            f"[Intraday] Fetching live quotes for {len(INTRADAY_UNIVERSE)} stocks..."
+        )
+
+        # ── Step 1: Live quotes via Zerodha ────────────────────────────────
+        try:
+            quotes = await zerodha_service.get_quote(INTRADAY_UNIVERSE)
+        except Exception as e:
+            logger.error(f"[Intraday] Zerodha quote fetch failed: {e}. Falling back to yfinance.")
+            return await self._intraday_fallback_yfinance(limit)
+
+        # ── Step 2: Build candidate list ───────────────────────────────────
+        candidates = []
+        for symbol in INTRADAY_UNIVERSE:
+            quote_key = f"NSE:{symbol}"
+            if quote_key not in quotes:
+                continue
+
+            q = quotes[quote_key]
+            last_price = float(q.get("last_price", 0))
+            volume = int(q.get("volume", 0))
+            instrument_token = q.get("instrument_token", 0)
+            ohlc = q.get("ohlc", {})
+            prev_close = float(ohlc.get("close", last_price))
+            today_open = float(ohlc.get("open", last_price))
+            today_high = float(ohlc.get("high", last_price))
+            today_low = float(ohlc.get("low", last_price))
+
+            if last_price < 10 or last_price > 15000:
+                continue
+            if volume < 200_000:
+                continue
+
+            day_change_pct = (
+                (last_price - prev_close) / prev_close * 100 if prev_close > 0 else 0.0
+            )
+
+            candidates.append({
+                "symbol": symbol,
+                "company_name": symbol,
+                "last_price": last_price,
+                "volume": volume,
+                "instrument_token": instrument_token,
+                "prev_close": prev_close,
+                "today_open": today_open,
+                "today_high": today_high,
+                "today_low": today_low,
+                "day_change_pct": round(day_change_pct, 2),
+            })
+
+        logger.info(f"[Intraday] {len(candidates)} candidates passed volume/price filters")
+
+        if not candidates:
+            logger.warning("[Intraday] No candidates from live quotes, using yfinance fallback")
+            return await self._intraday_fallback_yfinance(limit)
+
+        # Sort by volume descending, take top 25 for candle analysis
+        candidates.sort(key=lambda x: x["volume"], reverse=True)
+        top_candidates = candidates[: min(25, len(candidates))]
+
+        # ── Step 3: 5-minute candles + indicator calculation ───────────────
+        now_ist = datetime.now(self.IST)
+        from_date = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+
+        enriched = []
+        for cand in top_candidates:
+            token = cand["instrument_token"]
+            symbol = cand["symbol"]
+
+            if not token:
+                continue
+
+            try:
+                candles = await zerodha_service.get_historical_data(
+                    instrument_token=token,
+                    from_date=from_date.strftime("%Y-%m-%d %H:%M:%S"),
+                    to_date=now_ist.strftime("%Y-%m-%d %H:%M:%S"),
+                    interval="5minute",
+                )
+
+                if not candles or len(candles) < 5:
+                    logger.debug(
+                        f"[Intraday] {symbol}: only {len(candles) if candles else 0} candles, skipping"
+                    )
+                    continue
+
+                df = pd.DataFrame(candles)
+                df.columns = [c.lower() if isinstance(c, str) else c for c in df.columns]
+                for col in ["open", "high", "low", "close", "volume"]:
+                    if col in df.columns:
+                        df[col] = df[col].astype(float)
+
+                indicators = await self.calculate_intraday_indicators(df, cand)
+                if not indicators:
+                    continue
+
+                signal_data = strategy_engine.generate_intraday_signal(indicators)
+
+                # 20-day avg volume from yfinance for volume_ratio
+                avg_vol_20d = await self._get_avg_volume(symbol)
+                volume_ratio = cand["volume"] / avg_vol_20d if avg_vol_20d > 0 else 1.0
+
+                enriched.append({
+                    **cand,
+                    "volume_ratio": round(volume_ratio, 2),
+                    "avg_volume_20d": round(avg_vol_20d, 0),
+                    "indicators": indicators,
+                    "intraday_signal": signal_data.get("signal", "NEUTRAL"),
+                    "signal_strength": signal_data.get("strength", 0),
+                    "signal_reasons": signal_data.get("reasons", []),
+                    "hold_adjusted_score": signal_data.get("score", 0),
+                    "composite_score": signal_data.get("score", 0),
+                    "momentum_5d_pct": cand["day_change_pct"],
+                    "volatility_5d": round(indicators.get("atr", 0) / cand["last_price"] * 100, 2),
+                })
+
+            except Exception as e:
+                logger.debug(f"[Intraday] Error enriching {symbol}: {e}")
+                continue
+
+        logger.info(f"[Intraday] Enriched {len(enriched)} stocks with 5min indicators")
+
+        # Sort: prefer signal_strength >= 2, then volume_ratio
+        enriched.sort(
+            key=lambda x: (x.get("signal_strength", 0), x.get("volume_ratio", 0)),
+            reverse=True,
+        )
+        return enriched[:limit]
+
+    async def calculate_intraday_indicators(
+        self, df: pd.DataFrame, quote_data: Dict
+    ) -> Dict:
+        """
+        Calculate intraday-specific technical indicators from 5-minute candles:
+        - VWAP  (Volume Weighted Average Price — institutional benchmark)
+        - Bollinger Bands  (20-period — volatility bands)
+        - RSI 14          (momentum)
+        - MACD 12/26/9    (momentum crossover)
+        - Stochastic 14/3 (faster oscillator for intraday)
+        - EMA 9 / EMA 21  (dynamic support/resistance)
+        - ATR 14          (for stop-loss / target calculation)
+        - Pivot Points     (from previous day's OHLC)
+        """
+        if df.empty or len(df) < 5:
+            return {}
+
+        try:
+            close = df["close"]
+            high = df["high"]
+            low = df["low"]
+            volume = df["volume"]
+            last_close = float(close.iloc[-1])
+            n = len(df)
+
+            # ── VWAP (typical price × volume) ─────────────────────────────
+            typical_price = (high + low + close) / 3
+            cumtp_vol = (typical_price * volume).cumsum()
+            cumvol = volume.cumsum()
+            vwap = float(cumtp_vol.iloc[-1] / cumvol.iloc[-1]) if float(cumvol.iloc[-1]) > 0 else last_close
+            price_vs_vwap = "ABOVE" if last_close > vwap else "BELOW"
+
+            # ── ATR (14-period) ────────────────────────────────────────────
+            hl = high - low
+            hc = (high - close.shift()).abs()
+            lc = (low - close.shift()).abs()
+            tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+            atr = float(tr.rolling(min(14, n)).mean().iloc[-1])
+
+            # ── RSI (14-period) ────────────────────────────────────────────
+            delta = close.diff()
+            gain = delta.where(delta > 0, 0.0).rolling(min(14, n)).mean()
+            loss = (-delta.where(delta < 0, 0.0)).rolling(min(14, n)).mean()
+            rs = gain / loss.replace(0, float("nan"))
+            rsi = float((100 - 100 / (1 + rs)).iloc[-1])
+
+            # ── MACD (12/26/9) ─────────────────────────────────────────────
+            ema_12 = close.ewm(span=12, adjust=False).mean()
+            ema_26 = close.ewm(span=26, adjust=False).mean()
+            macd_line = ema_12 - ema_26
+            signal_line = macd_line.ewm(span=9, adjust=False).mean()
+            macd_hist_series = macd_line - signal_line
+            macd_hist = float(macd_hist_series.iloc[-1])
+            macd_val = float(macd_line.iloc[-1])
+            macd_signal_val = float(signal_line.iloc[-1])
+
+            macd_bullish_crossover = False
+            macd_bearish_crossover = False
+            if n >= 2:
+                prev_hist = float(macd_hist_series.iloc[-2])
+                macd_bullish_crossover = prev_hist < 0 < macd_hist
+                macd_bearish_crossover = prev_hist > 0 > macd_hist
+
+            # ── Bollinger Bands (20-period) ────────────────────────────────
+            bb_period = min(20, n)
+            bb_middle_s = close.rolling(bb_period).mean()
+            bb_std_s = close.rolling(bb_period).std()
+            bb_middle = float(bb_middle_s.iloc[-1])
+            bb_std = float(bb_std_s.iloc[-1]) if not pd.isna(bb_std_s.iloc[-1]) else 0.0
+            bb_upper = bb_middle + 2 * bb_std
+            bb_lower = bb_middle - 2 * bb_std
+
+            if last_close >= bb_upper * 0.985:
+                bb_position = "NEAR_UPPER"
+            elif last_close <= bb_lower * 1.015:
+                bb_position = "NEAR_LOWER"
+            else:
+                bb_position = "MIDDLE"
+
+            # ── Stochastic %K / %D (14, 3) ────────────────────────────────
+            stoch_period = min(14, n)
+            low_min = low.rolling(stoch_period).min()
+            high_max = high.rolling(stoch_period).max()
+            range_hl = (high_max - low_min).replace(0, float("nan"))
+            stoch_k_series = 100 * (close - low_min) / range_hl
+            stoch_k = float(stoch_k_series.iloc[-1]) if not pd.isna(stoch_k_series.iloc[-1]) else 50.0
+            stoch_d = float(stoch_k_series.rolling(3).mean().iloc[-1]) if not pd.isna(stoch_k_series.rolling(3).mean().iloc[-1]) else 50.0
+
+            if stoch_k > 80 and stoch_d > 80:
+                stoch_signal = "OVERBOUGHT"
+            elif stoch_k < 20 and stoch_d < 20:
+                stoch_signal = "OVERSOLD"
+            elif stoch_k > stoch_d:
+                stoch_signal = "BULLISH"
+            else:
+                stoch_signal = "BEARISH"
+
+            # ── EMA 9 and EMA 21 ───────────────────────────────────────────
+            ema_9 = float(close.ewm(span=9, adjust=False).mean().iloc[-1])
+            ema_21 = float(close.ewm(span=21, adjust=False).mean().iloc[-1])
+
+            # ── Pivot Points from previous day ─────────────────────────────
+            symbol = quote_data.get("symbol", "")
+            pivots = await self._get_pivot_points_async(symbol, quote_data)
+
+            # ── Volume of latest candle ────────────────────────────────────
+            latest_candle_vol = float(volume.iloc[-1])
+            avg_candle_vol = float(volume.mean())
+
+            return {
+                "last_close": round(last_close, 2),
+                "atr": round(atr, 2),
+                # VWAP
+                "vwap": round(vwap, 2),
+                "price_vs_vwap": price_vs_vwap,
+                # RSI
+                "rsi": round(rsi, 2),
+                # MACD
+                "macd": round(macd_val, 4),
+                "macd_signal": round(macd_signal_val, 4),
+                "macd_histogram": round(macd_hist, 4),
+                "macd_bullish_crossover": macd_bullish_crossover,
+                "macd_bearish_crossover": macd_bearish_crossover,
+                # Bollinger Bands
+                "bb_upper": round(bb_upper, 2),
+                "bb_middle": round(bb_middle, 2),
+                "bb_lower": round(bb_lower, 2),
+                "bb_position": bb_position,
+                # Stochastic
+                "stoch_k": round(stoch_k, 2),
+                "stoch_d": round(stoch_d, 2),
+                "stoch_signal": stoch_signal,
+                # EMA
+                "ema_9": round(ema_9, 2),
+                "ema_21": round(ema_21, 2),
+                # Volume
+                "avg_candle_volume": round(avg_candle_vol, 0),
+                "latest_candle_volume": round(latest_candle_vol, 0),
+                # Pivot Points
+                **pivots,
+            }
+
+        except Exception as e:
+            logger.error(f"Intraday indicator calculation failed: {e}")
+            return {}
+
+    # ── Pivot Points ──────────────────────────────────────────────────────────
+
+    async def _get_pivot_points_async(self, symbol: str, quote_data: Dict) -> Dict:
+        loop = asyncio.get_event_loop()
+        try:
+            pivots = await loop.run_in_executor(None, self._fetch_pivot_points, symbol)
+            return pivots
+        except Exception as e:
+            logger.debug(f"Pivot points fetch failed for {symbol}: {e}")
+            lp = quote_data.get("last_price", 100.0)
+            return {
+                "pivot": round(lp, 2),
+                "r1": round(lp * 1.01, 2),
+                "r2": round(lp * 1.02, 2),
+                "s1": round(lp * 0.99, 2),
+                "s2": round(lp * 0.98, 2),
+            }
+
+    def _fetch_pivot_points(self, symbol: str) -> Dict:
+        """Synchronous: fetch last 5 days of daily data, use previous session for pivots."""
+        try:
+            ticker = yf.Ticker(f"{symbol}.NS")
+            hist = ticker.history(period="5d", interval="1d")
+            if len(hist) < 2:
+                raise ValueError("Insufficient daily data")
+
+            prev = hist.iloc[-2]
+            H = float(prev["High"])
+            L = float(prev["Low"])
+            C = float(prev["Close"])
+
+            P = (H + L + C) / 3
+            R1 = 2 * P - L
+            R2 = P + (H - L)
+            S1 = 2 * P - H
+            S2 = P - (H - L)
+
+            return {
+                "pivot": round(P, 2),
+                "r1": round(R1, 2),
+                "r2": round(R2, 2),
+                "s1": round(S1, 2),
+                "s2": round(S2, 2),
+            }
+        except Exception as e:
+            logger.debug(f"_fetch_pivot_points failed for {symbol}: {e}")
+            return {}
+
+    async def _get_avg_volume(self, symbol: str) -> float:
+        """Get 20-day average daily volume from yfinance."""
+        loop = asyncio.get_event_loop()
+        try:
+            def _fetch():
+                ticker = yf.Ticker(f"{symbol}.NS")
+                hist = ticker.history(period="30d", interval="1d")
+                if hist.empty or "Volume" not in hist.columns:
+                    return 0.0
+                return float(hist["Volume"].mean())
+            return await loop.run_in_executor(None, _fetch)
+        except Exception:
+            return 0.0
+
+    # ── yfinance fallback for intraday (when Zerodha quotes unavailable) ──────
+
+    async def _intraday_fallback_yfinance(self, limit: int) -> List[Dict]:
+        """Fallback: use yfinance 5-minute data when Zerodha quotes are unavailable."""
+        logger.info("[Intraday] Using yfinance fallback for 5-minute candle analysis")
+        from app.engines.strategy_engine import strategy_engine
+
+        enriched = []
+        for symbol in INTRADAY_UNIVERSE[:30]:  # limit yfinance calls
+            try:
+                loop = asyncio.get_event_loop()
+                df = await loop.run_in_executor(
+                    None, self._fetch_5min_yfinance, symbol
+                )
+                if df.empty or len(df) < 5:
+                    continue
+
+                last_close = float(df["close"].iloc[-1])
+                volume = int(df["volume"].iloc[-1])
+
+                if volume < 100_000 or last_close < 10:
+                    continue
+
+                cand = {
+                    "symbol": symbol,
+                    "company_name": symbol,
+                    "last_price": last_close,
+                    "volume": volume,
+                    "instrument_token": 0,
+                    "prev_close": last_close,
+                    "day_change_pct": 0.0,
+                }
+
+                indicators = await self.calculate_intraday_indicators(df, cand)
+                if not indicators:
+                    continue
+
+                signal_data = strategy_engine.generate_intraday_signal(indicators)
+                enriched.append({
+                    **cand,
+                    "volume_ratio": 1.0,
+                    "indicators": indicators,
+                    "intraday_signal": signal_data.get("signal", "NEUTRAL"),
+                    "signal_strength": signal_data.get("strength", 0),
+                    "signal_reasons": signal_data.get("reasons", []),
+                    "hold_adjusted_score": signal_data.get("score", 0),
+                    "composite_score": signal_data.get("score", 0),
+                    "momentum_5d_pct": 0.0,
+                    "volatility_5d": 0.0,
+                })
+            except Exception as e:
+                logger.debug(f"yfinance fallback failed for {symbol}: {e}")
+                continue
+
+        enriched.sort(key=lambda x: x.get("signal_strength", 0), reverse=True)
+        return enriched[:limit]
+
+    def _fetch_5min_yfinance(self, symbol: str) -> pd.DataFrame:
+        try:
+            ticker = yf.Ticker(f"{symbol}.NS")
+            df = ticker.history(period="1d", interval="5m")
+            if df.empty:
+                return pd.DataFrame()
+            df = df.reset_index()
+            df.columns = df.columns.str.lower()
+            if "datetime" in df.columns:
+                df = df.rename(columns={"datetime": "date"})
+            for col in ["open", "high", "low", "close", "volume"]:
+                if col in df.columns:
+                    df[col] = df[col].astype(float)
+            return df
+        except Exception:
+            return pd.DataFrame()
+
+    # ── Swing indicators (60-day daily) ──────────────────────────────────────
+
     def _rank_by_hold_duration(
         self, stocks: List[Dict], hold_duration_days: int
     ) -> List[Dict]:
-        """
-        Re-score stocks based on how well their indicators suit the hold duration.
-
-        Intraday (0):   weight volume_ratio × volatility (want big moves today)
-        Short (1–7):    weight volume_ratio × momentum_5d × RSI_fitness
-        Medium (8–30):  weight trend_strength × RSI_fitness × volume_ratio
-        """
         for s in stocks:
             ind = s.get("indicators", {})
             vr = s.get("volume_ratio", 1.0)
@@ -106,18 +550,12 @@ class AnalysisService:
             rsi = ind.get("rsi", 50)
             trend = 1.0 if ind.get("trend") == "BULLISH" else 0.3
 
-            # RSI fitness: best between 55–72 (momentum zone, not overbought)
             rsi_fitness = 1.0 - abs(rsi - 63) / 37 if rsi else 0.5
             rsi_fitness = max(rsi_fitness, 0)
 
-            if hold_duration_days == 0:
-                # Intraday: want high volume + high intraday volatility
-                score = vr * 0.6 + vol * 0.4
-            elif hold_duration_days <= 7:
-                # Short-term: volume surge + momentum + RSI fitness
+            if hold_duration_days <= 7:
                 score = vr * 0.4 + mom * 0.35 + rsi_fitness * 0.25
             else:
-                # Medium-term: trend + RSI fitness + volume
                 score = trend * 0.4 + rsi_fitness * 0.35 + vr * 0.25
 
             s["hold_adjusted_score"] = round(score, 4)
@@ -126,10 +564,7 @@ class AnalysisService:
         return stocks
 
     async def calculate_technical_indicators(self, df: pd.DataFrame) -> Dict:
-        """
-        Calculate comprehensive technical indicators for a stock.
-        Returns empty dict if data is insufficient.
-        """
+        """Standard daily indicators for swing/delivery trades."""
         if df.empty or len(df) < 10:
             return {}
 
@@ -145,27 +580,23 @@ class AnalysisService:
             volume = df["volume"]
             last_close = float(close.iloc[-1])
 
-            # ── ATR (14-period) ───────────────────────────────────────────
             hl = high - low
             hc = (high - close.shift()).abs()
             lc = (low - close.shift()).abs()
             tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
             atr = float(tr.rolling(14).mean().iloc[-1])
 
-            # ── Moving Averages ───────────────────────────────────────────
             sma_20 = float(close.rolling(20).mean().iloc[-1])
             sma_50 = float(close.rolling(50).mean().iloc[-1]) if len(df) >= 50 else None
-            ema_9  = float(close.ewm(span=9, adjust=False).mean().iloc[-1])
+            ema_9 = float(close.ewm(span=9, adjust=False).mean().iloc[-1])
             ema_21 = float(close.ewm(span=21, adjust=False).mean().iloc[-1])
 
-            # ── RSI (14-period) ───────────────────────────────────────────
             delta = close.diff()
             gain = delta.where(delta > 0, 0).rolling(14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
             rs = gain / loss.replace(0, float("nan"))
             rsi = float((100 - 100 / (1 + rs)).iloc[-1])
 
-            # ── MACD ──────────────────────────────────────────────────────
             ema_12 = close.ewm(span=12, adjust=False).mean()
             ema_26 = close.ewm(span=26, adjust=False).mean()
             macd_line = ema_12 - ema_26
@@ -173,22 +604,17 @@ class AnalysisService:
             macd_hist = float((macd_line - signal_line).iloc[-1])
             macd_val = float(macd_line.iloc[-1])
 
-            # ── Volume metrics ────────────────────────────────────────────
             avg_vol_20 = float(volume.rolling(20).mean().iloc[-1])
             latest_vol = float(volume.iloc[-1])
             volume_ratio = latest_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
 
-            # ── Trend ─────────────────────────────────────────────────────
             trend = "BULLISH" if last_close > sma_20 else "BEARISH"
             if sma_50 and last_close > sma_50 and last_close > sma_20:
                 trend = "STRONG_BULLISH"
 
-            # ── Support / Resistance (simple 20-day) ─────────────────────
             support_20d = float(low.rolling(20).min().iloc[-1])
             resistance_20d = float(high.rolling(20).max().iloc[-1])
-
-            # ── 52-week high proximity ────────────────────────────────────
-            high_52w = float(high.max()) if len(df) >= 52 else float(high.max())
+            high_52w = float(high.max())
             pct_from_52w_high = round((last_close - high_52w) / high_52w * 100, 2)
 
             return {
@@ -218,7 +644,6 @@ class AnalysisService:
     async def get_top_volume_stocks_with_data(
         self, limit: int, analysis_date: datetime
     ) -> List[Dict]:
-        """Legacy method — delegates to screen_and_enrich."""
         return await self.screen_and_enrich(limit=limit, analysis_date=analysis_date)
 
 

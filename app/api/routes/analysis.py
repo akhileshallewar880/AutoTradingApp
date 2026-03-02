@@ -27,13 +27,15 @@ async def generate_analysis(request: AnalysisRequest):
     """
     Step 1: Generate AI analysis with trade recommendations.
 
-    New pipeline:
-      1. Screen entire NSE market (~1800 stocks) for top movers by volume × momentum
-      2. Enrich top candidates with 60-day candle data + full technical indicators
-      3. Re-rank by hold-duration-aware composite score
-      4. Send to GPT-4o with momentum-focused prompt → picks best N stocks
-      5. Calculate position sizing, validate against balance
-      6. Return comprehensive analysis for user review
+    Intraday pipeline (hold_duration_days=0):
+      1. Zerodha live quotes for Nifty 50 + Next 50
+      2. 5-minute candles → VWAP, BB, RSI, MACD, Stochastic, Pivot Points
+      3. Strategy engine generates preliminary BUY/SELL signals
+      4. LLM picks best N stocks (supports BUY long and SELL short)
+      5. Position sizing + balance validation
+
+    Swing pipeline (hold_duration_days > 0):
+      Same as before — yfinance daily candles + standard indicators
     """
     try:
         logger.info(
@@ -51,8 +53,7 @@ async def generate_analysis(request: AnalysisRequest):
             logger.warning(f"Balance fetch failed, using default: {e}")
             available_balance = 100000
 
-        # ── Stage 1+2: Screen NSE universe + enrich ──────────────────────
-        # Fetch 3× the requested stocks so LLM has good candidates to pick from
+        # ── Stage 1+2: Screen + enrich ────────────────────────────────────
         screen_limit = min(request.num_stocks * 3, 60)
         stocks_data = await analysis_service.screen_and_enrich(
             limit=screen_limit,
@@ -69,10 +70,11 @@ async def generate_analysis(request: AnalysisRequest):
 
         logger.info(f"Screener returned {len(stocks_data)} enriched candidates for LLM")
 
-        # ── Prepare compact market data for LLM (drop raw DataFrame) ─────
+        # ── Prepare compact market data for LLM ───────────────────────────
+        is_intraday = request.hold_duration_days == 0
         market_data_for_llm = []
         for stock in stocks_data:
-            market_data_for_llm.append({
+            entry = {
                 "symbol": stock["symbol"],
                 "company_name": stock.get("company_name", stock["symbol"]),
                 "last_price": stock["last_price"],
@@ -84,9 +86,15 @@ async def generate_analysis(request: AnalysisRequest):
                 "composite_score": stock.get("composite_score", 0),
                 "hold_adjusted_score": stock.get("hold_adjusted_score", 0),
                 "indicators": stock.get("indicators", {}),
-            })
+            }
+            if is_intraday:
+                # Include intraday-specific fields
+                entry["intraday_signal"] = stock.get("intraday_signal", "NEUTRAL")
+                entry["signal_strength"] = stock.get("signal_strength", 0)
+                entry["signal_reasons"] = stock.get("signal_reasons", [])
+            market_data_for_llm.append(entry)
 
-        # ── Stage 3: LLM picks best stocks ───────────────────────────────
+        # ── Stage 3: LLM analysis ─────────────────────────────────────────
         llm_response = await llm_agent.analyze_opportunities(
             market_data=market_data_for_llm,
             available_balance=available_balance,
@@ -96,19 +104,15 @@ async def generate_analysis(request: AnalysisRequest):
             num_stocks=request.num_stocks,
         )
 
-        # ── Stage 4: Position sizing + validation ─────────────────────────
-        stock_analyses = []
-        total_investment = 0.0
-        total_risk = 0.0
-        max_profit = 0.0
-        max_loss = 0.0
-
-        # First pass: calculate all positions
+        # ── Stage 4: Position sizing + validation ──────────────────────────
         preliminary_stocks = []
+        total_investment = 0.0
+
         for stock_rec in llm_response.get("stocks", []):
             entry = float(stock_rec.get("entry_price", 0))
             sl = float(stock_rec.get("stop_loss", 0))
             target = float(stock_rec.get("target_price", 0))
+            action = stock_rec.get("action", "BUY").upper()
 
             if entry <= 0 or sl <= 0 or target <= 0:
                 logger.warning(
@@ -117,49 +121,77 @@ async def generate_analysis(request: AnalysisRequest):
                 )
                 continue
 
-            if sl >= entry:
-                # LLM confused stop-loss and entry — swap them
-                logger.warning(
-                    f"Auto-correcting {stock_rec.get('stock_symbol')}: "
-                    f"stop_loss ({sl}) >= entry ({entry}) — swapping to fix ordering"
-                )
-                entry, sl = sl, entry
+            # ── Price ordering validation (different for BUY vs SELL/short) ──
+            if action == "SELL":
+                # SHORT: target < entry < stop_loss
+                if sl <= entry:
+                    # Auto-correct: sl should be ABOVE entry for shorts
+                    distance = abs(entry - target) if target < entry else entry * 0.015
+                    sl = round(entry + distance * 0.6, 2)
+                    logger.warning(
+                        f"Auto-correcting {stock_rec.get('stock_symbol')} SHORT: "
+                        f"stop_loss adjusted to {sl} (must be above entry {entry})"
+                    )
+                if target >= entry:
+                    # Auto-correct: target should be BELOW entry for shorts
+                    distance = abs(sl - entry)
+                    target = round(entry - distance * 1.5, 2)
+                    logger.warning(
+                        f"Auto-correcting {stock_rec.get('stock_symbol')} SHORT: "
+                        f"target adjusted to {target} (must be below entry {entry})"
+                    )
 
-            if target <= entry:
-                # LLM gave a bad target — set minimum 1:1 R:R
-                fixed_target = round(entry + (entry - sl), 2)
-                logger.warning(
-                    f"Auto-correcting {stock_rec.get('stock_symbol')}: "
-                    f"target ({target}) <= entry ({entry}) — setting to {fixed_target} (1:1 R:R)"
-                )
-                target = fixed_target
+                risk_amount = (sl - entry) * 1          # per share
+                risk_reward_ratio = (entry - target) / (sl - entry) if sl > entry else 1.0
+
+            else:
+                # BUY (long): stop_loss < entry < target
+                action = "BUY"
+                if sl >= entry:
+                    logger.warning(
+                        f"Auto-correcting {stock_rec.get('stock_symbol')} BUY: "
+                        f"stop_loss ({sl}) >= entry ({entry}) — swapping"
+                    )
+                    entry, sl = sl, entry
+
+                if target <= entry:
+                    fixed_target = round(entry + (entry - sl), 2)
+                    logger.warning(
+                        f"Auto-correcting {stock_rec.get('stock_symbol')} BUY: "
+                        f"target ({target}) <= entry ({entry}) — setting to {fixed_target}"
+                    )
+                    target = fixed_target
+
+                risk_amount = (entry - sl) * 1          # per share
+                risk_reward_ratio = (target - entry) / (entry - sl) if entry > sl else 1.0
 
             quantity = risk_engine.calculate_quantity(
                 entry_price=entry,
                 stop_loss=sl,
                 risk_per_trade=request.risk_percent,
                 capital=available_balance,
+                action=action,
             )
 
             if quantity == 0:
                 continue
 
             investment_needed = entry * quantity
-            risk_amount = abs(entry - sl) * quantity
+            risk_total = abs(entry - sl) * quantity
             potential_profit = abs(target - entry) * quantity
-            risk_reward_ratio = (target - entry) / (entry - sl)
 
             preliminary_stocks.append({
                 "stock_rec": stock_rec,
+                "action": action,
                 "entry": entry,
                 "sl": sl,
                 "target": target,
                 "quantity": quantity,
                 "investment_needed": investment_needed,
-                "risk_amount": risk_amount,
+                "risk_amount": risk_total,
                 "potential_profit": potential_profit,
-                "potential_loss": risk_amount,
-                "risk_reward_ratio": risk_reward_ratio,
+                "potential_loss": risk_total,
+                "risk_reward_ratio": round(risk_reward_ratio, 2),
             })
             total_investment += investment_needed
 
@@ -178,16 +210,16 @@ async def generate_analysis(request: AnalysisRequest):
                 stock["potential_profit"] = abs(stock["target"] - stock["entry"]) * stock["quantity"]
                 stock["potential_loss"] = stock["risk_amount"]
                 total_investment += stock["investment_needed"]
-            logger.info(f"Scaled total investment to ₹{total_investment:,.2f}")
 
-        # Second pass: build final StockAnalysis objects
+        # Build final StockAnalysis objects
+        stock_analyses = []
         total_investment = total_risk = max_profit = max_loss = 0.0
         for stock in preliminary_stocks:
             rec = stock["stock_rec"]
             stock_analyses.append(StockAnalysis(
                 stock_symbol=rec.get("stock_symbol", ""),
                 company_name=rec.get("company_name"),
-                action=rec.get("action", "BUY"),
+                action=stock["action"],
                 entry_price=stock["entry"],
                 stop_loss=stock["sl"],
                 target_price=stock["target"],
@@ -195,7 +227,7 @@ async def generate_analysis(request: AnalysisRequest):
                 risk_amount=round(stock["risk_amount"], 2),
                 potential_profit=round(stock["potential_profit"], 2),
                 potential_loss=round(stock["potential_loss"], 2),
-                risk_reward_ratio=round(stock["risk_reward_ratio"], 2),
+                risk_reward_ratio=stock["risk_reward_ratio"],
                 confidence_score=float(rec.get("confidence_score", 0.5)),
                 ai_reasoning=rec.get("reasoning", ""),
                 days_to_target=rec.get("days_to_target"),
@@ -208,18 +240,16 @@ async def generate_analysis(request: AnalysisRequest):
         if not stock_analyses:
             logger.error(
                 f"All {len(llm_response.get('stocks', []))} LLM-recommended stocks failed "
-                f"price validation. Check WARNING logs above for per-stock reasons."
+                f"price validation. Check WARNING logs above."
             )
             raise HTTPException(
                 status_code=503,
                 detail=(
                     "No valid trade setups found in this scan — the LLM recommendations "
-                    "did not pass price validation (stop-loss above entry or target below entry). "
-                    "Please try again; the screener will fetch fresh market data."
+                    "did not pass price validation. Please try again."
                 )
             )
 
-        # Final balance check
         if total_investment > available_balance:
             raise HTTPException(
                 status_code=400,
@@ -229,7 +259,6 @@ async def generate_analysis(request: AnalysisRequest):
                 ),
             )
 
-        # ── Build response ────────────────────────────────────────────────
         analysis_id = str(uuid.uuid4())
         analysis = AnalysisResponse(
             analysis_id=analysis_id,
@@ -245,7 +274,7 @@ async def generate_analysis(request: AnalysisRequest):
                 "available_balance": available_balance,
                 "sectors": request.sectors,
                 "hold_duration_days": request.hold_duration_days,
-                "universe": "Full NSE Market",
+                "universe": "Nifty 50 + Next 50" if is_intraday else "Full NSE Market",
             },
             available_balance=available_balance,
             status="PENDING_CONFIRMATION",
@@ -270,10 +299,7 @@ async def confirm_analysis(
 ):
     """
     Step 2: User confirms the analysis and triggers execution.
-    Starts trade execution in the background.
-
-    Returns HTTP 423 immediately if NSE market is closed so the
-    client can surface a clear, actionable message to the user.
+    Returns HTTP 423 immediately if NSE market is closed.
     """
     try:
         analysis_data = await db.get_analysis(analysis_id)
@@ -284,17 +310,10 @@ async def confirm_analysis(
             await db.update_analysis_status(analysis_id, "CANCELLED")
             return {"status": "cancelled", "message": "Analysis cancelled by user"}
 
-        # ── Market hours guard ────────────────────────────────────────────
-        # Check BEFORE starting background execution so the user gets an
-        # immediate, clear response instead of a silent background failure.
         if not order_service.is_market_open():
             market_msg = order_service.market_status_message()
             logger.warning(f"Execution blocked — market closed: {market_msg}")
-            raise HTTPException(
-                status_code=423,  # 423 Locked — semantically: resource temporarily unavailable
-                detail=market_msg,
-            )
-        # ─────────────────────────────────────────────────────────────────
+            raise HTTPException(status_code=423, detail=market_msg)
 
         await db.update_analysis_status(analysis_id, "EXECUTING")
 
@@ -327,7 +346,7 @@ async def execute_trades(
     hold_duration_days: int = 0,
     stock_overrides: list = None,
 ):
-    """Background task: execute all trades for an analysis."""
+    """Background task: execute all trades for an analysis (supports BUY and SELL/short)."""
     try:
         zerodha_service.kite.set_access_token(access_token)
 
@@ -341,7 +360,7 @@ async def execute_trades(
 
         stocks = analysis_data.get("stocks", [])
 
-        # Apply user-edited quantity overrides (keyed by stock_symbol)
+        # Apply user-edited quantity overrides
         if stock_overrides:
             override_map = {
                 o["stock_symbol"]: o["quantity"]
@@ -354,8 +373,7 @@ async def execute_trades(
                     original_qty = stock["quantity"]
                     stock["quantity"] = override_map[sym]
                     logger.info(
-                        f"Quantity override applied for {sym}: "
-                        f"{original_qty} → {override_map[sym]}"
+                        f"Quantity override for {sym}: {original_qty} → {override_map[sym]}"
                     )
 
         async def update_callback(update: ExecutionUpdate):
@@ -365,18 +383,23 @@ async def execute_trades(
             active_executions[analysis_id].append(update)
 
         for stock in stocks:
-            if stock["action"] == "BUY":
-                await execution_agent.execute_trade_with_gtt(
-                    stock_symbol=stock["stock_symbol"],
-                    quantity=stock["quantity"],
-                    entry_price=stock["entry_price"],
-                    stop_loss=stock["stop_loss"],
-                    target=stock["target_price"],
-                    analysis_id=analysis_id,
-                    update_callback=update_callback,
-                    access_token=access_token,
-                    hold_duration_days=hold_duration_days,
-                )
+            action = stock.get("action", "BUY").upper()
+            if action not in ("BUY", "SELL"):
+                logger.warning(f"Skipping {stock.get('stock_symbol')}: unsupported action {action}")
+                continue
+
+            await execution_agent.execute_trade_with_gtt(
+                stock_symbol=stock["stock_symbol"],
+                quantity=stock["quantity"],
+                entry_price=stock["entry_price"],
+                stop_loss=stock["stop_loss"],
+                target=stock["target_price"],
+                analysis_id=analysis_id,
+                update_callback=update_callback,
+                access_token=access_token,
+                hold_duration_days=hold_duration_days,
+                action=action,
+            )
 
         await db.update_analysis_status(analysis_id, "COMPLETED")
 

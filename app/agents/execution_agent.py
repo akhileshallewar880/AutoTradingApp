@@ -7,12 +7,19 @@ from app.models.analysis_models import ExecutionUpdate
 from typing import List, Dict, Callable
 from datetime import datetime
 
+
 class ExecutionAgent:
     """
     Agent responsible for executing trades and managing orders.
-    Handles the complete workflow: Buy Order -> Wait for Fill -> Place GTT
+
+    Workflow:
+      1. Place entry order  (BUY for long / SELL for short-sell) via MIS or CNC
+      2. Wait for order fill
+      3. Place GTT (Good Till Triggered) with stop-loss + target for both MIS and CNC
+         - Long  (BUY entry) : GTT SELL orders — stop-loss leg + target leg
+         - Short (SELL entry): GTT BUY  orders — target leg (cover profit) + SL leg
     """
-    
+
     def __init__(self):
         self.zs = zerodha_service
         self.os = order_service
@@ -25,148 +32,160 @@ class ExecutionAgent:
         stop_loss: float,
         target: float,
         analysis_id: str,
-        access_token: str,  # User's access token for real orders
+        access_token: str,
         update_callback: Callable = None,
         hold_duration_days: int = 0,
+        action: str = "BUY",
     ) -> Dict:
         """
         Execute a complete trade workflow:
-        1. Place buy order (MIS for intraday, CNC for delivery)
-        2. Monitor until filled
-        3. Place GTT for target and stop-loss (delivery only — skipped for intraday)
-        
+          1. Place entry order  (BUY or SELL/short)
+          2. Monitor until filled
+          3. Place GTT with stop-loss + target (works for both MIS and CNC)
+
         Args:
-            stock_symbol: Trading symbol
-            quantity: Quantity to buy
-            entry_price: Entry price
-            stop_loss: Stop loss price
-            target: Target price
-            analysis_id: Analysis ID for tracking
-            access_token: User's Zerodha access token
-            update_callback: Async function to call with status updates
-            hold_duration_days: 0 = intraday (MIS), >0 = delivery (CNC)
-        
-        Returns:
-            Dict with execution status and order IDs
+            action           : "BUY" (long) or "SELL" (intraday short sell)
+            hold_duration_days: 0 → MIS (intraday); >0 → CNC (delivery)
         """
-        # Determine product type based on hold duration
         is_intraday = hold_duration_days == 0
         product = "MIS" if is_intraday else "CNC"
+        is_short = action == "SELL"
+
         execution_log = {
             "stock_symbol": stock_symbol,
+            "action": action,
             "status": "STARTED",
-            "buy_order_id": None,
+            "entry_order_id": None,
             "gtt_order_id": None,
-            "updates": []
+            "updates": [],
         }
-        
-        # Set access token for this execution
+
         self.zs.kite.set_access_token(access_token)
-        
+
         try:
-            # Step 1: Place Buy Order
+            # ── Step 1: Place entry order ──────────────────────────────────
+            entry_label = "SHORT SELL" if is_short else "BUY"
             await self._send_update(
-                analysis_id, stock_symbol, "ORDER_PLACING",
-                f"Placing BUY order for {quantity} shares",
-                update_callback
+                analysis_id,
+                stock_symbol,
+                "ORDER_PLACING",
+                f"Placing {entry_label} {product} order for {quantity} shares @ ₹{entry_price:.2f}",
+                update_callback,
             )
-            
-            buy_order_id = await self.os.execute_trade(
+
+            entry_order_id = await self.os.execute_trade(
                 symbol=stock_symbol,
                 quantity=quantity,
                 price=entry_price,
                 stop_loss=stop_loss,
                 target=target,
                 product=product,
+                transaction_type=action,
             )
-            
-            execution_log["buy_order_id"] = buy_order_id
-            
+
+            execution_log["entry_order_id"] = entry_order_id
+
             await self._send_update(
-                analysis_id, stock_symbol, "ORDER_PLACED",
-                f"BUY order placed successfully. Order ID: {buy_order_id}",
+                analysis_id,
+                stock_symbol,
+                "ORDER_PLACED",
+                f"{entry_label} order placed. Order ID: {entry_order_id}",
                 update_callback,
-                order_id=buy_order_id
+                order_id=entry_order_id,
             )
-            
-            # Step 2: Monitor order status until filled
+
+            # ── Step 2: Monitor until filled ───────────────────────────────
             await self._send_update(
-                analysis_id, stock_symbol, "ORDER_MONITORING",
-                "Monitoring order status...",
+                analysis_id,
+                stock_symbol,
+                "ORDER_MONITORING",
+                "Monitoring order status…",
                 update_callback,
-                order_id=buy_order_id
+                order_id=entry_order_id,
             )
-            
-            is_filled = await self._wait_for_order_fill(buy_order_id, timeout=300)
-            
+
+            is_filled = await self._wait_for_order_fill(entry_order_id, timeout=300)
+
             if not is_filled:
                 await self._send_update(
-                    analysis_id, stock_symbol, "ORDER_TIMEOUT",
-                    "Order not filled within timeout period",
+                    analysis_id,
+                    stock_symbol,
+                    "ORDER_TIMEOUT",
+                    "Order not filled within timeout — GTT not placed.",
                     update_callback,
-                    order_id=buy_order_id
+                    order_id=entry_order_id,
                 )
                 execution_log["status"] = "TIMEOUT"
                 return execution_log
-            
+
             await self._send_update(
-                analysis_id, stock_symbol, "ORDER_FILLED",
-                f"BUY order filled successfully at ₹{entry_price}",
+                analysis_id,
+                stock_symbol,
+                "ORDER_FILLED",
+                f"{entry_label} order filled at ₹{entry_price:.2f}",
                 update_callback,
-                order_id=buy_order_id
+                order_id=entry_order_id,
             )
-            
-            # Step 3: Place GTT for Target and Stop Loss (delivery only)
-            if is_intraday:
-                # Intraday trades use MIS — no GTT needed.
-                # Positions are auto-squared off by the broker at market close.
-                await self._send_update(
-                    analysis_id, stock_symbol, "INTRADAY_NOTE",
-                    f"Intraday (MIS) trade — no GTT placed. "
-                    f"Position will auto-square off at 3:15 PM IST.",
-                    update_callback
+
+            # ── Step 3: Place GTT (for both MIS and CNC) ──────────────────
+            if is_short:
+                gtt_desc = (
+                    f"Placing GTT (SHORT cover): "
+                    f"target ₹{target:.2f} (profit), SL ₹{stop_loss:.2f} (loss cap)"
                 )
             else:
-                await self._send_update(
-                    analysis_id, stock_symbol, "GTT_PLACING",
-                    f"Placing GTT with SL: ₹{stop_loss}, Target: ₹{target}",
-                    update_callback
+                gtt_desc = (
+                    f"Placing GTT: SL ₹{stop_loss:.2f}, Target ₹{target:.2f}"
                 )
-                
-                gtt_id = await self._place_gtt_order(
-                    stock_symbol,
-                    quantity,
-                    entry_price,
-                    stop_loss,
-                    target
-                )
-                
-                execution_log["gtt_order_id"] = gtt_id
-                
-                await self._send_update(
-                    analysis_id, stock_symbol, "GTT_PLACED",
-                    f"GTT placed successfully. GTT ID: {gtt_id}",
-                    update_callback,
-                    order_id=gtt_id
-                )
-            
-            execution_log["status"] = "COMPLETED"
-            
+
             await self._send_update(
-                analysis_id, stock_symbol, "COMPLETED",
-                f"Trade execution completed for {stock_symbol} ({product})",
-                update_callback
+                analysis_id, stock_symbol, "GTT_PLACING", gtt_desc, update_callback
             )
-            
+
+            gtt_id = await self._place_gtt_order(
+                symbol=stock_symbol,
+                quantity=quantity,
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                target=target,
+                product=product,
+                is_short=is_short,
+            )
+
+            execution_log["gtt_order_id"] = gtt_id
+
+            gtt_note = ""
+            if is_intraday:
+                gtt_note = (
+                    " ⚠ MIS positions auto-square-off at 3:15 PM IST. "
+                    "Cancel this GTT if auto-squareoff occurs first."
+                )
+
+            await self._send_update(
+                analysis_id,
+                stock_symbol,
+                "GTT_PLACED",
+                f"GTT placed successfully. GTT ID: {gtt_id}.{gtt_note}",
+                update_callback,
+                order_id=str(gtt_id),
+            )
+
+            execution_log["status"] = "COMPLETED"
+
+            await self._send_update(
+                analysis_id,
+                stock_symbol,
+                "COMPLETED",
+                f"Trade execution completed — {stock_symbol} {entry_label} {product}",
+                update_callback,
+            )
+
             return execution_log
-            
+
         except MarketClosedException as e:
-            # Market is closed — surface a clear, actionable message
             logger.warning(f"Market closed during execution of {stock_symbol}: {e}")
             await self._send_update(
-                analysis_id, stock_symbol, "MARKET_CLOSED",
-                str(e),
-                update_callback
+                analysis_id, stock_symbol, "MARKET_CLOSED", str(e), update_callback
             )
             execution_log["status"] = "MARKET_CLOSED"
             execution_log["error"] = str(e)
@@ -175,89 +194,115 @@ class ExecutionAgent:
         except Exception as e:
             logger.error(f"Trade execution failed for {stock_symbol}: {e}")
             await self._send_update(
-                analysis_id, stock_symbol, "ERROR",
+                analysis_id,
+                stock_symbol,
+                "ERROR",
                 f"Execution failed: {str(e)}",
-                update_callback
+                update_callback,
             )
             execution_log["status"] = "FAILED"
             execution_log["error"] = str(e)
             return execution_log
 
-    async def _wait_for_order_fill(self, order_id: str, timeout: int = 300) -> bool:
-        """
-        Poll order status until filled or timeout.
-        
-        Args:
-            order_id: Order ID to monitor
-            timeout: Timeout in seconds
-        
-        Returns:
-            True if order filled, False otherwise
-        """
-        start_time = asyncio.get_event_loop().time()
-        poll_interval = 2  # Check every 2 seconds
-        
-        while asyncio.get_event_loop().time() - start_time < timeout:
-            try:
-                order_status = await self.zs.get_order_status(order_id)
-                status = order_status.get('status', '').upper()
-                
-                logger.info(f"Order {order_id} status: {status}")
-                
-                if status == 'COMPLETE':
-                    return True
-                elif status in ['CANCELLED', 'REJECTED']:
-                    logger.warning(f"Order {order_id} was {status}")
-                    return False
-                
-                await asyncio.sleep(poll_interval)
-                
-            except Exception as e:
-                logger.error(f"Error checking order status: {e}")
-                await asyncio.sleep(poll_interval)
-        
-        return False
+    # ── GTT placement ─────────────────────────────────────────────────────────
 
     async def _place_gtt_order(
         self,
         symbol: str,
         quantity: int,
-        last_price: float,
+        entry_price: float,
         stop_loss: float,
-        target: float
+        target: float,
+        product: str,
+        is_short: bool = False,
     ) -> str:
-        """Place GTT OCO (One-Cancels-Other) order for target and stop-loss."""
-        
-        # GTT order configuration
-        trigger_values = [stop_loss, target]
-        
-        orders = [
-            {
-                "transaction_type": "SELL",
-                "quantity": quantity,
-                "order_type": "LIMIT",
-                "product": "CNC",
-                "price": stop_loss
-            },
-            {
-                "transaction_type": "SELL",
-                "quantity": quantity,
-                "order_type": "LIMIT",
-                "product": "CNC",
-                "price": target
-            }
-        ]
-        
+        """
+        Place a two-leg GTT (One-Cancels-Other) for long or short positions.
+
+        Long  (BUY entry):
+          trigger_values = [stop_loss, target]  (lower = SL, upper = target)
+          GTT orders: SELL at stop_loss + SELL at target
+
+        Short (SELL entry):
+          trigger_values = [target, stop_loss]  (lower = profit target, upper = SL)
+          GTT orders: BUY at target (cover profit) + BUY at stop_loss (cover loss)
+        """
+        if is_short:
+            # Short: target < entry < stop_loss
+            trigger_values = sorted([target, stop_loss])
+            orders = [
+                {
+                    "transaction_type": "BUY",
+                    "quantity": quantity,
+                    "order_type": "LIMIT",
+                    "product": product,
+                    "price": target,     # cover at target = profit
+                },
+                {
+                    "transaction_type": "BUY",
+                    "quantity": quantity,
+                    "order_type": "LIMIT",
+                    "product": product,
+                    "price": stop_loss,  # cover at stop_loss = loss cap
+                },
+            ]
+        else:
+            # Long: stop_loss < entry < target
+            trigger_values = sorted([stop_loss, target])
+            orders = [
+                {
+                    "transaction_type": "SELL",
+                    "quantity": quantity,
+                    "order_type": "LIMIT",
+                    "product": product,
+                    "price": stop_loss,  # exit at SL = loss protection
+                },
+                {
+                    "transaction_type": "SELL",
+                    "quantity": quantity,
+                    "order_type": "LIMIT",
+                    "product": product,
+                    "price": target,     # exit at target = profit
+                },
+            ]
+
         gtt_id = await self.zs.place_gtt(
             tradingsymbol=symbol,
             exchange="NSE",
             trigger_values=trigger_values,
-            last_price=last_price,
+            last_price=entry_price,
             orders=orders,
-            gtt_type="two-leg"
+            gtt_type="two-leg",
         )
-        
         return gtt_id
+
+    # ── Order monitoring ──────────────────────────────────────────────────────
+
+    async def _wait_for_order_fill(self, order_id: str, timeout: int = 300) -> bool:
+        start_time = asyncio.get_event_loop().time()
+        poll_interval = 2
+
+        while asyncio.get_event_loop().time() - start_time < timeout:
+            try:
+                order_status = await self.zs.get_order_status(order_id)
+                status = order_status.get("status", "").upper()
+                logger.info(f"Order {order_id} status: {status}")
+
+                if status == "COMPLETE":
+                    return True
+                elif status in ["CANCELLED", "REJECTED"]:
+                    logger.warning(f"Order {order_id} was {status}")
+                    return False
+
+                await asyncio.sleep(poll_interval)
+
+            except Exception as e:
+                logger.error(f"Error checking order status: {e}")
+                await asyncio.sleep(poll_interval)
+
+        return False
+
+    # ── Update helper ─────────────────────────────────────────────────────────
 
     async def _send_update(
         self,
@@ -266,17 +311,17 @@ class ExecutionAgent:
         update_type: str,
         message: str,
         callback: Callable = None,
-        order_id: str = None
+        order_id: str = None,
     ):
-        """Send execution update via callback."""
         if callback:
             update = ExecutionUpdate(
                 analysis_id=analysis_id,
                 stock_symbol=stock_symbol,
                 update_type=update_type,
                 message=message,
-                order_id=order_id
+                order_id=order_id,
             )
             await callback(update)
+
 
 execution_agent = ExecutionAgent()
