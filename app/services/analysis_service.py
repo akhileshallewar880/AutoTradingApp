@@ -5,29 +5,18 @@ from app.core.logging import logger
 from typing import List, Dict, Optional
 import pandas as pd
 import pytz
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
-# ── Intraday universe: Nifty 50 + top Nifty Next 50 (high-liquidity stocks) ──
-INTRADAY_UNIVERSE = [
-    # Nifty 50 — most liquid, high-volume, moderately volatile
+# ── Last-resort fallback universe (only used if NSE CSV download and dynamic
+#    screening both fail completely) ──────────────────────────────────────────
+_INTRADAY_LAST_RESORT = [
     "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-    "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK",
-    "LT", "AXISBANK", "ASIANPAINT", "MARUTI", "SUNPHARMA",
-    "TITAN", "BAJFINANCE", "ULTRACEMCO", "WIPRO", "HCLTECH",
-    "TECHM", "POWERGRID", "NTPC", "ONGC", "M&M",
-    "TATAMOTORS", "TATASTEEL", "BAJAJFINSV", "ADANIPORTS", "INDUSINDBK",
-    "DRREDDY", "CIPLA", "DIVISLAB", "EICHERMOT", "GRASIM",
-    "HEROMOTOCO", "JSWSTEEL", "BRITANNIA", "COALINDIA", "TATACONSUM",
-    "SBILIFE", "APOLLOHOSP", "HINDALCO", "BAJAJ-AUTO", "ADANIENT",
-    "BPCL", "SHREECEM", "HDFCLIFE", "BEL", "NESTLEIND",
-    # Nifty Next 50 highlights — also highly liquid
-    "PIDILITIND", "SIEMENS", "HAVELLS", "MUTHOOTFIN", "CHOLAFIN",
-    "TATAPOWER", "CANBK", "PNB", "BANKBARODA", "FEDERALBNK",
-    "IRCTC", "ZOMATO", "DMART", "TRENT", "DIXON",
-    "VOLTAS", "ESCORTS", "ASHOKLEY", "TVSMOTOR", "SAIL",
-    "NMDC", "VEDL", "GAIL", "RECLTD", "PFC",
-    "CONCOR", "DLF", "LTIM", "MPHASIS", "COFORGE",
+    "SBIN", "BHARTIARTL", "KOTAKBANK", "LT", "AXISBANK",
+    "WIPRO", "HCLTECH", "TECHM", "POWERGRID", "NTPC",
+    "JSWSTEEL", "HINDALCO", "COALINDIA", "GAIL", "RECLTD",
+    "ZOMATO", "TRENT", "DIXON", "IRCTC", "DLF",
+    "LTIM", "MPHASIS", "COFORGE", "PFC", "VEDL",
 ]
 
 
@@ -115,31 +104,41 @@ class AnalysisService:
     async def screen_and_enrich_intraday(self, limit: int) -> List[Dict]:
         """
         Intraday pipeline:
-          1. Live quotes for Nifty 50 + Next 50 via Zerodha quote API
-          2. Filter by volume (>200K today), price range
-          3. Fetch today's 5-minute candles for top candidates via Zerodha historical
-          4. Calculate VWAP, BB, RSI, MACD, Stochastic, Pivot Points
-          5. Generate preliminary BUY/SELL signal per stock
-          6. Return top `limit` stocks sorted by signal strength + volume
+          1. Dynamically screen top movers from full NSE universe (yfinance 5d)
+          2. Live quotes for screened candidates via Zerodha quote API
+          3. Filter by volume (>200K today), price range
+          4. Fetch today's 5-minute candles for top candidates via Zerodha historical
+          5. Calculate VWAP, BB, RSI, MACD, Stochastic, Pivot Points
+          6. Generate preliminary BUY/SELL signal per stock
+          7. Return top `limit` stocks sorted by signal strength + volume
         """
-        # Import here to avoid circular import at module level
         from app.services.zerodha_service import zerodha_service
         from app.engines.strategy_engine import strategy_engine
 
-        logger.info(
-            f"[Intraday] Fetching live quotes for {len(INTRADAY_UNIVERSE)} stocks..."
-        )
+        # ── Step 1: Dynamic screening from full NSE universe ───────────────
+        logger.info("[Intraday] Dynamically screening top intraday candidates from NSE universe...")
+        pre_screened = await self.ds.screen_top_movers(limit=80, hold_duration_days=0)
 
-        # ── Step 1: Live quotes via Zerodha ────────────────────────────────
+        if not pre_screened:
+            logger.warning("[Intraday] Dynamic screening returned no candidates, using last-resort list")
+            pre_screened = [{"symbol": s, "company_name": s, "last_price": 0,
+                             "volume": 0, "volume_ratio": 1.0, "day_change_pct": 0.0,
+                             "momentum_5d_pct": 0.0, "volatility_5d": 0.0}
+                            for s in _INTRADAY_LAST_RESORT]
+
+        universe = [c["symbol"] for c in pre_screened]
+        logger.info(f"[Intraday] Fetching live quotes for {len(universe)} dynamically screened stocks...")
+
+        # ── Step 2: Live quotes via Zerodha ────────────────────────────────
         try:
-            quotes = await zerodha_service.get_quote(INTRADAY_UNIVERSE)
+            quotes = await zerodha_service.get_quote(universe)
         except Exception as e:
             logger.error(f"[Intraday] Zerodha quote fetch failed: {e}. Falling back to yfinance.")
-            return await self._intraday_fallback_yfinance(limit)
+            return await self._intraday_fallback_yfinance(limit, pre_screened)
 
-        # ── Step 2: Build candidate list ───────────────────────────────────
+        # ── Step 3: Build candidate list ───────────────────────────────────
         candidates = []
-        for symbol in INTRADAY_UNIVERSE:
+        for symbol in universe:
             quote_key = f"NSE:{symbol}"
             if quote_key not in quotes:
                 continue
@@ -180,13 +179,13 @@ class AnalysisService:
 
         if not candidates:
             logger.warning("[Intraday] No candidates from live quotes, using yfinance fallback")
-            return await self._intraday_fallback_yfinance(limit)
+            return await self._intraday_fallback_yfinance(limit, pre_screened)
 
         # Sort by volume descending, take top 25 for candle analysis
         candidates.sort(key=lambda x: x["volume"], reverse=True)
         top_candidates = candidates[: min(25, len(candidates))]
 
-        # ── Step 3: 5-minute candles + indicator calculation ───────────────
+        # ── Step 4: 5-minute candles + indicator calculation ───────────────
         now_ist = datetime.now(self.IST)
         from_date = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
 
@@ -465,13 +464,32 @@ class AnalysisService:
 
     # ── yfinance fallback for intraday (when Zerodha quotes unavailable) ──────
 
-    async def _intraday_fallback_yfinance(self, limit: int) -> List[Dict]:
-        """Fallback: use yfinance 5-minute data when Zerodha quotes are unavailable."""
+    async def _intraday_fallback_yfinance(
+        self, limit: int, pre_screened: Optional[List[Dict]] = None
+    ) -> List[Dict]:
+        """
+        Fallback: use yfinance 5-minute data when Zerodha quotes are unavailable.
+        Uses pre-screened candidates from screen_top_movers() if available,
+        otherwise screens dynamically from the full NSE universe.
+        """
         logger.info("[Intraday] Using yfinance fallback for 5-minute candle analysis")
         from app.engines.strategy_engine import strategy_engine
 
+        # Use pre-screened candidates if passed in (avoids double screening)
+        if pre_screened is None:
+            logger.info("[Intraday] Screening top movers from NSE universe for yfinance fallback...")
+            pre_screened = await self.ds.screen_top_movers(limit=40, hold_duration_days=0)
+
+        if not pre_screened:
+            logger.warning("[Intraday] Dynamic screening returned nothing, using last-resort list")
+            pre_screened = [{"symbol": s, "company_name": s, "last_price": 0,
+                             "volume": 0, "volume_ratio": 1.0, "day_change_pct": 0.0,
+                             "momentum_5d_pct": 0.0, "volatility_5d": 0.0}
+                            for s in _INTRADAY_LAST_RESORT]
+
         enriched = []
-        for symbol in INTRADAY_UNIVERSE[:30]:  # limit yfinance calls
+        for mover in pre_screened:
+            symbol = mover["symbol"]
             try:
                 loop = asyncio.get_event_loop()
                 df = await loop.run_in_executor(
@@ -488,12 +506,12 @@ class AnalysisService:
 
                 cand = {
                     "symbol": symbol,
-                    "company_name": symbol,
+                    "company_name": mover.get("company_name", symbol),
                     "last_price": last_close,
-                    "volume": volume,
+                    "volume": mover.get("volume", volume),
                     "instrument_token": 0,
-                    "prev_close": last_close,
-                    "day_change_pct": 0.0,
+                    "prev_close": mover.get("last_price", last_close),
+                    "day_change_pct": mover.get("day_change_pct", 0.0),
                 }
 
                 indicators = await self.calculate_intraday_indicators(df, cand)
@@ -503,15 +521,15 @@ class AnalysisService:
                 signal_data = strategy_engine.generate_intraday_signal(indicators)
                 enriched.append({
                     **cand,
-                    "volume_ratio": 1.0,
+                    "volume_ratio": mover.get("volume_ratio", 1.0),
                     "indicators": indicators,
                     "intraday_signal": signal_data.get("signal", "NEUTRAL"),
                     "signal_strength": signal_data.get("strength", 0),
                     "signal_reasons": signal_data.get("reasons", []),
                     "hold_adjusted_score": signal_data.get("score", 0),
                     "composite_score": signal_data.get("score", 0),
-                    "momentum_5d_pct": 0.0,
-                    "volatility_5d": 0.0,
+                    "momentum_5d_pct": mover.get("momentum_5d_pct", 0.0),
+                    "volatility_5d": mover.get("volatility_5d", 0.0),
                 })
             except Exception as e:
                 logger.debug(f"yfinance fallback failed for {symbol}: {e}")
