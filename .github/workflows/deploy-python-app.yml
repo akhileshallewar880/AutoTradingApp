@@ -57,6 +57,7 @@ jobs:
               DB_NAME="${{ secrets.DB_NAME_PRODUCTION }}" \
               DB_USER="${{ secrets.DB_USER_PRODUCTION }}" \
               DB_PASSWORD="${{ secrets.DB_PASSWORD_PRODUCTION }}" \
+              ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY_PRODUCTION }}" \
               ADMIN_JWT_SECRET="${{ secrets.ADMIN_JWT_SECRET_PRODUCTION }}"
 
       - name: Deploy to Azure Web App

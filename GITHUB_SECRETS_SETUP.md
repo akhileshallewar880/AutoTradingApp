@@ -22,6 +22,7 @@ Add these secrets to your GitHub repository at: **Settings → Secrets and varia
 | `DB_NAME_PRODUCTION` | Database name | `vantrade_prod` |
 | `DB_USER_PRODUCTION` | Database username | `sqluser@vantrade` |
 | `DB_PASSWORD_PRODUCTION` | Database password | `SecureP@ssw0rd123!` |
+| `ENCRYPTION_KEY_PRODUCTION` | Fernet key for credential encryption | `EJsnMfYkLlno-3yhye0NDayMUTcSkVlvW-nQNjd86LY=` |
 
 ### API & Authentication Secrets
 
@@ -62,7 +63,27 @@ Then add each secret:
 6. Add `DB_USER_PRODUCTION` with the SQL username
 7. Add `DB_PASSWORD_PRODUCTION` with the SQL password
 
-### 2. Admin JWT Secret
+### 2. Encryption Key
+
+Generate a Fernet encryption key (used for credential encryption):
+
+```bash
+# Using Python (Fernet key)
+python3 << 'EOF'
+from cryptography.fernet import Fernet
+key = Fernet.generate_key()
+print(f"ENCRYPTION_KEY_PRODUCTION={key.decode()}")
+EOF
+```
+
+Add as `ENCRYPTION_KEY_PRODUCTION`
+
+**Example output:**
+```
+ENCRYPTION_KEY_PRODUCTION=EJsnMfYkLlno-3yhye0NDayMUTcSkVlvW-nQNjd86LY=
+```
+
+### 3. Admin JWT Secret
 
 Generate a strong random secret:
 
@@ -76,14 +97,14 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 Add as `ADMIN_JWT_SECRET_PRODUCTION`
 
-### 3. API Keys
+### 4. API Keys
 
 Ensure you have:
 - `OPENAI_API_KEY_PRODUCTION` (from OpenAI)
 - `ZERODHA_API_KEY_PRODUCTION` (from Zerodha app settings)
 - `ZERODHA_API_SECRET_PRODUCTION` (from Zerodha app settings)
 
-### 4. Azure Deployment Secrets
+### 5. Azure Deployment Secrets
 
 If not already configured, set up:
 
@@ -128,6 +149,7 @@ DB_PORT=<from secret>
 DB_NAME=<from secret>
 DB_USER=<from secret>
 DB_PASSWORD=<from secret>
+ENCRYPTION_KEY=<from secret>
 ADMIN_JWT_SECRET=<from secret>
 ```
 
@@ -152,6 +174,7 @@ DB_PASSWORD_PRODUCTION
 DB_PORT_PRODUCTION
 DB_SERVER_PRODUCTION
 DB_USER_PRODUCTION
+ENCRYPTION_KEY_PRODUCTION
 OPENAI_API_KEY_PRODUCTION
 ZERODHA_API_KEY_PRODUCTION
 ZERODHA_API_SECRET_PRODUCTION
