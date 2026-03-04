@@ -2,9 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/auth_provider.dart';
 import '../providers/dashboard_provider.dart';
 import '../models/dashboard_model.dart';
+import '../widgets/info_card.dart';
 import 'analysis_input_screen.dart';
 import 'gtt_analysis_screen.dart';
 import 'gtt_portfolio_analysis_screen.dart';
@@ -162,6 +164,42 @@ class _HomeScreenState extends State<HomeScreen> {
                         _buildErrorCard(dash.error!)
                       else ...[
                         _buildBalancePnlCard(dash.dashboard),
+                        const SizedBox(height: 12),
+                        // Show "Add funds" message when balance is 0
+                        if ((dash.dashboard?.availableBalance ?? 0) == 0)
+                          InfoCard(
+                            type: InfoCardType.warning,
+                            title: '💰 Add Funds to Get Started',
+                            message:
+                                'Your Zerodha account balance is zero. Add funds to your account to start trading with VanTrade.',
+                            actions: [
+                              ElevatedButton.icon(
+                                onPressed: () async {
+                                  final uri = Uri.parse(
+                                    'https://kite.zerodha.com/funds',
+                                  );
+                                  if (await canLaunchUrl(uri)) {
+                                    await launchUrl(
+                                      uri,
+                                      mode: LaunchMode.externalApplication,
+                                    );
+                                  }
+                                },
+                                icon: const Icon(Icons.open_in_new, size: 16),
+                                label: const Text('Add Funds'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.amber[700],
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                        else
+                          const SizedBox.shrink(),
                         const SizedBox(height: 12),
                         _buildMonthCard(dash.dashboard),
                         const SizedBox(height: 12),

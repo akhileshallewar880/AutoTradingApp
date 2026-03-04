@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/info_card.dart';
 
 class ApiSettingsScreen extends StatefulWidget {
   const ApiSettingsScreen({super.key});
@@ -132,31 +133,11 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // ── Header Section ────────────────────────────────────────────
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue[50],
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.blue[200]!),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '🔐 Secure API Setup',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Use your personal Zerodha API credentials for maximum security. Your credentials are encrypted and stored locally on your device only.',
-                        style: TextStyle(fontSize: 14, color: Colors.blue[700]),
-                      ),
-                    ],
-                  ),
+                InfoCard(
+                  type: InfoCardType.info,
+                  title: '🔐 Secure API Setup',
+                  message:
+                      'Use your personal Zerodha API credentials for maximum security. Your credentials are encrypted and stored locally on your device only.',
                 ),
 
                 const SizedBox(height: 32),
