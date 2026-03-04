@@ -45,8 +45,10 @@ async def generate_analysis(request: AnalysisRequest):
 
         # ── Fetch real balance from Zerodha ──────────────────────────────
         try:
-            zerodha_service.kite.set_access_token(request.access_token)
-            margins = await zerodha_service.get_margins()
+            from kiteconnect import KiteConnect
+            kite = KiteConnect(api_key=request.api_key)
+            kite.set_access_token(request.access_token)
+            margins = kite.margins()
             available_balance = margins.get("equity", {}).get("net", 100000)
             logger.info(f"Real balance: ₹{available_balance:,.2f}")
         except Exception as e:

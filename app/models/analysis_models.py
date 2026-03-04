@@ -8,6 +8,7 @@ class AnalysisRequest(BaseModel):
     num_stocks: int = Field(..., gt=0, le=50, description="Number of top stocks to analyze")
     risk_percent: float = Field(1.0, gt=0.0, le=5.0, description="Risk percentage per trade")
     access_token: str = Field(..., description="User's Zerodha access token")
+    api_key: str = Field(..., description="User's Zerodha API key")
     sectors: List[str] = Field(
         default=["ALL"],
         description="Stock sectors to include. Use ['ALL'] for entire NSE market."
