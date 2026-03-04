@@ -1,0 +1,66 @@
+/* VanTrade Admin Dashboard Global Styles */
+
+// Import Material prebuilt theme
+@import '@angular/material/prebuilt-themes/indigo-pink.css';
+
+// Global resets and setup
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(135deg, #0f1117 0%, #1a1f2e 100%);
+  color: #e2e8f0;
+  overflow: hidden;
+}
+
+app-root {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+// Material overrides
+.mat-mdc-card {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  color: #e2e8f0 !important;
+}
+
+.mat-mdc-form-field-label {
+  color: #a0aec0 !important;
+}
+
+.mat-mdc-button, .mat-mdc-raised-button {
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+// Dark theme Material toolbar
+.mat-toolbar {
+  background-color: rgba(15, 17, 23, 0.8) !important;
+  color: #e2e8f0 !important;
+}
+
+// Scrollbar styling
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(108, 99, 255, 0.3);
+  border-radius: 4px;
+
+  &:hover {
+    background: rgba(108, 99, 255, 0.5);
+  }
+}

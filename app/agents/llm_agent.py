@@ -31,6 +31,8 @@ class LLMAgent:
         hold_duration_days: int = 0,
         sectors: Optional[List[str]] = None,
         num_stocks: int = 5,
+        user_id: Optional[int] = None,
+        analysis_id: Optional[str] = None,
     ) -> Dict:
         logger.info(
             f"LLM analyzing {len(market_data)} candidates "
@@ -93,6 +95,16 @@ Pre-Screened Market Data (sorted by signal strength / composite score):
             content = response.choices[0].message.content
             logger.info("LLM analysis complete")
             logger.debug(f"LLM response: {content[:500]}…")
+
+            # Capture and store token usage
+            if response.usage:
+                await self._save_token_usage(
+                    user_id=user_id,
+                    analysis_id=analysis_id,
+                    prompt_tokens=response.usage.prompt_tokens,
+                    completion_tokens=response.usage.completion_tokens,
+                    total_tokens=response.usage.total_tokens,
+                )
 
             data = json.loads(content)
             return data
@@ -287,6 +299,34 @@ Select EXACTLY {num_stocks} stocks (or fewer only if truly insufficient quality 
             return "1 Month"
         else:
             return f"{days} Days"
+
+    async def _save_token_usage(
+        self,
+        user_id: Optional[int],
+        analysis_id: Optional[str],
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+    ):
+        """Save token usage to database."""
+        try:
+            from app.storage.database import db
+
+            # Calculate estimated cost (GPT-4o: ~$5 per 1M tokens average)
+            estimated_cost = total_tokens * 0.000005
+
+            await db.save_token_usage(
+                user_id=user_id,
+                analysis_id=analysis_id,
+                model=self.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                estimated_cost_usd=estimated_cost,
+            )
+            logger.info(f"Saved token usage: {total_tokens} tokens ({prompt_tokens} prompt, {completion_tokens} completion)")
+        except Exception as e:
+            logger.error(f"Failed to save token usage: {e}")
 
 
 llm_agent = LLMAgent()

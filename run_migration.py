@@ -14,47 +14,107 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from app.core.logging import logger
-from app.migrations.make_analysis_user_optional import (
-    run_migration as run_optional,
-    rollback_migration as rollback_optional,
-)
-from app.migrations.make_analysis_user_required import (
-    run_migration as run_required,
-    rollback_migration as rollback_required,
-)
+
+# Import all available migrations
+try:
+    from app.migrations.make_analysis_user_optional import (
+        run_migration as run_optional,
+        rollback_migration as rollback_optional,
+    )
+except ImportError:
+    run_optional = None
+    rollback_optional = None
+
+try:
+    from app.migrations.make_analysis_user_required import (
+        run_migration as run_required,
+        rollback_migration as rollback_required,
+    )
+except ImportError:
+    run_required = None
+    rollback_required = None
+
+try:
+    from app.migrations.admin_schema import (
+        apply as apply_admin,
+        rollback as rollback_admin,
+    )
+except ImportError:
+    apply_admin = None
+    rollback_admin = None
 
 
 def main():
     """Run or rollback migrations based on command line arguments."""
-    if len(sys.argv) > 1 and sys.argv[1] == "rollback":
+    # Get migration name from args
+    migration_name = sys.argv[1] if len(sys.argv) > 1 else None
+    action = sys.argv[2] if len(sys.argv) > 2 else None
+
+    # Handle specific migration
+    if migration_name and migration_name != "rollback":
         logger.info("=" * 70)
-        logger.info("🔄 ROLLING BACK DATABASE MIGRATIONS")
+        logger.info(f"🚀 RUNNING MIGRATION: {migration_name}")
         logger.info("=" * 70)
         try:
-            # Rollback in reverse order
-            rollback_required()
-            rollback_optional()
-            logger.info("=" * 70)
-            logger.info("✅ ROLLBACK SUCCESSFUL")
-            logger.info("=" * 70)
+            from app.core.database import engine
+
+            if migration_name == "admin_schema":
+                if apply_admin:
+                    apply_admin(engine)
+                    logger.info("=" * 70)
+                    logger.info("✅ ADMIN SCHEMA MIGRATION SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ admin_schema migration not found")
+                    sys.exit(1)
+            else:
+                logger.error(f"❌ Unknown migration: {migration_name}")
+                sys.exit(1)
         except Exception as e:
-            logger.error(f"❌ ROLLBACK FAILED: {e}")
+            logger.error(f"❌ MIGRATION FAILED: {e}", exc_info=True)
             sys.exit(1)
+
+    # Handle rollback for specific migration
+    elif migration_name == "rollback" and action:
+        logger.info("=" * 70)
+        logger.info(f"🔄 ROLLING BACK: {action}")
+        logger.info("=" * 70)
+        try:
+            from app.core.database import engine
+
+            if action == "admin_schema":
+                if rollback_admin:
+                    rollback_admin(engine)
+                    logger.info("=" * 70)
+                    logger.info("✅ ADMIN SCHEMA ROLLBACK SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ admin_schema rollback not found")
+                    sys.exit(1)
+            else:
+                logger.error(f"❌ Unknown migration: {action}")
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f"❌ ROLLBACK FAILED: {e}", exc_info=True)
+            sys.exit(1)
+
+    # Handle default (run all old migrations)
     else:
         logger.info("=" * 70)
-        logger.info("🚀 RUNNING DATABASE MIGRATIONS")
+        logger.info("🚀 RUNNING DEFAULT MIGRATIONS")
         logger.info("=" * 70)
         try:
-            # Run migrations in order
-            logger.info("\n📋 Migration 1/2: Make analysis.user_id optional")
-            run_optional()
-            logger.info("\n📋 Migration 2/2: Restore analysis.user_id as required")
-            run_required()
+            if run_optional:
+                logger.info("\n📋 Migration 1/2: Make analysis.user_id optional")
+                run_optional()
+            if run_required:
+                logger.info("\n📋 Migration 2/2: Restore analysis.user_id as required")
+                run_required()
             logger.info("=" * 70)
             logger.info("✅ MIGRATIONS SUCCESSFUL")
             logger.info("=" * 70)
         except Exception as e:
-            logger.error(f"❌ MIGRATIONS FAILED: {e}")
+            logger.error(f"❌ MIGRATIONS FAILED: {e}", exc_info=True)
             sys.exit(1)
 
 

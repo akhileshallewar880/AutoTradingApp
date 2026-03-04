@@ -116,6 +116,7 @@ class User(SQLModel, table=True):
     email: str = Field(index=True, unique=True, max_length=255)
     full_name: str = Field(max_length=255)
     is_active: bool = Field(default=True)
+    user_type: str = Field(default="USER", max_length=10)  # USER or ADMIN
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())
@@ -135,6 +136,7 @@ class User(SQLModel, table=True):
     open_positions: List["OpenPosition"] = Relationship(back_populates="user", cascade_delete=True)
     monthly_performances: List["MonthlyPerformance"] = Relationship(back_populates="user", cascade_delete=True)
     daily_performances: List["DailyPerformance"] = Relationship(back_populates="user", cascade_delete=True)
+    token_usages: List["TokenUsage"] = Relationship(back_populates="user", cascade_delete=True)
     audit_logs: List["AuditLog"] = Relationship(back_populates="user", cascade_delete=True)
     api_call_logs: List["ApiCallLog"] = Relationship(back_populates="user", cascade_delete=True)
     error_logs: List["ErrorLog"] = Relationship(back_populates="user", cascade_delete=True)
@@ -497,6 +499,59 @@ class DailyPerformance(SQLModel, table=True):
     __table_args__ = (
         Index("idx_daily_perf_user_date", "user_id", "performance_date"),
     )
+
+
+# ============================================================================
+# TOKEN USAGE & ADMIN TABLES - Token tracking and admin management
+# ============================================================================
+
+class TokenUsage(SQLModel, table=True):
+    """
+    OpenAI token usage tracking per analysis.
+    Records prompt tokens, completion tokens, and estimated cost.
+    """
+    __tablename__ = "vantrade_token_usage"
+
+    id: Optional[int] = Field(default=None, primary_key=True, index=True)
+    user_id: Optional[int] = Field(None, foreign_key="vantrade_users.user_id", index=True)
+    analysis_id: Optional[str] = None  # Analysis ID that consumed these tokens
+    model: str = Field(default="gpt-4o", max_length=50)
+    prompt_tokens: int = Field(default=0)
+    completion_tokens: int = Field(default=0)
+    total_tokens: int = Field(default=0)
+    estimated_cost_usd: Decimal = Field(default=Decimal("0"), sa_column=Column(Numeric(10, 6)))
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+
+    # Relationships
+    user: Optional[User] = Relationship(back_populates="token_usages")
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_token_user_created", "user_id", "created_at"),
+        Index("idx_token_created", "created_at"),
+    )
+
+
+class AdminUser(SQLModel, table=True):
+    """
+    Admin user accounts for dashboard access.
+    Stores username, email, and hashed password for admin authentication.
+    """
+    __tablename__ = "vantrade_admin_users"
+
+    id: Optional[int] = Field(default=None, primary_key=True, index=True)
+    username: str = Field(unique=True, max_length=50)
+    email: str = Field(unique=True, max_length=255)
+    password_hash: str  # bcrypt hashed password
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+    last_login: Optional[datetime] = None
 
 
 # ============================================================================

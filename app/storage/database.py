@@ -14,6 +14,7 @@ from app.models.db_models import (
     Order,
     GttOrder,
     Trade as DBTrade,
+    TokenUsage,
     AnalysisStatusEnum,
 )
 from app.core.database import engine
@@ -312,6 +313,39 @@ class Database:
         except Exception as e:
             logger.error(f"Failed to retrieve monthly trades: {e}", exc_info=True)
             raise
+
+    async def save_token_usage(
+        self,
+        user_id: Optional[int],
+        analysis_id: Optional[str],
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        estimated_cost_usd: float,
+    ):
+        """Save OpenAI token usage to database."""
+        try:
+            from decimal import Decimal
+            with Session(engine) as session:
+                token_usage = TokenUsage(
+                    user_id=user_id,
+                    analysis_id=analysis_id,
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    estimated_cost_usd=Decimal(str(estimated_cost_usd)),
+                    created_at=datetime.utcnow(),
+                )
+                session.add(token_usage)
+                session.commit()
+                logger.info(
+                    f"✅ Token usage saved: {total_tokens} tokens "
+                    f"(user_id={user_id}, analysis_id={analysis_id})"
+                )
+        except Exception as e:
+            logger.error(f"Failed to save token usage: {e}", exc_info=True)
 
 
 # Initialize database singleton

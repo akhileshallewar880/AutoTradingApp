@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = 10
     ENCRYPTION_KEY: str  # Fernet key for credential encryption
 
+    # Admin Dashboard Config
+    ADMIN_JWT_SECRET: str = "your-secret-key-change-in-production"  # Change in .env for production
+    ADMIN_JWT_ALGORITHM: str = "HS256"
+    ADMIN_JWT_EXPIRATION_MINUTES: int = 30
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 @lru_cache()
