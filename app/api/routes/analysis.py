@@ -240,17 +240,33 @@ async def generate_analysis(request: AnalysisRequest):
             max_loss += stock["potential_loss"]
 
         if not stock_analyses:
-            logger.error(
-                f"All {len(llm_response.get('stocks', []))} LLM-recommended stocks failed "
-                f"price validation. Check WARNING logs above."
+            logger.warning(
+                f"No valid trade setups found: All {len(llm_response.get('stocks', []))} LLM-recommended stocks "
+                f"failed price validation. Returning empty analysis for user-friendly display."
             )
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "No valid trade setups found in this scan — the LLM recommendations "
-                    "did not pass price validation. Please try again."
-                )
+            # Return empty analysis with special status - let frontend show friendly message
+            analysis_id = str(uuid.uuid4())
+            analysis = AnalysisResponse(
+                analysis_id=analysis_id,
+                request=request,
+                stocks=[],  # Empty list - no valid stocks found
+                portfolio_metrics={
+                    "total_investment": 0.0,
+                    "total_risk": 0.0,
+                    "max_profit": 0.0,
+                    "max_loss": 0.0,
+                    "num_stocks": 0,
+                    "risk_percent": request.risk_percent,
+                    "available_balance": available_balance,
+                    "sectors": request.sectors,
+                    "hold_duration_days": request.hold_duration_days,
+                    "universe": "Nifty 50 + Next 50" if is_intraday else "Full NSE Market",
+                },
+                available_balance=available_balance,
+                status="NO_STOCKS_FOUND",  # Special status for frontend to handle
             )
+            logger.info(f"Analysis generated: {analysis_id} with 0 stocks (NO_STOCKS_FOUND)")
+            return analysis
 
         if total_investment > available_balance:
             raise HTTPException(
