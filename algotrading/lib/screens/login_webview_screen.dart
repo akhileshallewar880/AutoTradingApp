@@ -52,70 +52,19 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
 
     if (!mounted) return;
 
-    // Show loading dialog
+    // Show full-screen loading overlay
     setState(() => _isCreatingSession = true);
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext dialogContext) {
-        return PopScope(
-          canPop: false,
-          child: Dialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(
-                    width: 60,
-                    height: 60,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Completing Login',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Setting up your session...',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
 
     try {
       await authProvider.createSession(requestToken);
 
       if (mounted) {
-        // Close loading dialog
-        Navigator.of(context).pop();
-
         // After successful Zerodha OAuth login, go to dashboard
         Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
       }
     } catch (e) {
       if (mounted) {
-        // Close loading dialog
-        Navigator.of(context).pop();
+        setState(() => _isCreatingSession = false);
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -124,10 +73,6 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
           ),
         );
         Navigator.of(context).pop();
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isCreatingSession = false);
       }
     }
   }
@@ -140,11 +85,77 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
         backgroundColor: Colors.green[700],
         foregroundColor: Colors.white,
       ),
-      body: Stack(
-        children: [
-          WebViewWidget(controller: _controller),
-          if (_isLoading) const Center(child: CircularProgressIndicator()),
-        ],
+      body: PopScope(
+        canPop: !_isCreatingSession,
+        child: Stack(
+          children: [
+            // WebView (hidden when creating session)
+            if (!_isCreatingSession)
+              WebViewWidget(controller: _controller),
+
+            // Initial loading indicator while webview loads
+            if (_isLoading && !_isCreatingSession)
+              const Center(child: CircularProgressIndicator()),
+
+            // Full-screen loading overlay during session creation
+            if (_isCreatingSession)
+              Container(
+                color: Colors.black.withValues(alpha: 0.5),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(32),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.1),
+                              blurRadius: 8,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              width: 60,
+                              height: 60,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 3,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            const Text(
+                              'Completing Login',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Setting up your session...',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
