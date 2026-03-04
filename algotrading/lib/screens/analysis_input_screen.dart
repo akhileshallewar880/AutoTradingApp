@@ -593,13 +593,23 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
       analysisProvider.setSelectedSectors(_selectedSectors.toList());
 
       try {
+        // Parse userId safely - handle both numeric (VanTrade ID) and string (Zerodha ID) formats
+        int userId;
+        try {
+          userId = int.parse(authProvider.user!.userId);
+        } catch (e) {
+          // If userId is not numeric (e.g., "RI2021"), use fallback hash
+          // This means backend hasn't been updated yet to return numeric user_id
+          userId = authProvider.user!.userId.hashCode.abs();
+        }
+
         await analysisProvider.generateAnalysis(
           analysisDate: DateFormat('yyyy-MM-dd').format(_selectedDate),
           numStocks: _numStocks,
           riskPercent: _riskPercent,
           accessToken: authProvider.user!.accessToken,
           apiKey: authProvider.user!.apiKey,
-          userId: int.parse(authProvider.user!.userId),
+          userId: userId,
           sectors: _selectedSectors.toList(),
           capitalToUse: capitalToUse,
         );
