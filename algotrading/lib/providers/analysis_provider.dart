@@ -60,6 +60,13 @@ class AnalysisProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  void clearAnalysis() {
+    _currentAnalysis = null;
+    _selectedStockIndices.clear();
+    _error = null;
+    notifyListeners();
+  }
+
   void setHoldDuration(int days) {
     _holdDurationDays = days;
     notifyListeners();
@@ -134,10 +141,9 @@ class AnalysisProvider with ChangeNotifier {
         }
       } else {
         // Only send selected stocks for execution
-        final overrides = selectedStocks.map((s) => {
-          'stock_symbol': s.stockSymbol,
-          'quantity': s.quantity,
-        }).toList();
+        final overrides = selectedStocks
+            .map((s) => {'stock_symbol': s.stockSymbol, 'quantity': s.quantity})
+            .toList();
 
         await ApiService.confirmAnalysis(
           analysisId: analysisId,
@@ -161,7 +167,10 @@ class AnalysisProvider with ChangeNotifier {
     }
   }
 
-  Future<void> loadExecutionStatus(String analysisId, String accessToken) async {
+  Future<void> loadExecutionStatus(
+    String analysisId,
+    String accessToken,
+  ) async {
     try {
       if (accessToken == kDemoAccessToken) {
         // Return the already-complete demo status; no API polling needed
@@ -237,7 +246,9 @@ class AnalysisProvider with ChangeNotifier {
       maxLoss += sRisk;
     }
 
-    final updatedMetrics = Map<String, dynamic>.from(_currentAnalysis!.portfolioMetrics);
+    final updatedMetrics = Map<String, dynamic>.from(
+      _currentAnalysis!.portfolioMetrics,
+    );
     updatedMetrics['total_investment'] = totalInvestment;
     updatedMetrics['total_risk'] = totalRisk;
     updatedMetrics['max_profit'] = maxProfit;
@@ -262,45 +273,108 @@ class AnalysisProvider with ChangeNotifier {
   // ── Demo data ──────────────────────────────────────────────────────────────
 
   static const _demoStockPool = [
-    _DemoStock('RELIANCE', 'Reliance Industries Ltd.', 'BUY',
-        2875.50, 2815.0, 3010.0, 5, 3, 0.84,
-        'Strong bullish momentum on daily chart. RSI at 58 indicates room for '
-        'further upside. Key resistance at ₹2,900 likely to break with surging '
-        'volumes. O&G sector outperforming the broad market. Entry at current '
-        'levels with a tight SL near the support zone.'),
-    _DemoStock('INFY', 'Infosys Ltd.', 'BUY',
-        1892.0, 1850.0, 1990.0, 8, 5, 0.79,
-        'IT sector showing revival after recent correction. Infosys maintaining '
-        'above 200-DMA support. MACD bullish crossover forming on 4H chart. '
-        'Upcoming quarterly results expected to be positive. Risk-reward is '
-        'favorable at the current entry.'),
-    _DemoStock('HDFCBANK', 'HDFC Bank Ltd.', 'BUY',
-        1652.0, 1615.0, 1745.0, 6, 4, 0.87,
-        'Banking heavyweight showing accumulation pattern. FII buying visible '
-        'over the last 3 sessions. Breakout above ₹1,640 resistance on high '
-        'volumes. Credit growth remains strong. Fundamentally solid with low NPA '
-        'levels supporting the upside move.'),
-    _DemoStock('TATASTEEL', 'Tata Steel Ltd.', 'BUY',
-        145.80, 140.50, 158.0, 50, 7, 0.71,
-        'Metal sector recovering on positive China stimulus news. Steel demand '
-        'pickup visible in Q3 data. Technical setup shows a W-pattern formation '
-        'near support. Infrastructure spending boost expected in the upcoming '
-        'budget to aid demand.'),
-    _DemoStock('SUNPHARMA', 'Sun Pharmaceutical Industries', 'SELL',
-        1745.0, 1790.0, 1650.0, 5, 6, 0.68,
-        'Pharma sector facing headwinds from USFDA warnings. SUNPHARMA showing '
-        'distribution pattern with decreasing volumes on up days. RSI divergence '
-        'bearish signal. Short-sell opportunity with clear target and stop levels.'),
-    _DemoStock('BAJFINANCE', 'Bajaj Finance Ltd.', 'BUY',
-        7120.0, 6980.0, 7480.0, 2, 5, 0.82,
-        'NBFC leader holding key support at ₹7,000. RBI policy outlook positive '
-        'for credit growth. Strong results history. Breakout pattern on weekly '
-        'chart with increasing institutional interest.'),
-    _DemoStock('AXISBANK', 'Axis Bank Ltd.', 'BUY',
-        1089.0, 1055.0, 1165.0, 10, 4, 0.76,
-        'Private sector bank showing relative strength. NIM expansion expected '
-        'in upcoming results. Technical breakout above ₹1,080 neckline. '
-        'Consistent accumulation by DIIs over the past week signals confidence.'),
+    _DemoStock(
+      'RELIANCE',
+      'Reliance Industries Ltd.',
+      'BUY',
+      2875.50,
+      2815.0,
+      3010.0,
+      5,
+      3,
+      0.84,
+      'Strong bullish momentum on daily chart. RSI at 58 indicates room for '
+          'further upside. Key resistance at ₹2,900 likely to break with surging '
+          'volumes. O&G sector outperforming the broad market. Entry at current '
+          'levels with a tight SL near the support zone.',
+    ),
+    _DemoStock(
+      'INFY',
+      'Infosys Ltd.',
+      'BUY',
+      1892.0,
+      1850.0,
+      1990.0,
+      8,
+      5,
+      0.79,
+      'IT sector showing revival after recent correction. Infosys maintaining '
+          'above 200-DMA support. MACD bullish crossover forming on 4H chart. '
+          'Upcoming quarterly results expected to be positive. Risk-reward is '
+          'favorable at the current entry.',
+    ),
+    _DemoStock(
+      'HDFCBANK',
+      'HDFC Bank Ltd.',
+      'BUY',
+      1652.0,
+      1615.0,
+      1745.0,
+      6,
+      4,
+      0.87,
+      'Banking heavyweight showing accumulation pattern. FII buying visible '
+          'over the last 3 sessions. Breakout above ₹1,640 resistance on high '
+          'volumes. Credit growth remains strong. Fundamentally solid with low NPA '
+          'levels supporting the upside move.',
+    ),
+    _DemoStock(
+      'TATASTEEL',
+      'Tata Steel Ltd.',
+      'BUY',
+      145.80,
+      140.50,
+      158.0,
+      50,
+      7,
+      0.71,
+      'Metal sector recovering on positive China stimulus news. Steel demand '
+          'pickup visible in Q3 data. Technical setup shows a W-pattern formation '
+          'near support. Infrastructure spending boost expected in the upcoming '
+          'budget to aid demand.',
+    ),
+    _DemoStock(
+      'SUNPHARMA',
+      'Sun Pharmaceutical Industries',
+      'SELL',
+      1745.0,
+      1790.0,
+      1650.0,
+      5,
+      6,
+      0.68,
+      'Pharma sector facing headwinds from USFDA warnings. SUNPHARMA showing '
+          'distribution pattern with decreasing volumes on up days. RSI divergence '
+          'bearish signal. Short-sell opportunity with clear target and stop levels.',
+    ),
+    _DemoStock(
+      'BAJFINANCE',
+      'Bajaj Finance Ltd.',
+      'BUY',
+      7120.0,
+      6980.0,
+      7480.0,
+      2,
+      5,
+      0.82,
+      'NBFC leader holding key support at ₹7,000. RBI policy outlook positive '
+          'for credit growth. Strong results history. Breakout pattern on weekly '
+          'chart with increasing institutional interest.',
+    ),
+    _DemoStock(
+      'AXISBANK',
+      'Axis Bank Ltd.',
+      'BUY',
+      1089.0,
+      1055.0,
+      1165.0,
+      10,
+      4,
+      0.76,
+      'Private sector bank showing relative strength. NIM expansion expected '
+          'in upcoming results. Technical breakout above ₹1,080 neckline. '
+          'Consistent accumulation by DIIs over the past week signals confidence.',
+    ),
   ];
 
   AnalysisResponseModel _buildDemoAnalysis(int numStocks, double capitalToUse) {
@@ -357,7 +431,8 @@ class AnalysisProvider with ChangeNotifier {
         timestamp: now.add(Duration(milliseconds: e.key * 350)),
         updateType: 'DEMO_MODE',
         stockSymbol: e.value.stockSymbol,
-        message: 'Demo — ${e.value.stockSymbol} ${e.value.action} '
+        message:
+            'Demo — ${e.value.stockSymbol} ${e.value.action} '
             '${e.value.quantity} qty @ ₹${e.value.entryPrice.toStringAsFixed(2)} '
             'would be placed here. Login with Zerodha credentials to execute real trades.',
       );
@@ -401,7 +476,16 @@ class _DemoStock {
   final double entry, sl, target, confidence;
   final int qty, days;
 
-  const _DemoStock(this.symbol, this.name, this.action,
-      this.entry, this.sl, this.target, this.qty, this.days,
-      this.confidence, this.reasoning);
+  const _DemoStock(
+    this.symbol,
+    this.name,
+    this.action,
+    this.entry,
+    this.sl,
+    this.target,
+    this.qty,
+    this.days,
+    this.confidence,
+    this.reasoning,
+  );
 }

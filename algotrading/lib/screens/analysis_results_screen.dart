@@ -29,8 +29,216 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
           backgroundColor: Colors.green[700],
           foregroundColor: Colors.white,
         ),
-        body: const Center(
-          child: Text('No analysis data available'),
+        body: const Center(child: Text('No analysis data available')),
+      );
+    }
+
+    // Show friendly message if no trades found
+    if (analysis.stocks.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('AI Analysis Results'),
+          backgroundColor: Colors.green[700],
+          foregroundColor: Colors.white,
+        ),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Illustration Icon
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.trending_flat,
+                    size: 60,
+                    color: Colors.blue[700],
+                  ),
+                ),
+                const SizedBox(height: 32),
+
+                // Heading
+                const Text(
+                  'No Trades Found Today',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+
+                const SizedBox(height: 16),
+
+                // Message
+                Text(
+                  'GenAI analyzed the market but couldn\'t find any suitable trading opportunities for you today.',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey[600],
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+
+                const SizedBox(height: 24),
+
+                // Reasons Box
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.amber[50],
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.amber[200]!),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            color: Colors.amber[700],
+                            size: 20,
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Why no trades?',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.amber[900],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _buildReasonItem(
+                        '📉',
+                        'Market volatility is low',
+                        'GenAI prefers to wait for clearer signals',
+                      ),
+                      const SizedBox(height: 8),
+                      _buildReasonItem(
+                        '⚡',
+                        'Risk/reward ratio not favorable',
+                        'Better opportunities might appear later',
+                      ),
+                      const SizedBox(height: 8),
+                      _buildReasonItem(
+                        '🎯',
+                        'Technical indicators not aligned',
+                        'GenAI follows strict entry criteria',
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 32),
+
+                // Action Buttons
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      analysisProvider.clearAnalysis();
+                      Navigator.of(context).pop();
+                    },
+                    icon: const Icon(Icons.refresh, size: 20),
+                    label: const Text(
+                      'Try Different Settings',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green[700],
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // Secondary Action
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                    },
+                    icon: const Icon(Icons.home_outlined, size: 20),
+                    label: const Text(
+                      'Back to Dashboard',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.green[700],
+                      side: BorderSide(color: Colors.green[700]!, width: 2),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // Encouragement Text
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.blue[100]!),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.lightbulb_outline,
+                        color: Colors.blue[700],
+                        size: 24,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Come back tomorrow',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue[900],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Market conditions change daily. Better opportunities might be available tomorrow!',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.blue[700],
+                          height: 1.4,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       );
     }
@@ -78,20 +286,23 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                     // Select All / Deselect All
                     TextButton.icon(
                       onPressed: () {
-                        if (analysisProvider.selectedStockCount == analysis.stocks.length) {
+                        if (analysisProvider.selectedStockCount ==
+                            analysis.stocks.length) {
                           analysisProvider.deselectAllStocks();
                         } else {
                           analysisProvider.selectAllStocks();
                         }
                       },
                       icon: Icon(
-                        analysisProvider.selectedStockCount == analysis.stocks.length
+                        analysisProvider.selectedStockCount ==
+                                analysis.stocks.length
                             ? Icons.deselect
                             : Icons.select_all,
                         size: 18,
                       ),
                       label: Text(
-                        analysisProvider.selectedStockCount == analysis.stocks.length
+                        analysisProvider.selectedStockCount ==
+                                analysis.stocks.length
                             ? 'Deselect All'
                             : 'Select All',
                         style: const TextStyle(fontSize: 13),
@@ -130,8 +341,11 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     );
   }
 
-  Widget _buildMetricsCard(BuildContext context,
-      AnalysisResponseModel analysis, AnalysisProvider provider) {
+  Widget _buildMetricsCard(
+    BuildContext context,
+    AnalysisResponseModel analysis,
+    AnalysisProvider provider,
+  ) {
     final metrics = analysis.portfolioMetrics;
     final currencyFormat = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
     final holdDays = provider.holdDurationDays;
@@ -150,15 +364,14 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
               children: [
                 const Text(
                   'Portfolio Overview',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 // Hold duration badge
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.blue[50],
                     borderRadius: BorderRadius.circular(20),
@@ -167,8 +380,11 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.timer_outlined,
-                          size: 13, color: Colors.blue[700]),
+                      Icon(
+                        Icons.timer_outlined,
+                        size: 13,
+                        color: Colors.blue[700],
+                      ),
                       const SizedBox(width: 4),
                       Text(
                         holdLabel,
@@ -196,14 +412,12 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                 children: [
                   const Text(
                     'Available Balance',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                   ),
                   Text(
-                    currencyFormat
-                        .format(metrics['available_balance'] ?? 100000),
+                    currencyFormat.format(
+                      metrics['available_balance'] ?? 100000,
+                    ),
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -252,8 +466,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                 spacing: 6,
                 children: provider.selectedSectors.map((s) {
                   return Chip(
-                    label: Text(s,
-                        style: const TextStyle(fontSize: 11)),
+                    label: Text(s, style: const TextStyle(fontSize: 11)),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     padding: EdgeInsets.zero,
                     backgroundColor: Colors.green[50],
@@ -292,13 +505,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.grey[600],
-          ),
-        ),
+        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
         Text(
           value,
           style: TextStyle(
@@ -312,7 +519,10 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
   }
 
   Widget _buildBottomBar(
-      BuildContext context, AnalysisResponseModel analysis, AnalysisProvider analysisProvider) {
+    BuildContext context,
+    AnalysisResponseModel analysis,
+    AnalysisProvider analysisProvider,
+  ) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final selectedCount = analysisProvider.selectedStockCount;
     final hasSelection = selectedCount > 0;
@@ -388,7 +598,10 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                     hasSelection
                         ? 'Execute $selectedCount Trade${selectedCount == 1 ? '' : 's'}'
                         : 'Select Trades',
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green[700],
@@ -414,8 +627,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Cancel Analysis'),
-        content:
-            const Text('Are you sure you want to cancel this analysis?'),
+        content: const Text('Are you sure you want to cancel this analysis?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -443,7 +655,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
       return false;
     }
     final minuteOfDay = now.hour * 60 + now.minute;
-    const openMinute = 9 * 60 + 15;   // 9:15 AM
+    const openMinute = 9 * 60 + 15; // 9:15 AM
     const closeMinute = 15 * 60 + 30; // 3:30 PM
     return minuteOfDay >= openMinute && minuteOfDay < closeMinute;
   }
@@ -469,8 +681,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     return showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
             Container(
@@ -479,15 +690,17 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                 color: Colors.orange[50],
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.access_time_rounded,
-                  color: Colors.orange[700], size: 24),
+              child: Icon(
+                Icons.access_time_rounded,
+                color: Colors.orange[700],
+                size: 24,
+              ),
             ),
             const SizedBox(width: 12),
             const Expanded(
               child: Text(
                 'Market Closed',
-                style:
-                    TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -496,10 +709,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              reason,
-              style: const TextStyle(fontSize: 14, height: 1.5),
-            ),
+            Text(reason, style: const TextStyle(fontSize: 14, height: 1.5)),
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
@@ -510,8 +720,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline,
-                      size: 16, color: Colors.blue[700]),
+                  Icon(Icons.info_outline, size: 16, color: Colors.blue[700]),
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
@@ -563,9 +772,8 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => ExecutionTrackingScreen(
-              analysisId: analysis.analysisId,
-            ),
+            builder: (context) =>
+                ExecutionTrackingScreen(analysisId: analysis.analysisId),
           ),
         );
       }
@@ -574,7 +782,8 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
 
       final errorMsg = e.toString().toLowerCase();
       // HTTP 423 from backend = market closed; also catch keyword-based detection
-      final isMarketClosed = errorMsg.contains('423') ||
+      final isMarketClosed =
+          errorMsg.contains('423') ||
           (errorMsg.contains('market') &&
               (errorMsg.contains('closed') ||
                   errorMsg.contains('open') ||
@@ -596,8 +805,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
           SnackBar(
             content: Row(
               children: [
-                const Icon(Icons.error_outline,
-                    color: Colors.white, size: 18),
+                const Icon(Icons.error_outline, color: Colors.white, size: 18),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -610,12 +818,47 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10)),
+              borderRadius: BorderRadius.circular(10),
+            ),
             margin: const EdgeInsets.all(16),
             duration: const Duration(seconds: 5),
           ),
         );
       }
     }
+  }
+
+  Widget _buildReasonItem(String emoji, String title, String description) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 16)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.amber[900],
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                description,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.amber[700],
+                  height: 1.3,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
