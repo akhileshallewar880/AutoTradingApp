@@ -38,6 +38,7 @@ async def create_session(session_request: SessionRequest):
 
         return SessionResponse(
             access_token=session_data["access_token"],
+            api_key=session_request.api_key,
             user_id=session_data["user_id"],
             user_name=session_data["user_name"],
             email=session_data["email"],

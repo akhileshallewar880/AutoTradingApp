@@ -29,8 +29,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final auth = context.read<AuthProvider>();
     final dash = context.read<DashboardProvider>();
     if (auth.user != null) {
-      dash.fetchDashboard(auth.user!.accessToken);
-      dash.startAutoRefresh(auth.user!.accessToken);
+      dash.fetchDashboard(auth.user!.accessToken, apiKey: auth.user!.apiKey);
+      dash.startAutoRefresh(auth.user!.accessToken, apiKey: auth.user!.apiKey);
     }
   }
 
@@ -45,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (auth.user != null) {
       await context.read<DashboardProvider>().fetchDashboard(
         auth.user!.accessToken,
+        apiKey: auth.user!.apiKey,
       );
     }
   }

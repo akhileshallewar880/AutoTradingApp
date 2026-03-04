@@ -881,3 +881,11 @@ User Investment: ₹100,000
 ---
 
 This is the **complete end-to-end flow** of VanTrade. Every piece connects to create a seamless experience from user login → stock analysis → trade execution → performance tracking.
+
+
+
+
+
+
+1.The onboarding screen should have get started button visible , currently we need to scroll to see that button , keep the button visible in user friendly manner 
+after adding key secrets the infor message shown below the screen is not looking nice please create a professional info message widget accross the app, should give a profession and modern app vibe

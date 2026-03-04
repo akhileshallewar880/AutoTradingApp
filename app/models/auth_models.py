@@ -11,6 +11,7 @@ class SessionRequest(BaseModel):
 
 class SessionResponse(BaseModel):
     access_token: str
+    api_key: str = Field(..., description="User's Zerodha API key (needed for dashboard API calls)")
     user_id: str
     user_name: str
     email: str

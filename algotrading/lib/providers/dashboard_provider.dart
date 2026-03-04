@@ -15,7 +15,7 @@ class DashboardProvider with ChangeNotifier {
   String? get error => _error;
 
   /// Fetch dashboard data. Call this when the home screen mounts.
-  Future<void> fetchDashboard(String accessToken) async {
+  Future<void> fetchDashboard(String accessToken, {String? apiKey}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -23,7 +23,7 @@ class DashboardProvider with ChangeNotifier {
     try {
       _dashboard = accessToken == kDemoAccessToken
           ? _buildDemoDashboard()
-          : await ApiService.getDashboard(accessToken);
+          : await ApiService.getDashboard(accessToken, apiKey: apiKey);
       _error = null;
     } catch (e) {
       _error = e.toString();
@@ -34,11 +34,11 @@ class DashboardProvider with ChangeNotifier {
   }
 
   /// Start auto-refresh every [intervalSeconds] seconds.
-  void startAutoRefresh(String accessToken, {int intervalSeconds = 30}) {
+  void startAutoRefresh(String accessToken, {String? apiKey, int intervalSeconds = 30}) {
     _refreshTimer?.cancel();
     _refreshTimer = Timer.periodic(
       Duration(seconds: intervalSeconds),
-      (_) => fetchDashboard(accessToken),
+      (_) => fetchDashboard(accessToken, apiKey: apiKey),
     );
   }
 

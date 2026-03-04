@@ -79,6 +79,7 @@ def _calc_month_pnl(trades: List[Dict]) -> Dict:
 @router.get("/summary")
 async def get_dashboard_summary(
     access_token: str = Query(..., description="Zerodha access token"),
+    api_key: str = Query(..., description="User's Zerodha API key"),
 ):
     """
     Returns a consolidated dashboard summary:
@@ -90,15 +91,38 @@ async def get_dashboard_summary(
     - Active GTTs
     """
     try:
-        # Set user's access token for this request
-        zerodha_service.kite.set_access_token(access_token)
+        # Create a kite client with the user's API key and set their access token
+        from kiteconnect import KiteConnect
+        kite = KiteConnect(api_key=api_key)
+        kite.set_access_token(access_token)
+
+        # Create async wrappers for kite methods
+        async def get_margins():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, kite.margins)
+
+        async def get_positions():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, kite.positions)
+
+        async def get_orders():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, kite.orders)
+
+        async def get_trades():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, kite.trades)
+
+        async def get_gtts():
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, kite.get_gtts)
 
         margins_data, positions_data, orders_data, trades_data, gtts_data = await asyncio.gather(
-            zerodha_service.get_margins(),
-            zerodha_service.get_positions(access_token),
-            zerodha_service.get_orders(access_token),
-            zerodha_service.get_tradebook(access_token),
-            zerodha_service.get_gtts(access_token),
+            get_margins(),
+            get_positions(),
+            get_orders(),
+            get_trades(),
+            get_gtts(),
             return_exceptions=True,
         )
 

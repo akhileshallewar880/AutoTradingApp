@@ -178,9 +178,17 @@ class ApiService {
   }
 
   // Dashboard
-  static Future<DashboardModel> getDashboard(String accessToken) async {
+  static Future<DashboardModel> getDashboard(
+    String accessToken, {
+    String? apiKey,
+  }) async {
+    final queryParams = {'access_token': accessToken};
+    if (apiKey != null) {
+      queryParams['api_key'] = apiKey;
+    }
+
     final uri = Uri.parse(ApiConfig.dashboardUrl)
-        .replace(queryParameters: {'access_token': accessToken});
+        .replace(queryParameters: queryParams);
     final response = await http.get(
       uri,
       headers: {'Content-Type': 'application/json'},
