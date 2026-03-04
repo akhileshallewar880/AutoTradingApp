@@ -14,17 +14,17 @@ class ZerodhaService:
         self.api_secret = settings.ZERODHA_API_SECRET.strip() if settings.ZERODHA_API_SECRET else None
         self.access_token = settings.ZERODHA_ACCESS_TOKEN
 
-        # Only initialize kite if api_key is available
-        if self.api_key:
-            self.kite = KiteConnect(api_key=self.api_key)
-            logger.info(f"ZerodhaService initialized with api_key length={len(self.api_key)}, api_secret length={len(self.api_secret) if self.api_secret else 0}")
-            if self.access_token:
-                self.kite.set_access_token(self.access_token)
-            else:
-                logger.warning("Zerodha Access Token not found! API calls may fail.")
+        # Always initialize a basic kite client (api_key only needed for login URL generation)
+        # For authenticated API calls, only access_token matters
+        self.kite = KiteConnect(api_key=self.api_key or "app_key_placeholder")
+
+        if self.api_key and self.api_secret:
+            logger.info(f"ZerodhaService initialized with app credentials: api_key length={len(self.api_key)}, api_secret length={len(self.api_secret)}")
         else:
-            self.kite = None
-            logger.info("ZerodhaService initialized without app credentials. Per-request methods will be used.")
+            logger.info("ZerodhaService initialized in user-credential mode (no app-level API credentials). Users must provide their own.")
+
+        if self.access_token:
+            self.kite.set_access_token(self.access_token)
 
     def get_login_url(self) -> str:
         """Generate Kite Connect login URL using app's credentials."""

@@ -1,168 +1,318 @@
+"""
+Database persistence layer using SQLModel and Azure SQL.
+Replaces the JSON fallback storage with proper relational database.
+"""
+
 from typing import List, Optional
+from sqlmodel import Session, select
 from app.models.trade_models import Trade
 from app.models.analysis_models import AnalysisResponse, ExecutionUpdate, ExecutionStatus
+from app.models.db_models import (
+    Analysis,
+    StockRecommendation,
+    ExecutionUpdate as DBExecutionUpdate,
+    Order,
+    GttOrder,
+    Trade as DBTrade,
+    AnalysisStatusEnum,
+)
+from app.core.database import engine
 from app.core.logging import logger
-import json
-import os
-import asyncio
 from datetime import datetime
+import json
+
 
 class Database:
-    def __init__(self, db_path: str = "data/trades.json", analysis_path: str = "data/analyses.json"):
-        self.db_path = db_path
-        self.analysis_path = analysis_path
+    """
+    SQLModel-based database layer using Azure SQL.
+    All data is persisted to relational database tables.
+    """
 
-        # Ensure data directory exists
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        os.makedirs(os.path.dirname(self.analysis_path), exist_ok=True)
-
-        self._trades: List[Trade] = []
-        self._analyses: dict = {}  # analysis_id -> AnalysisResponse
-        self._execution_updates: dict = {}  # analysis_id -> List[ExecutionUpdate]
-
-        logger.info(
-            f"⚠️  Using JSON fallback storage (not production-ready). "
-            f"Trades: {db_path}, Analyses: {analysis_path}"
-        )
-        logger.info(
-            f"⚠️  For persistent storage, configure Azure SQL in .env and update app/storage/database.py"
-        )
-        self._load()
-
-    def _load(self):
-        # Load trades
-        if os.path.exists(self.db_path):
-            try:
-                with open(self.db_path, "r") as f:
-                    data = json.load(f)
-                    self._trades = [Trade(**t) for t in data]
-                    logger.info(f"✅ Loaded {len(self._trades)} trades from {self.db_path}")
-            except Exception as e:
-                logger.error(f"Failed to load trades from {self.db_path}: {e}")
-        else:
-            logger.info(f"No existing trades file at {self.db_path} (will create on first save)")
-
-        # Load analyses
-        if os.path.exists(self.analysis_path):
-            try:
-                with open(self.analysis_path, "r") as f:
-                    data = json.load(f)
-                    self._analyses = data.get("analyses", {})
-                    self._execution_updates = data.get("execution_updates", {})
-                    logger.info(
-                        f"✅ Loaded {len(self._analyses)} analyses and "
-                        f"{sum(len(v) for v in self._execution_updates.values())} execution updates "
-                        f"from {self.analysis_path}"
-                    )
-            except Exception as e:
-                logger.error(f"Failed to load analyses from {self.analysis_path}: {e}")
-        else:
-            logger.info(f"No existing analyses file at {self.analysis_path} (will create on first save)")
-
-    async def _save(self):
+    def __init__(self):
+        """Initialize database connection."""
+        logger.info("✅ Using Azure SQL database for persistent storage")
+        logger.info("Creating database tables if they don't exist...")
         try:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._write_to_file)
+            # Create tables if they don't exist
+            from app.models.db_models import SQLModel
+            SQLModel.metadata.create_all(engine)
+            logger.info("✅ Database tables verified/created successfully")
         except Exception as e:
-            logger.error(
-                f"❌ Database save failed - data may be lost! "
-                f"This is using fallback JSON storage. "
-                f"Please configure Azure SQL for persistent storage. "
-                f"Error: {e}",
-                exc_info=True
-            )
-            # Re-raise to alert the caller
+            logger.error(f"Failed to create database tables: {e}", exc_info=True)
             raise
 
-    def _write_to_file(self):
+    async def save_analysis(self, analysis: AnalysisResponse):
+        """Save analysis to database."""
         try:
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-            os.makedirs(os.path.dirname(self.analysis_path), exist_ok=True)
+            with Session(engine) as session:
+                # Calculate portfolio metrics
+                total_investment = sum(
+                    s.entry_price * s.quantity for s in analysis.stocks
+                )
+                max_profit = sum(
+                    (s.target_price - s.entry_price) * s.quantity
+                    for s in analysis.stocks if s.action == "BUY"
+                )
+                max_loss = sum(
+                    abs(s.stop_loss - s.entry_price) * s.quantity
+                    for s in analysis.stocks
+                )
 
-            # Save trades
-            with open(self.db_path, "w") as f:
-                json.dump([t.model_dump(mode='json') for t in self._trades], f, indent=4)
-            logger.debug(f"Trades saved to {self.db_path} ({len(self._trades)} records)")
+                # Create analysis record
+                # Note: analysis_id is auto-generated, user_id defaults to 1 (system user)
+                db_analysis = Analysis(
+                    # analysis_id will be auto-generated (don't set it)
+                    user_id=1,  # Default to user 1 for now
+                    status=AnalysisStatusEnum.COMPLETED,
+                    hold_duration_days=getattr(analysis, 'holdDurationDays', 0),
+                    total_investment=total_investment,
+                    max_profit=max_profit,
+                    max_loss=max_loss,
+                    created_at=datetime.utcnow(),
+                    completed_at=datetime.utcnow(),
+                )
 
-            # Save analyses
-            with open(self.analysis_path, "w") as f:
-                json.dump({
-                    "analyses": self._analyses,
-                    "execution_updates": self._execution_updates
-                }, f, indent=4, default=str)
-            logger.debug(
-                f"Analyses saved to {self.analysis_path} "
-                f"({len(self._analyses)} analyses, "
-                f"{sum(len(v) for v in self._execution_updates.values())} updates)"
-            )
+                session.add(db_analysis)
+                session.flush()  # Flush to get the auto-generated analysis_id
+
+                # Create stock recommendation records
+                for idx, stock in enumerate(analysis.stocks):
+                    recommendation = StockRecommendation(
+                        analysis_id=db_analysis.analysis_id,  # Use the generated ID
+                        stock_symbol=stock.stock_symbol,
+                        action=stock.action,
+                        entry_price=stock.entry_price,
+                        stop_loss=stock.stop_loss,
+                        target_price=stock.target_price,
+                        confidence_score=stock.confidence_score,
+                        rationale=stock.ai_reasoning,
+                        created_at=datetime.utcnow(),
+                    )
+                    session.add(recommendation)
+
+                session.commit()
+                logger.info(
+                    f"✅ Analysis persisted to SQL (ID: {db_analysis.analysis_id}) "
+                    f"with {len(analysis.stocks)} stocks"
+                )
         except Exception as e:
-            logger.error(f"Failed to write to database files: {e}", exc_info=True)
+            logger.error(f"Failed to save analysis: {e}", exc_info=True)
+            raise
+
+    async def get_analysis(self, analysis_id: str) -> Optional[dict]:
+        """Retrieve analysis by ID from database."""
+        try:
+            with Session(engine) as session:
+                statement = select(Analysis).where(
+                    Analysis.analysis_id == analysis_id
+                )
+                analysis = session.exec(statement).first()
+
+                if analysis:
+                    logger.info(f"✅ Retrieved analysis from SQL: {analysis_id}")
+                    return analysis.result_json
+                else:
+                    logger.warning(f"Analysis not found: {analysis_id}")
+                    return None
+        except Exception as e:
+            logger.error(f"Failed to retrieve analysis: {e}", exc_info=True)
+            raise
+
+    async def update_analysis_status(self, analysis_id: str, status: str):
+        """Update analysis status in database."""
+        try:
+            with Session(engine) as session:
+                statement = select(Analysis).where(
+                    Analysis.analysis_id == analysis_id
+                )
+                analysis = session.exec(statement).first()
+
+                if analysis:
+                    analysis.status = status
+                    analysis.updated_at = datetime.utcnow()
+                    session.add(analysis)
+                    session.commit()
+                    logger.info(f"✅ Updated analysis status: {analysis_id} -> {status}")
+        except Exception as e:
+            logger.error(f"Failed to update analysis status: {e}", exc_info=True)
+            raise
+
+    async def save_execution_update(self, update: ExecutionUpdate):
+        """Save execution update to database."""
+        try:
+            with Session(engine) as session:
+                db_update = DBExecutionUpdate(
+                    analysis_id=update.analysis_id,
+                    stock_symbol=update.stock_symbol,
+                    update_type=update.updateType,
+                    message=update.message,
+                    order_id=getattr(update, 'order_id', None),
+                    status=getattr(update, 'status', 'PENDING'),
+                    timestamp=update.timestamp,
+                    created_at=datetime.utcnow(),
+                )
+
+                session.add(db_update)
+                session.commit()
+                logger.info(
+                    f"✅ Execution update persisted to SQL: "
+                    f"{update.analysis_id} - {update.stock_symbol}"
+                )
+        except Exception as e:
+            logger.error(f"Failed to save execution update: {e}", exc_info=True)
+            raise
+
+    async def get_execution_updates(
+        self, analysis_id: str
+    ) -> List[ExecutionUpdate]:
+        """Get all execution updates for an analysis from database."""
+        try:
+            with Session(engine) as session:
+                statement = select(DBExecutionUpdate).where(
+                    DBExecutionUpdate.analysis_id == analysis_id
+                ).order_by(DBExecutionUpdate.timestamp)
+
+                updates = session.exec(statement).all()
+
+                result = [
+                    ExecutionUpdate(
+                        analysis_id=u.analysis_id,
+                        stock_symbol=u.stock_symbol,
+                        updateType=u.update_type,
+                        message=u.message,
+                        timestamp=u.timestamp,
+                    )
+                    for u in updates
+                ]
+
+                logger.info(
+                    f"✅ Retrieved {len(result)} execution updates from SQL "
+                    f"for analysis: {analysis_id}"
+                )
+                return result
+        except Exception as e:
+            logger.error(f"Failed to retrieve execution updates: {e}", exc_info=True)
+            raise
+
+    async def get_all_analyses(self, limit: int = 50) -> List[dict]:
+        """Get recent analyses from database."""
+        try:
+            with Session(engine) as session:
+                statement = (
+                    select(Analysis)
+                    .order_by(Analysis.created_at.desc())
+                    .limit(limit)
+                )
+                analyses = session.exec(statement).all()
+
+                result = [analysis.result_json for analysis in analyses]
+
+                logger.info(f"✅ Retrieved {len(result)} analyses from SQL")
+                return result
+        except Exception as e:
+            logger.error(f"Failed to retrieve analyses: {e}", exc_info=True)
             raise
 
     async def save_trade(self, trade: Trade):
-        self._trades.append(trade)
-        logger.debug(f"Trade added to memory: {trade.id}")
-        await self._save()
-        logger.info(f"✅ Trade persisted: {trade.id} (total: {len(self._trades)})")
+        """Save completed trade to database."""
+        try:
+            with Session(engine) as session:
+                db_trade = DBTrade(
+                    trade_id=trade.id,
+                    symbol=trade.symbol,
+                    action=trade.action,
+                    entry_price=trade.entry_price,
+                    exit_price=trade.exit_price,
+                    quantity=trade.quantity,
+                    pnl=trade.pnl,
+                    pnl_percent=trade.pnl_percent,
+                    entry_time=trade.entry_time,
+                    exit_time=trade.exit_time,
+                    status="CLOSED",
+                    created_at=datetime.utcnow(),
+                )
+
+                session.add(db_trade)
+                session.commit()
+                logger.info(f"✅ Trade persisted to SQL: {trade.id}")
+        except Exception as e:
+            logger.error(f"Failed to save trade: {e}", exc_info=True)
+            raise
 
     async def get_all_trades(self) -> List[Trade]:
-        return self._trades
+        """Get all trades from database."""
+        try:
+            with Session(engine) as session:
+                statement = select(DBTrade).order_by(DBTrade.entry_time.desc())
+                trades = session.exec(statement).all()
+
+                result = [
+                    Trade(
+                        id=t.trade_id,
+                        symbol=t.symbol,
+                        action=t.action,
+                        entry_price=float(t.entry_price),
+                        exit_price=float(t.exit_price) if t.exit_price else 0,
+                        quantity=t.quantity,
+                        pnl=float(t.pnl) if t.pnl else 0,
+                        pnl_percent=float(t.pnl_percent) if t.pnl_percent else 0,
+                        entry_time=t.entry_time,
+                        exit_time=t.exit_time,
+                    )
+                    for t in trades
+                ]
+
+                logger.info(f"✅ Retrieved {len(result)} trades from SQL")
+                return result
+        except Exception as e:
+            logger.error(f"Failed to retrieve trades: {e}", exc_info=True)
+            raise
 
     async def get_monthly_trades(self, month: int, year: int) -> List[Trade]:
-        return [
-            t for t in self._trades 
-            if t.entry_time.month == month and t.entry_time.year == year
-        ]
-    
-    async def save_analysis(self, analysis: AnalysisResponse):
-        """Save analysis to database."""
-        self._analyses[analysis.analysis_id] = analysis.model_dump(mode='json')
-        logger.debug(
-            f"Analysis added to memory: {analysis.analysis_id} "
-            f"with {len(analysis.stocks)} stocks"
-        )
-        await self._save()
-        logger.info(f"✅ Analysis persisted: {analysis.analysis_id} (total: {len(self._analyses)})")
-    
-    async def get_analysis(self, analysis_id: str) -> Optional[dict]:
-        """Retrieve analysis by ID."""
-        return self._analyses.get(analysis_id)
-    
-    async def update_analysis_status(self, analysis_id: str, status: str):
-        """Update analysis status."""
-        if analysis_id in self._analyses:
-            self._analyses[analysis_id]["status"] = status
-            await self._save()
-    
-    async def save_execution_update(self, update: ExecutionUpdate):
-        """Save execution update."""
-        if update.analysis_id not in self._execution_updates:
-            self._execution_updates[update.analysis_id] = []
+        """Get trades for a specific month from database."""
+        try:
+            with Session(engine) as session:
+                statement = (
+                    select(DBTrade)
+                    .where(
+                        (DBTrade.entry_time >= datetime(year, month, 1))
+                        & (
+                            DBTrade.entry_time
+                            < (
+                                datetime(year, month + 1, 1)
+                                if month < 12
+                                else datetime(year + 1, 1, 1)
+                            )
+                        )
+                    )
+                    .order_by(DBTrade.entry_time.desc())
+                )
+                trades = session.exec(statement).all()
 
-        self._execution_updates[update.analysis_id].append(update.model_dump(mode='json'))
-        logger.debug(
-            f"Execution update added to memory for {update.analysis_id}: "
-            f"{update.stock_symbol} - {update.update_type}"
-        )
-        await self._save()
-        total_updates = sum(len(v) for v in self._execution_updates.values())
-        logger.info(
-            f"✅ Execution update persisted for {update.analysis_id} "
-            f"(total: {total_updates} updates)"
-        )
-    
-    async def get_execution_updates(self, analysis_id: str) -> List[ExecutionUpdate]:
-        """Get all execution updates for an analysis."""
-        updates_data = self._execution_updates.get(analysis_id, [])
-        return [ExecutionUpdate(**u) for u in updates_data]
-    
-    async def get_all_analyses(self, limit: int = 50) -> List[dict]:
-        """Get recent analyses."""
-        analyses_list = list(self._analyses.values())
-        # Sort by created_at descending
-        analyses_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        return analyses_list[:limit]
+                result = [
+                    Trade(
+                        id=t.trade_id,
+                        symbol=t.symbol,
+                        action=t.action,
+                        entry_price=float(t.entry_price),
+                        exit_price=float(t.exit_price) if t.exit_price else 0,
+                        quantity=t.quantity,
+                        pnl=float(t.pnl) if t.pnl else 0,
+                        pnl_percent=float(t.pnl_percent) if t.pnl_percent else 0,
+                        entry_time=t.entry_time,
+                        exit_time=t.exit_time,
+                    )
+                    for t in trades
+                ]
 
+                logger.info(
+                    f"✅ Retrieved {len(result)} trades for {month}/{year} from SQL"
+                )
+                return result
+        except Exception as e:
+            logger.error(f"Failed to retrieve monthly trades: {e}", exc_info=True)
+            raise
+
+
+# Initialize database singleton
 db = Database()
-

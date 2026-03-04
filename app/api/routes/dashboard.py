@@ -90,7 +90,7 @@ async def get_dashboard_summary(
     - Active GTTs
     """
     try:
-        # Set token first, then fetch all data in parallel
+        # Set user's access token for this request
         zerodha_service.kite.set_access_token(access_token)
 
         margins_data, positions_data, orders_data, trades_data, gtts_data = await asyncio.gather(
