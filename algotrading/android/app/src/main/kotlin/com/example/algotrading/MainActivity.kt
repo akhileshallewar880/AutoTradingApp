@@ -1,4 +1,4 @@
-package com.example.algotrading
+package com.vantrade.app
 
 import io.flutter.embedding.android.FlutterActivity
 

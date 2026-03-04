@@ -48,21 +48,21 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
 
   Future<void> _handleRequestToken(String requestToken) async {
     final authProvider = context.read<AuthProvider>();
-    
+
     try {
       await authProvider.createSession(requestToken);
-      
+
       if (mounted) {
-        Navigator.of(context).pushNamedAndRemoveUntil(
-          '/home',
-          (route) => false,
-        );
+        // After successful Zerodha OAuth login, go to dashboard
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil('/home', (route) => false);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Login failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Login failed: $e')));
         Navigator.of(context).pop();
       }
     }
@@ -79,10 +79,7 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
       body: Stack(
         children: [
           WebViewWidget(controller: _controller),
-          if (_isLoading)
-            const Center(
-              child: CircularProgressIndicator(),
-            ),
+          if (_isLoading) const Center(child: CircularProgressIndicator()),
         ],
       ),
     );

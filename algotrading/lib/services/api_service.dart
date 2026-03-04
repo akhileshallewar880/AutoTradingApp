@@ -7,10 +7,11 @@ import '../utils/api_config.dart';
 
 class ApiService {
   // Authentication
-  static Future<String> getLoginUrl() async {
-    final response = await http.get(
-      Uri.parse(ApiConfig.loginUrl),
-    ).timeout(ApiConfig.timeout);
+  static Future<String> getLoginUrl({required String apiKey}) async {
+    final uri = Uri.parse(ApiConfig.loginUrl).replace(
+      queryParameters: {'api_key': apiKey},
+    );
+    final response = await http.get(uri).timeout(ApiConfig.timeout);
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -20,11 +21,19 @@ class ApiService {
     }
   }
 
-  static Future<UserModel> createSession(String requestToken) async {
+  static Future<UserModel> createSession(
+    String requestToken, {
+    required String apiKey,
+    required String apiSecret,
+  }) async {
     final response = await http.post(
       Uri.parse(ApiConfig.sessionUrl),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'request_token': requestToken}),
+      body: jsonEncode({
+        'request_token': requestToken,
+        'api_key': apiKey,
+        'api_secret': apiSecret,
+      }),
     ).timeout(ApiConfig.timeout);
 
     if (response.statusCode == 200) {
@@ -181,6 +190,32 @@ class ApiService {
       return DashboardModel.fromJson(jsonDecode(response.body));
     } else {
       throw Exception('Failed to load dashboard: ${response.body}');
+    }
+  }
+
+  /// Validate user-provided Zerodha API credentials
+  /// Makes a test call to the backend with the credentials
+  /// Returns true if valid, false otherwise
+  static Future<bool> validateZerodhaCredentials(
+      String apiKey, String apiSecret) async {
+    try {
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/validate-zerodha-credentials'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'api_key': apiKey,
+          'api_secret': apiSecret,
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['valid'] == true;
+      } else {
+        return false;
+      }
+    } catch (e) {
+      return false;
     }
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/vantrade_logo.dart';
 
@@ -78,7 +79,31 @@ class _SplashScreenState extends State<SplashScreen>
     await Future.delayed(const Duration(milliseconds: 2500));
     if (!mounted) return;
 
+    // Check if onboarding has been completed
+    final prefs = await SharedPreferences.getInstance();
+    final onboardingCompleted = prefs.getBool('onboarding_completed') ?? false;
+
+    if (!mounted) return;
+
+    // If onboarding not completed, show it first
+    if (!onboardingCompleted) {
+      Navigator.pushReplacementNamed(context, '/onboarding');
+      return;
+    }
+
+    // Check if API credentials have been saved
     final authProvider = context.read<AuthProvider>();
+    final hasCredentials = await authProvider.getSavedApiCredentials() != null;
+
+    if (!mounted) return;
+
+    // If no credentials saved, ask user to set them up
+    if (!hasCredentials) {
+      Navigator.pushReplacementNamed(context, '/api-settings');
+      return;
+    }
+
+    // Otherwise, check session and go to home or login
     await authProvider.checkSession();
     if (!mounted) return;
 

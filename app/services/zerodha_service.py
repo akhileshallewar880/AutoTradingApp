@@ -9,30 +9,51 @@ settings = get_settings()
 
 class ZerodhaService:
     def __init__(self):
-        self.api_key = settings.ZERODHA_API_KEY.strip()
-        self.api_secret = settings.ZERODHA_API_SECRET.strip()
+        # Use app's registered credentials if available (for backward compatibility)
+        self.api_key = settings.ZERODHA_API_KEY.strip() if settings.ZERODHA_API_KEY else None
+        self.api_secret = settings.ZERODHA_API_SECRET.strip() if settings.ZERODHA_API_SECRET else None
         self.access_token = settings.ZERODHA_ACCESS_TOKEN
-        self.kite = KiteConnect(api_key=self.api_key)
-        logger.info(f"ZerodhaService initialized with api_key length={len(self.api_key)}, api_secret length={len(self.api_secret)}")
 
-        if self.access_token:
-            self.kite.set_access_token(self.access_token)
+        # Only initialize kite if api_key is available
+        if self.api_key:
+            self.kite = KiteConnect(api_key=self.api_key)
+            logger.info(f"ZerodhaService initialized with api_key length={len(self.api_key)}, api_secret length={len(self.api_secret) if self.api_secret else 0}")
+            if self.access_token:
+                self.kite.set_access_token(self.access_token)
+            else:
+                logger.warning("Zerodha Access Token not found! API calls may fail.")
         else:
-            logger.warning("Zerodha Access Token not found! API calls may fail.")
+            self.kite = None
+            logger.info("ZerodhaService initialized without app credentials. Per-request methods will be used.")
 
     def get_login_url(self) -> str:
-        """Generate Kite Connect login URL."""
+        """Generate Kite Connect login URL using app's credentials."""
+        if not self.kite:
+            raise RuntimeError("ZerodhaService not initialized with app credentials")
         login_url = self.kite.login_url()
         logger.info(f"Generated login URL: {login_url}")
         return login_url
 
+    def get_login_url_with_api_key(self, api_key: str) -> str:
+        """Generate Kite Connect login URL with user-provided API key."""
+        try:
+            kite = KiteConnect(api_key=api_key)
+            login_url = kite.login_url()
+            logger.info(f"Generated login URL for user API key: {login_url}")
+            return login_url
+        except Exception as e:
+            logger.error(f"Error generating login URL with user API key: {e}")
+            raise
+
     async def generate_session(self, request_token: str) -> Dict:
         """
-        Exchange request_token for access_token.
+        Exchange request_token for access_token using app credentials.
         Returns session data including access_token, user details, etc.
         """
+        if not self.kite:
+            raise RuntimeError("ZerodhaService not initialized with app credentials")
         try:
-            logger.info(f"Generating session: token_length={len(request_token)}, api_key={self.api_key}, secret_length={len(self.api_secret)}")
+            logger.info(f"Generating session: token_length={len(request_token)}, api_key={self.api_key}, secret_length={len(self.api_secret) if self.api_secret else 0}")
             loop = asyncio.get_event_loop()
             from functools import partial
             data = await loop.run_in_executor(
@@ -45,6 +66,34 @@ class ZerodhaService:
         except Exception as e:
             import traceback
             logger.error(f"Error generating session: {e}")
+            logger.error(traceback.format_exc())
+            # If the exception has a response attribute (like requests.exceptions.HTTPError), log it
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    logger.error(f"Zerodha API response: {e.response.text}")
+                except Exception:
+                    pass
+            raise
+
+    async def generate_session_with_credentials(self, request_token: str, api_key: str, api_secret: str) -> Dict:
+        """
+        Exchange request_token for access_token using user-provided credentials.
+        Returns session data including access_token, user details, etc.
+        """
+        try:
+            logger.info(f"Generating session with user credentials: token_length={len(request_token)}, api_key_length={len(api_key)}")
+            kite = KiteConnect(api_key=api_key)
+            loop = asyncio.get_event_loop()
+            from functools import partial
+            data = await loop.run_in_executor(
+                None,
+                partial(kite.generate_session, request_token, api_secret=api_secret)
+            )
+            logger.info(f"Session generated successfully for user: {data['user_id']}")
+            return data
+        except Exception as e:
+            import traceback
+            logger.error(f"Error generating session with user credentials: {e}")
             logger.error(traceback.format_exc())
             # If the exception has a response attribute (like requests.exceptions.HTTPError), log it
             if hasattr(e, 'response') and e.response is not None:

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
 import '../services/api_service.dart';
 import '../services/session_manager.dart';
@@ -43,7 +44,13 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final url = await ApiService.getLoginUrl();
+      // Get user's saved API credentials
+      final creds = await getSavedApiCredentials();
+      if (creds == null) {
+        throw Exception('API credentials not found. Please set them up first.');
+      }
+
+      final url = await ApiService.getLoginUrl(apiKey: creds['apiKey']!);
       _isLoading = false;
       notifyListeners();
       return url;
@@ -61,7 +68,17 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final user = await ApiService.createSession(requestToken);
+      // Get user's saved API credentials
+      final creds = await getSavedApiCredentials();
+      if (creds == null) {
+        throw Exception('API credentials not found. Please set them up first.');
+      }
+
+      final user = await ApiService.createSession(
+        requestToken,
+        apiKey: creds['apiKey']!,
+        apiSecret: creds['apiSecret']!,
+      );
       _user = user;
       await SessionManager.saveSession(user);
       _error = null;
@@ -114,8 +131,72 @@ class AuthProvider with ChangeNotifier {
     }
 
     await SessionManager.clearSession();
+    await clearApiCredentials();
     _user = null;
     _error = null;
     notifyListeners();
+  }
+
+  /// Retrieve saved API credentials from secure local storage
+  Future<Map<String, String>?> getSavedApiCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final apiKey = prefs.getString('zerodha_api_key');
+      final apiSecret = prefs.getString('zerodha_api_secret');
+
+      if (apiKey != null && apiSecret != null) {
+        return {
+          'apiKey': apiKey,
+          'apiSecret': apiSecret,
+        };
+      }
+      return null;
+    } catch (e) {
+      _error = 'Failed to load API credentials: $e';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Validate API credentials by making a test Zerodha API call
+  /// Returns true if credentials are valid, false otherwise
+  Future<bool> validateApiCredentials(String apiKey, String apiSecret) async {
+    try {
+      // Test call to Zerodha API with provided credentials
+      final isValid = await ApiService.validateZerodhaCredentials(apiKey, apiSecret);
+      return isValid;
+    } catch (e) {
+      _error = 'API validation failed: $e';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Save API credentials securely to local storage
+  Future<void> saveApiCredentials(String apiKey, String apiSecret) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('zerodha_api_key', apiKey);
+      await prefs.setString('zerodha_api_secret', apiSecret);
+
+      _error = null;
+      notifyListeners();
+    } catch (e) {
+      _error = 'Failed to save API credentials: $e';
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// Clear saved API credentials from local storage
+  Future<void> clearApiCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('zerodha_api_key');
+      await prefs.remove('zerodha_api_secret');
+    } catch (e) {
+      _error = 'Failed to clear API credentials: $e';
+      notifyListeners();
+    }
   }
 }

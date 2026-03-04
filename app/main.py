@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
-from app.api.routes import agent, performance, auth, analysis, dashboard
+from app.core.database import init_db, close_db
+from app.api.routes import agent, performance, auth, analysis, dashboard, credentials
 from app.core.logging import logger
 
 settings = get_settings()
@@ -28,10 +29,26 @@ def create_app() -> FastAPI:
     app.include_router(agent.router, prefix="/api/v1", tags=["Agent"])
     app.include_router(performance.router, prefix="/api/v1", tags=["Performance"])
     app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
+    app.include_router(credentials.router, tags=["Credentials"])
 
     @app.on_event("startup")
     async def startup_event():
         logger.info("Application starting up...")
+        try:
+            init_db()
+            logger.info("✓ Database initialized on startup")
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize database: {str(e)}")
+            raise
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        logger.info("Application shutting down...")
+        try:
+            close_db()
+            logger.info("✓ Database connections closed")
+        except Exception as e:
+            logger.error(f"✗ Error closing database: {str(e)}")
 
     @app.get("/health")
     async def health_check():

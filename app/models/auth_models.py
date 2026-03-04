@@ -6,6 +6,8 @@ class LoginUrlResponse(BaseModel):
 
 class SessionRequest(BaseModel):
     request_token: str = Field(..., description="Request token received from Kite login callback")
+    api_key: str = Field(..., description="User's Zerodha API key")
+    api_secret: str = Field(..., description="User's Zerodha API secret")
 
 class SessionResponse(BaseModel):
     access_token: str

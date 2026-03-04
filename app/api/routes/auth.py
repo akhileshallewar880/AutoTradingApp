@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from app.models.auth_models import LoginUrlResponse, SessionRequest, SessionResponse
 from app.services.zerodha_service import zerodha_service
 from app.core.logging import logger
@@ -6,14 +6,15 @@ from app.core.logging import logger
 router = APIRouter()
 
 @router.get("/login", response_model=LoginUrlResponse)
-async def get_login_url():
+async def get_login_url(api_key: str = Query(...)):
     """
     Step 1: Get Kite Connect login URL.
+    Accepts user's API key to generate login URL with their registered Kite Connect app.
     Redirect the user to this URL to complete the Zerodha login.
     After successful login, Zerodha will redirect to your configured redirect_url with a request_token.
     """
     try:
-        login_url = zerodha_service.get_login_url()
+        login_url = zerodha_service.get_login_url_with_api_key(api_key)
         return LoginUrlResponse(login_url=login_url)
     except Exception as e:
         logger.error(f"Failed to generate login URL: {e}")
@@ -24,13 +25,17 @@ async def create_session(session_request: SessionRequest):
     """
     Step 2: Exchange request_token for access_token.
     After user completes login on Kite, you'll receive a request_token in the callback URL.
-    POST that request_token here to get the access_token and user details.
-    
+    POST that request_token (along with api_key and api_secret) here to get the access_token and user details.
+
     The access_token should be stored securely and used for all subsequent API calls.
     """
     try:
-        session_data = await zerodha_service.generate_session(session_request.request_token)
-        
+        session_data = await zerodha_service.generate_session_with_credentials(
+            session_request.request_token,
+            session_request.api_key,
+            session_request.api_secret
+        )
+
         return SessionResponse(
             access_token=session_data["access_token"],
             user_id=session_data["user_id"],
@@ -44,7 +49,7 @@ async def create_session(session_request: SessionRequest):
     except Exception as e:
         logger.error(f"Session creation failed: {e}")
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Failed to create session. Invalid or expired request_token. Error: {str(e)}"
         )
 

@@ -43,7 +43,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _refresh() async {
     final auth = context.read<AuthProvider>();
     if (auth.user != null) {
-      await context.read<DashboardProvider>().fetchDashboard(auth.user!.accessToken);
+      await context.read<DashboardProvider>().fetchDashboard(
+        auth.user!.accessToken,
+      );
     }
   }
 
@@ -53,133 +55,151 @@ class _HomeScreenState extends State<HomeScreen> {
     final dash = context.watch<DashboardProvider>();
     final user = auth.user;
 
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        title: const Text(
-          'VanTrade',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-        ),
-        backgroundColor: Colors.green[700],
-        foregroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          if (dash.isLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: Colors.grey[50],
+        appBar: AppBar(
+          title: const Text(
+            'VanTrade',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+          ),
+          backgroundColor: Colors.green[700],
+          foregroundColor: Colors.white,
+          elevation: 0,
+          actions: [
+            if (dash.isLoading)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 ),
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
+                onPressed: _refresh,
               ),
-            )
-          else
             IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Refresh',
-              onPressed: _refresh,
+              icon: const Icon(Icons.logout),
+              tooltip: 'Logout',
+              onPressed: () => _handleLogout(context),
             ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () => _handleLogout(context),
-          ),
-        ],
-      ),
-      // ── Fixed bottom bar ───────────────────────────────────────────────
-      bottomNavigationBar: _buildFixedBottomBar(context),
-      body: Column(
-        children: [
-          // ── Demo-mode banner ─────────────────────────────────────────
-          if (auth.isDemoMode)
-            Material(
-              color: const Color(0xFFFFF8E1), // amber[50]
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: Row(
-                  children: [
-                    Icon(Icons.science_outlined,
-                        color: Colors.orange[800], size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Demo Mode — Sample data only. '
-                        'Login with Zerodha to trade live.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.orange[900],
-                          fontWeight: FontWeight.w500,
+          ],
+        ),
+        // ── Fixed bottom bar ───────────────────────────────────────────────
+        bottomNavigationBar: _buildFixedBottomBar(context),
+        body: Column(
+          children: [
+            // ── Demo-mode banner ─────────────────────────────────────────
+            if (auth.isDemoMode)
+              Material(
+                color: const Color(0xFFFFF8E1), // amber[50]
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.science_outlined,
+                        color: Colors.orange[800],
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Demo Mode — Sample data only. '
+                          'Login with Zerodha to trade live.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.orange[900],
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
-                    ),
-                    GestureDetector(
-                      onTap: () => _handleLogout(context),
-                      child: Text(
-                        'Login',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.green[700],
-                          fontWeight: FontWeight.bold,
-                          decoration: TextDecoration.underline,
+                      GestureDetector(
+                        onTap: () => _handleLogout(context),
+                        child: Text(
+                          'Login',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.green[700],
+                            fontWeight: FontWeight.bold,
+                            decoration: TextDecoration.underline,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
 
-          Expanded(
-            child: RefreshIndicator(
-        onRefresh: _refresh,
-        color: Colors.green[700],
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── Welcome row ──────────────────────────────────────────
-              _buildWelcomeRow(user?.userName ?? 'Trader'),
-              const SizedBox(height: 16),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _refresh,
+                color: Colors.green[700],
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ── Welcome row ──────────────────────────────────────────
+                      _buildWelcomeRow(user?.userName ?? 'Trader'),
+                      const SizedBox(height: 16),
 
-              // ── Dashboard content ────────────────────────────────────
-              if (dash.error != null && dash.dashboard == null)
-                _buildErrorCard(dash.error!)
-              else ...[
-                _buildBalancePnlCard(dash.dashboard),
-                const SizedBox(height: 12),
-                _buildMonthCard(dash.dashboard),
-                const SizedBox(height: 12),
-                if ((dash.dashboard?.positions.isNotEmpty ?? false)) ...[
-                  _buildSectionHeader('Open Positions',
-                      Icons.show_chart, Colors.indigo),
-                  const SizedBox(height: 8),
-                  _buildPositionsList(dash.dashboard!.positions),
-                  const SizedBox(height: 12),
-                ],
-                _buildSectionHeader(
-                    'Active GTTs', Icons.alarm_on, Colors.deepPurple),
-                const SizedBox(height: 8),
-                _buildGttList(dash.dashboard?.gtts ?? []),
-                const SizedBox(height: 12),
-                _buildSectionHeader(
-                    'Today\'s Orders', Icons.receipt_long, Colors.blueGrey),
-                const SizedBox(height: 8),
-                _buildOrdersList(dash.dashboard?.orders ?? []),
-              ],
-            ],
-          ),
-        ),
-      ),
-          ),   // Expanded
-        ],     // outer Column children
-      ),       // outer Column
-    );
+                      // ── Dashboard content ────────────────────────────────────
+                      if (dash.error != null && dash.dashboard == null)
+                        _buildErrorCard(dash.error!)
+                      else ...[
+                        _buildBalancePnlCard(dash.dashboard),
+                        const SizedBox(height: 12),
+                        _buildMonthCard(dash.dashboard),
+                        const SizedBox(height: 12),
+                        if ((dash.dashboard?.positions.isNotEmpty ??
+                            false)) ...[
+                          _buildSectionHeader(
+                            'Open Positions',
+                            Icons.show_chart,
+                            Colors.indigo,
+                          ),
+                          const SizedBox(height: 8),
+                          _buildPositionsList(dash.dashboard!.positions),
+                          const SizedBox(height: 12),
+                        ],
+                        _buildSectionHeader(
+                          'Active GTTs',
+                          Icons.alarm_on,
+                          Colors.deepPurple,
+                        ),
+                        const SizedBox(height: 8),
+                        _buildGttList(dash.dashboard?.gtts ?? []),
+                        const SizedBox(height: 12),
+                        _buildSectionHeader(
+                          'Today\'s Orders',
+                          Icons.receipt_long,
+                          Colors.blueGrey,
+                        ),
+                        const SizedBox(height: 8),
+                        _buildOrdersList(dash.dashboard?.orders ?? []),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ), // Expanded
+          ], // outer Column children
+        ), // outer Column
+      ), // Scaffold
+    ); // PopScope
   }
 
   // ── Welcome ──────────────────────────────────────────────────────────────
@@ -189,8 +209,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final greeting = hour < 12
         ? 'Good morning'
         : hour < 17
-            ? 'Good afternoon'
-            : 'Good evening';
+        ? 'Good afternoon'
+        : 'Good evening';
     return Row(
       children: [
         Container(
@@ -206,11 +226,17 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(greeting,
-                  style: TextStyle(fontSize: 13, color: Colors.grey[600])),
-              Text(name,
-                  style: const TextStyle(
-                      fontSize: 20, fontWeight: FontWeight.bold)),
+              Text(
+                greeting,
+                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+              ),
+              Text(
+                name,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
         ),
@@ -231,7 +257,8 @@ class _HomeScreenState extends State<HomeScreen> {
         color: isOpen ? Colors.green[50] : Colors.red[50],
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-            color: isOpen ? Colors.green[300]! : Colors.red[300]!),
+          color: isOpen ? Colors.green[300]! : Colors.red[300]!,
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -284,10 +311,15 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Available Balance',
-                    style: TextStyle(color: Colors.white70, fontSize: 13)),
-                Icon(Icons.account_balance_wallet,
-                    color: Colors.white54, size: 18),
+                const Text(
+                  'Available Balance',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                Icon(
+                  Icons.account_balance_wallet,
+                  color: Colors.white54,
+                  size: 18,
+                ),
               ],
             ),
             const SizedBox(height: 6),
@@ -312,8 +344,10 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text("Today's P&L",
-                      style: TextStyle(color: Colors.white70, fontSize: 13)),
+                  const Text(
+                    "Today's P&L",
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
                   data == null
                       ? const _ShimmerBox(width: 100, height: 20)
                       : Row(
@@ -379,9 +413,13 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 Icon(Icons.calendar_month, color: Colors.blue[700], size: 18),
                 const SizedBox(width: 8),
-                Text('$monthLabel Performance',
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.bold)),
+                Text(
+                  '$monthLabel Performance',
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 14),
@@ -412,7 +450,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: _buildStatBox(
                     label: 'Win Rate',
-                    value: data == null ? '—' : '${winRate.toStringAsFixed(1)}%',
+                    value: data == null
+                        ? '—'
+                        : '${winRate.toStringAsFixed(1)}%',
                     color: winRate >= 50
                         ? Colors.green[700]!
                         : Colors.orange[700]!,
@@ -436,16 +476,22 @@ class _HomeScreenState extends State<HomeScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('$wins wins',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.green[700],
-                          fontWeight: FontWeight.w600)),
-                  Text('$losses losses',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.red[600],
-                          fontWeight: FontWeight.w600)),
+                  Text(
+                    '$wins wins',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.green[700],
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    '$losses losses',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.red[600],
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -475,16 +521,21 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Icon(icon, size: 13, color: color),
               const SizedBox(width: 4),
-              Text(label,
-                  style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+              Text(
+                label,
+                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+              ),
             ],
           ),
           const SizedBox(height: 4),
-          Text(value,
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: color)),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -512,12 +563,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: isPos ? Colors.green[700] : Colors.red[600],
               ),
             ),
-            title: Text(pos.symbol,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 14)),
+            title: Text(
+              pos.symbol,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
             subtitle: Text(
-                'Qty: ${pos.quantity}  •  Avg: ${_currency.format(pos.avgPrice)}  •  LTP: ${_currency.format(pos.ltp)}',
-                style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+              'Qty: ${pos.quantity}  •  Avg: ${_currency.format(pos.avgPrice)}  •  LTP: ${_currency.format(pos.ltp)}',
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+            ),
             trailing: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -533,8 +586,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 Text(
                   '${isPos ? '+' : ''}${pos.pnlPct.toStringAsFixed(2)}%',
                   style: TextStyle(
-                      fontSize: 11,
-                      color: isPos ? Colors.green[600] : Colors.red[500]),
+                    fontSize: 11,
+                    color: isPos ? Colors.green[600] : Colors.red[500],
+                  ),
                 ),
               ],
             ),
@@ -555,10 +609,16 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Center(
             child: Column(
               children: [
-                Icon(Icons.alarm_off_outlined, size: 40, color: Colors.grey[300]),
+                Icon(
+                  Icons.alarm_off_outlined,
+                  size: 40,
+                  color: Colors.grey[300],
+                ),
                 const SizedBox(height: 8),
-                Text('No active GTTs',
-                    style: TextStyle(color: Colors.grey[500], fontSize: 14)),
+                Text(
+                  'No active GTTs',
+                  style: TextStyle(color: Colors.grey[500], fontSize: 14),
+                ),
               ],
             ),
           ),
@@ -570,9 +630,7 @@ class _HomeScreenState extends State<HomeScreen> {
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: gtts.map((g) => _buildGttTile(g)).toList(),
-      ),
+      child: Column(children: gtts.map((g) => _buildGttTile(g)).toList()),
     );
   }
 
@@ -597,9 +655,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return InkWell(
       onTap: () => Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => GttAnalysisScreen(gtt: g),
-        ),
+        MaterialPageRoute(builder: (_) => GttAnalysisScreen(gtt: g)),
       ),
       child: Container(
         decoration: BoxDecoration(
@@ -621,9 +677,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           title: Row(
             children: [
-              Text(g.symbol,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(
+                g.symbol,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
               const SizedBox(width: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -637,24 +697,31 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: TextStyle(
                     fontSize: 9,
                     fontWeight: FontWeight.bold,
-                    color: isTwoLeg ? Colors.deepPurple[700] : Colors.orange[700],
+                    color: isTwoLeg
+                        ? Colors.deepPurple[700]
+                        : Colors.orange[700],
                   ),
                 ),
               ),
               const SizedBox(width: 6),
               if (isTriggered)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.amber[50],
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text('TRIGGERED',
-                      style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.amber[800])),
+                  child: Text(
+                    'TRIGGERED',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.amber[800],
+                    ),
+                  ),
                 ),
             ],
           ),
@@ -700,11 +767,16 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Center(
             child: Column(
               children: [
-                Icon(Icons.receipt_long_outlined,
-                    size: 40, color: Colors.grey[300]),
+                Icon(
+                  Icons.receipt_long_outlined,
+                  size: 40,
+                  color: Colors.grey[300],
+                ),
                 const SizedBox(height: 8),
-                Text('No orders today',
-                    style: TextStyle(color: Colors.grey[500], fontSize: 14)),
+                Text(
+                  'No orders today',
+                  style: TextStyle(color: Colors.grey[500], fontSize: 14),
+                ),
               ],
             ),
           ),
@@ -756,9 +828,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         title: Row(
           children: [
-            Text(o.symbol,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 13)),
+            Text(
+              o.symbol,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
             const SizedBox(width: 6),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -769,9 +842,10 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Text(
                 o.status,
                 style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: statusColor),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: statusColor,
+                ),
               ),
             ),
           ],
@@ -783,8 +857,11 @@ class _HomeScreenState extends State<HomeScreen> {
         trailing: o.statusMessage.isNotEmpty
             ? Tooltip(
                 message: o.statusMessage,
-                child: Icon(Icons.info_outline,
-                    size: 16, color: Colors.grey[400]),
+                child: Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: Colors.grey[400],
+                ),
               )
             : null,
       ),
@@ -838,7 +915,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                        builder: (_) => const AnalysisInputScreen()),
+                      builder: (_) => const AnalysisInputScreen(),
+                    ),
                   ),
                   borderRadius: BorderRadius.circular(12),
                   child: const Padding(
@@ -873,13 +951,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: InkWell(
                   onTap: hasGtts
                       ? () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => GttPortfolioAnalysisScreen(
-                                gtts: gtts,
-                              ),
-                            ),
-                          )
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                GttPortfolioAnalysisScreen(gtts: gtts),
+                          ),
+                        )
                       : null,
                   borderRadius: BorderRadius.circular(12),
                   child: Padding(
@@ -887,18 +964,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.analytics_outlined,
-                            color: hasGtts
-                                ? Colors.white
-                                : Colors.grey[500],
-                            size: 18),
+                        Icon(
+                          Icons.analytics_outlined,
+                          color: hasGtts ? Colors.white : Colors.grey[500],
+                          size: 18,
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           'View Analysis',
                           style: TextStyle(
-                            color: hasGtts
-                                ? Colors.white
-                                : Colors.grey[500],
+                            color: hasGtts ? Colors.white : Colors.grey[500],
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
                           ),
@@ -923,17 +998,21 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         Icon(icon, size: 16, color: color),
         const SizedBox(width: 6),
-        Text(title,
-            style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[800])),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey[800],
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildErrorCard(String error) {
-    final isMarketClosed = error.toLowerCase().contains('market') ||
+    final isMarketClosed =
+        error.toLowerCase().contains('market') ||
         error.toLowerCase().contains('token') ||
         error.toLowerCase().contains('401');
     return Card(
@@ -953,8 +1032,7 @@ class _HomeScreenState extends State<HomeScreen> {
               isMarketClosed
                   ? 'Could not load live data'
                   : 'Dashboard unavailable',
-              style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 6),
             Text(
@@ -982,11 +1060,13 @@ class _HomeScreenState extends State<HomeScreen> {
         content: const Text('Are you sure you want to logout?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Logout')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Logout'),
+          ),
         ],
       ),
     );
