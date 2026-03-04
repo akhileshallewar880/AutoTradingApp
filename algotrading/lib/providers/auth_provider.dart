@@ -102,6 +102,7 @@ class AuthProvider with ChangeNotifier {
 
     _user = UserModel(
       accessToken: kDemoAccessToken,
+      apiKey: 'demo',
       userId: 'demo_user_001',
       userName: 'Demo User',
       email: 'demo@vantrade.app',

@@ -59,10 +59,10 @@ class Database:
                 )
 
                 # Create analysis record
-                # Note: analysis_id is auto-generated, user_id defaults to 1 (system user)
+                # Note: analysis_id is auto-generated, user_id is optional for now
                 db_analysis = Analysis(
                     # analysis_id will be auto-generated (don't set it)
-                    user_id=1,  # Default to user 1 for now
+                    user_id=None,  # Optional - user data not yet persisted
                     status=AnalysisStatusEnum.COMPLETED,
                     hold_duration_days=getattr(analysis, 'holdDurationDays', 0),
                     total_investment=total_investment,
