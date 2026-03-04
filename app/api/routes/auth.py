@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from app.models.auth_models import LoginUrlResponse, SessionRequest, SessionResponse
 from app.services.zerodha_service import zerodha_service
+from app.services.user_service import user_service
 from app.core.logging import logger
 
 router = APIRouter()
@@ -36,10 +37,18 @@ async def create_session(session_request: SessionRequest):
             session_request.api_secret
         )
 
+        # ── Create/get user record in database ──────────────────────────────
+        zerodha_user_id = session_data["user_id"]  # From Zerodha (e.g., "RI2021")
+        user = user_service.get_or_create_user(
+            zerodha_user_id=zerodha_user_id,
+            email=session_data["email"],
+            full_name=session_data["user_name"],
+        )
+
         return SessionResponse(
             access_token=session_data["access_token"],
             api_key=session_request.api_key,
-            user_id=session_data["user_id"],
+            user_id=str(user.user_id),  # Return VanTrade user_id (auto-generated)
             user_name=session_data["user_name"],
             email=session_data["email"],
             user_type=session_data["user_type"],

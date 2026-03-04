@@ -128,7 +128,7 @@ class User(SQLModel, table=True):
     # Relationships
     api_credentials: List["ApiCredential"] = Relationship(back_populates="user", cascade_delete=True)
     sessions: List["Session"] = Relationship(back_populates="user", cascade_delete=True)
-    # analyses: List["Analysis"] = Relationship(back_populates="user", cascade_delete=True)  # Removed: user_id now optional
+    analyses: List["Analysis"] = Relationship(back_populates="user", cascade_delete=True)
     orders: List["Order"] = Relationship(back_populates="user", cascade_delete=True)
     gtt_orders: List["GttOrder"] = Relationship(back_populates="user", cascade_delete=True)
     trades: List["Trade"] = Relationship(back_populates="user", cascade_delete=True)
@@ -200,7 +200,7 @@ class Analysis(SQLModel, table=True):
     __tablename__ = "vantrade_analyses"
 
     analysis_id: Optional[int] = Field(default=None, primary_key=True, index=True)
-    user_id: Optional[int] = Field(default=None, index=True)
+    user_id: int = Field(foreign_key="vantrade_users.user_id", index=True)
     status: AnalysisStatusEnum = Field(default=AnalysisStatusEnum.PENDING)
     hold_duration_days: int  # 0 = Intraday, >0 = Swing
     total_investment: Decimal = Field(sa_column=Column(Numeric(12, 2)))
@@ -212,8 +212,8 @@ class Analysis(SQLModel, table=True):
     )
     completed_at: Optional[datetime] = None
 
-    # Relationships (optional since user_id can be null)
-    # user: User = Relationship(back_populates="analyses")
+    # Relationships
+    user: User = Relationship(back_populates="analyses")
     recommendations: List["StockRecommendation"] = Relationship(back_populates="analysis", cascade_delete=True)
     orders: List["Order"] = Relationship(back_populates="analysis", cascade_delete=True)
     execution_updates: List["ExecutionUpdate"] = Relationship(back_populates="analysis", cascade_delete=True)

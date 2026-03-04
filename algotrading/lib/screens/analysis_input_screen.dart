@@ -599,6 +599,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           riskPercent: _riskPercent,
           accessToken: authProvider.user!.accessToken,
           apiKey: authProvider.user!.apiKey,
+          userId: int.parse(authProvider.user!.userId),
           sectors: _selectedSectors.toList(),
           capitalToUse: capitalToUse,
         );

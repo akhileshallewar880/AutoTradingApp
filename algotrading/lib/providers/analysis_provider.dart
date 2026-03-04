@@ -83,6 +83,7 @@ class AnalysisProvider with ChangeNotifier {
     required double riskPercent,
     required String accessToken,
     required String apiKey,
+    required int userId,
     List<String>? sectors,
     double capitalToUse = 0,
   }) async {
@@ -102,6 +103,7 @@ class AnalysisProvider with ChangeNotifier {
           riskPercent: riskPercent,
           accessToken: accessToken,
           apiKey: apiKey,
+          userId: userId,
           sectors: sectors ?? _selectedSectors,
           holdDurationDays: _holdDurationDays,
           capitalToUse: capitalToUse,

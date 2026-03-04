@@ -14,7 +14,14 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from app.core.logging import logger
-from app.migrations.make_analysis_user_optional import run_migration, rollback_migration
+from app.migrations.make_analysis_user_optional import (
+    run_migration as run_optional,
+    rollback_migration as rollback_optional,
+)
+from app.migrations.make_analysis_user_required import (
+    run_migration as run_required,
+    rollback_migration as rollback_required,
+)
 
 
 def main():
@@ -24,7 +31,9 @@ def main():
         logger.info("🔄 ROLLING BACK DATABASE MIGRATIONS")
         logger.info("=" * 70)
         try:
-            rollback_migration()
+            # Rollback in reverse order
+            rollback_required()
+            rollback_optional()
             logger.info("=" * 70)
             logger.info("✅ ROLLBACK SUCCESSFUL")
             logger.info("=" * 70)
@@ -36,7 +45,11 @@ def main():
         logger.info("🚀 RUNNING DATABASE MIGRATIONS")
         logger.info("=" * 70)
         try:
-            run_migration()
+            # Run migrations in order
+            logger.info("\n📋 Migration 1/2: Make analysis.user_id optional")
+            run_optional()
+            logger.info("\n📋 Migration 2/2: Restore analysis.user_id as required")
+            run_required()
             logger.info("=" * 70)
             logger.info("✅ MIGRATIONS SUCCESSFUL")
             logger.info("=" * 70)
