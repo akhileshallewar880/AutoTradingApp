@@ -132,7 +132,10 @@ class AuthProvider with ChangeNotifier {
     }
 
     await SessionManager.clearSession();
-    await clearApiCredentials();
+    // Note: Do NOT clear API credentials on logout.
+    // Credentials persist across logout/login cycles.
+    // User only needs to enter them once per app installation.
+    // To switch accounts, user must manually clear credentials via settings.
     _user = null;
     _error = null;
     notifyListeners();
@@ -195,9 +198,18 @@ class AuthProvider with ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('zerodha_api_key');
       await prefs.remove('zerodha_api_secret');
+      _error = null;
+      notifyListeners();
     } catch (e) {
       _error = 'Failed to clear API credentials: $e';
       notifyListeners();
     }
+  }
+
+  /// Reset credentials and navigate back to API settings
+  /// Call this when user wants to use different credentials (e.g., from settings)
+  Future<void> resetCredentialsForNewSetup() async {
+    await clearApiCredentials();
+    // User will need to navigate to /api-settings manually or via deep link
   }
 }

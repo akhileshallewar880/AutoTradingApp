@@ -237,9 +237,43 @@ class LoginScreen extends StatelessWidget {
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Login failed: $e')));
+        final errorMsg = e.toString();
+        // Check if error is about missing credentials
+        if (errorMsg.contains('API credentials not found')) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('API Credentials Required'),
+              content: const Text(
+                'Your Zerodha API credentials are missing or have been cleared. '
+                'Please set them up to continue.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    Navigator.pushReplacementNamed(context, '/api-settings');
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[700],
+                  ),
+                  child: const Text(
+                    'Set Up Credentials',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Login failed: $e')),
+          );
+        }
       }
     }
   }
