@@ -12,9 +12,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run database migrations
+        env:
+          DB_SERVER: ${{ secrets.DB_SERVER_PRODUCTION }}
+          DB_PORT: ${{ secrets.DB_PORT_PRODUCTION }}
+          DB_NAME: ${{ secrets.DB_NAME_PRODUCTION }}
+          DB_USER: ${{ secrets.DB_USER_PRODUCTION }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD_PRODUCTION }}
+        run: |
+          echo "Running database migrations..."
+          python3 run_migration.py admin_schema || echo "Migration completed or already applied"
+
       - name: Archive source for deployment
         run: |
-          zip -r app.zip app requirements.txt
+          zip -r app.zip app requirements.txt scripts/
 
       - name: Login to Azure
         uses: azure/login@v2
@@ -30,7 +51,13 @@ jobs:
               SCM_DO_BUILD_DURING_DEPLOYMENT="true" \
               OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY_PRODUCTION }}" \
               ZERODHA_API_KEY="${{ secrets.ZERODHA_API_KEY_PRODUCTION }}" \
-              ZERODHA_API_SECRET="${{ secrets.ZERODHA_API_SECRET_PRODUCTION }}"
+              ZERODHA_API_SECRET="${{ secrets.ZERODHA_API_SECRET_PRODUCTION }}" \
+              DB_SERVER="${{ secrets.DB_SERVER_PRODUCTION }}" \
+              DB_PORT="${{ secrets.DB_PORT_PRODUCTION }}" \
+              DB_NAME="${{ secrets.DB_NAME_PRODUCTION }}" \
+              DB_USER="${{ secrets.DB_USER_PRODUCTION }}" \
+              DB_PASSWORD="${{ secrets.DB_PASSWORD_PRODUCTION }}" \
+              ADMIN_JWT_SECRET="${{ secrets.ADMIN_JWT_SECRET_PRODUCTION }}"
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
