@@ -158,7 +158,9 @@ class Database:
 
                 if analysis:
                     analysis.status = status
-                    analysis.updated_at = datetime.utcnow()
+                    # Set completed_at for terminal statuses
+                    if status in ("COMPLETED", "FAILED", "CANCELLED"):
+                        analysis.completed_at = datetime.utcnow()
                     session.add(analysis)
                     session.commit()
                     logger.info(f"✅ Updated analysis status: {analysis_id} -> {status}")
