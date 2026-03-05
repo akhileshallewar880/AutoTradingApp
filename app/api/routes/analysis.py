@@ -344,7 +344,7 @@ async def confirm_analysis(
             logger.warning(f"Execution blocked — market closed: {market_msg}")
             raise HTTPException(status_code=423, detail=market_msg)
 
-        await db.update_analysis_status(analysis_id, "EXECUTING")
+        await db.update_analysis_status(analysis_id, "IN_PROGRESS")
 
         background_tasks.add_task(
             execute_trades,

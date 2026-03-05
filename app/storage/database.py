@@ -175,7 +175,7 @@ class Database:
                 db_update = DBExecutionUpdate(
                     analysis_id=update.analysis_id,
                     stock_symbol=update.stock_symbol,
-                    update_type=update.updateType,
+                    update_type=update.update_type,
                     message=update.message,
                     order_id=getattr(update, 'order_id', None),
                     status=getattr(update, 'status', 'PENDING'),
