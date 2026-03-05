@@ -45,6 +45,8 @@ class AnalysisService:
         analysis_date: datetime,
         sectors: Optional[List[str]] = None,
         hold_duration_days: int = 0,
+        user_api_key: Optional[str] = None,
+        user_access_token: Optional[str] = None,
     ) -> List[Dict]:
         """
         Full pipeline — branches on hold_duration_days:
@@ -52,7 +54,11 @@ class AnalysisService:
           >0 → swing yfinance pipeline  (60-day daily candles)
         """
         if hold_duration_days == 0:
-            return await self.screen_and_enrich_intraday(limit=limit)
+            return await self.screen_and_enrich_intraday(
+                limit=limit,
+                user_api_key=user_api_key,
+                user_access_token=user_access_token,
+            )
 
         # ── Swing / Delivery pipeline ──────────────────────────────────────
         try:
@@ -101,23 +107,37 @@ class AnalysisService:
 
     # ── Intraday pipeline ─────────────────────────────────────────────────────
 
-    async def screen_and_enrich_intraday(self, limit: int) -> List[Dict]:
+    async def screen_and_enrich_intraday(
+        self,
+        limit: int,
+        user_api_key: Optional[str] = None,
+        user_access_token: Optional[str] = None,
+    ) -> List[Dict]:
         """
         Intraday pipeline:
           1. Dynamically screen top movers from full NSE universe (yfinance 5d)
-          2. Live quotes for screened candidates via Zerodha quote API
+          2. Live quotes for screened candidates via Zerodha quote API (using user credentials)
           3. Filter by volume (>200K today), price range
           4. Fetch today's 5-minute candles for top candidates via Zerodha historical
           5. Calculate VWAP, BB, RSI, MACD, Stochastic, Pivot Points
           6. Generate preliminary BUY/SELL signal per stock
           7. Return top `limit` stocks sorted by signal strength + volume
         """
-        from app.services.zerodha_service import zerodha_service
+        from app.services.zerodha_service import ZerodhaService
         from app.engines.strategy_engine import strategy_engine
+
+        # Create user-specific Zerodha service with their credentials
+        if user_api_key and user_access_token:
+            user_zerodha = ZerodhaService()
+            user_zerodha.kite.set_access_token(user_access_token)
+            logger.info(f"[Intraday-CREDS] Using USER-SPECIFIC zerodha instance with token: {user_access_token[:10]}...{user_access_token[-10:]}")
+        else:
+            from app.services.zerodha_service import zerodha_service
+            user_zerodha = zerodha_service
+            logger.warning("[Intraday-CREDS] No user credentials provided, using global zerodha_service (may fail!)")
 
         # ── Step 1: Dynamic screening from full NSE universe ───────────────
         logger.info("[Intraday] Dynamically screening top intraday candidates from NSE universe...")
-        logger.info(f"[Intraday-CHECK] Using global zerodha_service instance. Access token set: {hasattr(zerodha_service.kite, 'access_token') and zerodha_service.kite.access_token is not None}")
 
         pre_screened = await self.ds.screen_top_movers(limit=80, hold_duration_days=0)
 
@@ -134,8 +154,8 @@ class AnalysisService:
 
         # ── Step 2: Live quotes via Zerodha ────────────────────────────────
         try:
-            logger.debug(f"[Intraday-QUOTE] About to call zerodha_service.get_quote() with {len(universe)} symbols")
-            quotes = await zerodha_service.get_quote(universe)
+            logger.debug(f"[Intraday-QUOTE] About to call user_zerodha.get_quote() with {len(universe)} symbols")
+            quotes = await user_zerodha.get_quote(universe)
             logger.info(f"[Intraday-QUOTE] Successfully got quotes for {len(quotes)} symbols")
         except Exception as e:
             logger.error(f"[Intraday-QUOTE-FAIL] Zerodha quote fetch failed with error: {e}")
@@ -205,7 +225,7 @@ class AnalysisService:
                 continue
 
             try:
-                candles = await zerodha_service.get_historical_data(
+                candles = await user_zerodha.get_historical_data(
                     instrument_token=token,
                     from_date=from_date.strftime("%Y-%m-%d %H:%M:%S"),
                     to_date=now_ist.strftime("%Y-%m-%d %H:%M:%S"),

@@ -70,6 +70,8 @@ async def generate_analysis(request: AnalysisRequest):
             analysis_date=datetime.combine(request.analysis_date, datetime.min.time()),
             sectors=request.sectors,
             hold_duration_days=request.hold_duration_days,
+            user_api_key=request.api_key,
+            user_access_token=request.access_token,
         )
 
         if not stocks_data:
