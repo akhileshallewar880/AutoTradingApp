@@ -28,6 +28,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install ODBC Driver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev
+          curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
+          curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | tee /etc/apt/sources.list.d/msprod.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql17
+
       - name: Run Database Migration
         env:
           # Map _PRODUCTION suffixed secrets to non-suffixed names
