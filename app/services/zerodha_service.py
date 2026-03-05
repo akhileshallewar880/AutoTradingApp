@@ -208,10 +208,14 @@ class ZerodhaService:
             logger.info(f"[get_quote] Successfully fetched quotes for {len(quotes)} symbols")
             return quotes
         except Exception as e:
-            logger.error(f"[get_quote] Error fetching quotes: {e}")
+            import traceback
+            error_type = type(e).__name__
+            logger.error(f"[get_quote] FAILED: {error_type}: {e}")
+            logger.error(f"[get_quote] Timeout detected: {'timeout' in str(e).lower()}")
             logger.error(f"[get_quote] Current token: {f'{self.kite.access_token[:10]}...{self.kite.access_token[-10:]}' if hasattr(self.kite, 'access_token') and self.kite.access_token else 'NONE'}")
             logger.error(f"[get_quote] API key length: {len(self.api_key) if self.api_key else 0}")
-            logger.error(f"[get_quote] Attempted symbols: {symbols[:5] if len(symbols) > 5 else symbols}")
+            logger.error(f"[get_quote] Attempted {len(symbols)} symbols (showing first 5): {symbols[:5]}")
+            logger.debug(f"[get_quote] Full traceback: {traceback.format_exc()}")
             raise
 
     async def get_order_status(self, order_id: str) -> Dict:

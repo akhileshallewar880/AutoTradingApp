@@ -497,9 +497,10 @@ class AnalysisService:
                             for s in _INTRADAY_LAST_RESORT]
             logger.info(f"[Intraday-FALLBACK] Using {len(pre_screened)} last-resort stocks")
 
-        logger.info(f"[Intraday-FALLBACK] Processing {len(pre_screened)} candidates with yfinance...")
+        logger.info(f"[Intraday-FALLBACK] Processing {len(pre_screened)} candidates with yfinance (timeout fallback)...")
         enriched = []
-        success_count = 0
+        filtered_count = 0
+        error_count = 0
         for mover in pre_screened:
             symbol = mover["symbol"]
             try:
@@ -508,17 +509,17 @@ class AnalysisService:
                     None, self._fetch_5min_yfinance, symbol
                 )
                 if df.empty or len(df) < 5:
-                    logger.debug(f"[Intraday-FALLBACK] {symbol}: insufficient candles ({len(df) if not df.empty else 0})")
+                    filtered_count += 1
+                    logger.debug(f"[Intraday-FALLBACK] {symbol}: insufficient candles ({len(df) if not df.empty else 0}), skipping")
                     continue
 
                 last_close = float(df["close"].iloc[-1])
                 volume = int(df["volume"].iloc[-1])
 
                 if volume < 100_000 or last_close < 10:
-                    logger.debug(f"[Intraday-FALLBACK] {symbol}: filtered (vol={volume}, price={last_close})")
+                    filtered_count += 1
+                    logger.debug(f"[Intraday-FALLBACK] {symbol}: filtered (vol={volume:,}, price={last_close})")
                     continue
-
-                success_count += 1
 
                 cand = {
                     "symbol": symbol,
@@ -548,12 +549,28 @@ class AnalysisService:
                     "volatility_5d": mover.get("volatility_5d", 0.0),
                 })
             except Exception as e:
-                logger.debug(f"[Intraday-FALLBACK] Error processing {symbol}: {e}")
+                error_count += 1
+                logger.warning(f"[Intraday-FALLBACK] Error enriching {symbol}: {type(e).__name__}: {e}")
                 continue
 
         enriched.sort(key=lambda x: x.get("signal_strength", 0), reverse=True)
-        logger.info(f"[Intraday-FALLBACK] Successfully enriched {len(enriched)} stocks out of {len(pre_screened)} candidates (success rate: {len(enriched)*100//len(pre_screened) if pre_screened else 0}%)")
-        logger.info(f"[Intraday-FALLBACK] Returning top {min(limit, len(enriched))} stocks to user")
+
+        # Summary stats
+        total_processed = len(pre_screened)
+        success_count = len(enriched)
+
+        logger.info(
+            f"[Intraday-FALLBACK-SUMMARY] Results: {success_count} enriched / "
+            f"{total_processed} candidates | "
+            f"filtered={filtered_count} | errors={error_count} | "
+            f"success_rate={(success_count*100//total_processed if total_processed else 0)}%"
+        )
+
+        if len(enriched) == 0:
+            logger.warning("[Intraday-FALLBACK-ZERO] No stocks passed yfinance enrichment! Returning empty list to user")
+        else:
+            logger.info(f"[Intraday-FALLBACK] Returning top {min(limit, len(enriched))} stocks to user")
+
         return enriched[:limit]
 
     def _fetch_5min_yfinance(self, symbol: str) -> pd.DataFrame:
@@ -561,7 +578,11 @@ class AnalysisService:
             ticker = yf.Ticker(f"{symbol}.NS")
             df = ticker.history(period="1d", interval="5m")
             if df.empty:
+                logger.debug(f"[Intraday-FALLBACK-YFINANCE] {symbol}: No 5-minute data available from yfinance")
                 return pd.DataFrame()
+
+            logger.debug(f"[Intraday-FALLBACK-YFINANCE] {symbol}: Fetched {len(df)} 5-minute candles")
+
             df = df.reset_index()
             df.columns = df.columns.str.lower()
             if "datetime" in df.columns:
@@ -570,7 +591,8 @@ class AnalysisService:
                 if col in df.columns:
                     df[col] = df[col].astype(float)
             return df
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[Intraday-FALLBACK-YFINANCE] {symbol}: yfinance error: {type(e).__name__}: {e}")
             return pd.DataFrame()
 
     # ── Swing indicators (60-day daily) ──────────────────────────────────────
