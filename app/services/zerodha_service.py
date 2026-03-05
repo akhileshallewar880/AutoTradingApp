@@ -21,7 +21,7 @@ class ZerodhaService:
 
         # Always initialize a basic kite client with increased timeout (15 seconds)
         # For authenticated API calls, only access_token matters
-        self.kite = KiteConnect(api_key=self.api_key or "app_key_placeholder", request_timeout=15)
+        self.kite = KiteConnect(api_key=self.api_key or "app_key_placeholder", timeout=15)
 
         if self.api_key and self.api_secret:
             logger.info(f"ZerodhaService initialized with app credentials: api_key length={len(self.api_key)}, api_secret length={len(self.api_secret)}, timeout=15s")
