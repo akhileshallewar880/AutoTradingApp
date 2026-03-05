@@ -11,18 +11,20 @@ import pyodbc
 import os
 from app.core.logging import logger
 
-# Get DB settings from environment (don't load full app config which requires other env vars)
-db_server = os.getenv("DB_SERVER", "")
-db_name = os.getenv("DB_NAME", "")
-db_user = os.getenv("DB_USER", "")
-db_password = os.getenv("DB_PASSWORD", "")
+# Get DB settings from environment (check both normal and _PRODUCTION variants)
+db_server = os.getenv("DB_SERVER") or os.getenv("DB_SERVER_PRODUCTION", "")
+db_name = os.getenv("DB_NAME") or os.getenv("DB_NAME_PRODUCTION", "")
+db_user = os.getenv("DB_USER") or os.getenv("DB_USER_PRODUCTION", "")
+db_password = os.getenv("DB_PASSWORD") or os.getenv("DB_PASSWORD_PRODUCTION", "")
 
 
 def migrate_up():
     """Apply migration: Change analysis_id to VARCHAR, make user_id nullable."""
     if not all([db_server, db_name, db_user, db_password]):
         logger.error("❌ Missing database credentials in environment variables")
-        logger.error("   Required: DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD")
+        logger.error("   Required one of:")
+        logger.error("   • DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD")
+        logger.error("   • DB_SERVER_PRODUCTION, DB_NAME_PRODUCTION, DB_USER_PRODUCTION, DB_PASSWORD_PRODUCTION")
         raise RuntimeError("Database credentials not configured")
 
     conn_string = (
