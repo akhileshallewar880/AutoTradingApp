@@ -4,24 +4,29 @@ from app.core.logging import logger
 import asyncio
 from typing import List, Dict, Any, Optional
 import hashlib
+from datetime import datetime, timedelta
 
 settings = get_settings()
 
 class ZerodhaService:
+    # Quote cache: {symbol_list_hash: (quotes, timestamp)}
+    _quote_cache = {}
+    _cache_ttl_seconds = 120  # Cache quotes for 2 minutes
+
     def __init__(self):
         # Use app's registered credentials if available (for backward compatibility)
         self.api_key = settings.ZERODHA_API_KEY.strip() if settings.ZERODHA_API_KEY else None
         self.api_secret = settings.ZERODHA_API_SECRET.strip() if settings.ZERODHA_API_SECRET else None
         self.access_token = settings.ZERODHA_ACCESS_TOKEN
 
-        # Always initialize a basic kite client (api_key only needed for login URL generation)
+        # Always initialize a basic kite client with increased timeout (15 seconds)
         # For authenticated API calls, only access_token matters
-        self.kite = KiteConnect(api_key=self.api_key or "app_key_placeholder")
+        self.kite = KiteConnect(api_key=self.api_key or "app_key_placeholder", request_timeout=15)
 
         if self.api_key and self.api_secret:
-            logger.info(f"ZerodhaService initialized with app credentials: api_key length={len(self.api_key)}, api_secret length={len(self.api_secret)}")
+            logger.info(f"ZerodhaService initialized with app credentials: api_key length={len(self.api_key)}, api_secret length={len(self.api_secret)}, timeout=15s")
         else:
-            logger.info("ZerodhaService initialized in user-credential mode (no app-level API credentials). Users must provide their own.")
+            logger.info("ZerodhaService initialized in user-credential mode (no app-level API credentials). Users must provide their own. timeout=15s")
 
         if self.access_token:
             self.kite.set_access_token(self.access_token)
@@ -192,31 +197,67 @@ class ZerodhaService:
             raise
 
     async def get_quote(self, symbols: List[str]) -> Dict:
-        """Get real-time quotes for given symbols."""
-        try:
-            # Log which credentials are being used
-            current_token = self.kite.access_token if hasattr(self.kite, 'access_token') else None
-            token_mask = f"{current_token[:10]}...{current_token[-10:]}" if current_token else "NONE"
-            logger.info(f"[get_quote] Fetching {len(symbols)} quotes with token: {token_mask}, api_key length: {len(self.api_key) if self.api_key else 0}")
+        """Get real-time quotes for given symbols with caching and retry logic."""
+        # Check cache first
+        cache_key = self._get_cache_key(symbols)
+        if cache_key in self._quote_cache:
+            cached_quotes, cached_time = self._quote_cache[cache_key]
+            age = datetime.now() - cached_time
+            if age < timedelta(seconds=self._cache_ttl_seconds):
+                logger.info(f"[get_quote-CACHE] Returning cached quotes (age: {age.total_seconds():.0f}s)")
+                return cached_quotes
 
-            loop = asyncio.get_event_loop()
-            # Format symbols with exchange prefix for quote API
-            formatted_symbols = [f"NSE:{symbol}" for symbol in symbols]
-            logger.debug(f"[get_quote] Formatted symbols: {formatted_symbols[:5]}...")
+        # Try fetching with retry logic
+        max_retries = 2
+        retry_delay = 1  # seconds
 
-            quotes = await loop.run_in_executor(None, self.kite.quote, formatted_symbols)
-            logger.info(f"[get_quote] Successfully fetched quotes for {len(quotes)} symbols")
-            return quotes
-        except Exception as e:
-            import traceback
-            error_type = type(e).__name__
-            logger.error(f"[get_quote] FAILED: {error_type}: {e}")
-            logger.error(f"[get_quote] Timeout detected: {'timeout' in str(e).lower()}")
-            logger.error(f"[get_quote] Current token: {f'{self.kite.access_token[:10]}...{self.kite.access_token[-10:]}' if hasattr(self.kite, 'access_token') and self.kite.access_token else 'NONE'}")
-            logger.error(f"[get_quote] API key length: {len(self.api_key) if self.api_key else 0}")
-            logger.error(f"[get_quote] Attempted {len(symbols)} symbols (showing first 5): {symbols[:5]}")
-            logger.debug(f"[get_quote] Full traceback: {traceback.format_exc()}")
-            raise
+        for attempt in range(max_retries + 1):
+            try:
+                # Log which credentials are being used
+                current_token = self.kite.access_token if hasattr(self.kite, 'access_token') else None
+                token_mask = f"{current_token[:10]}...{current_token[-10:]}" if current_token else "NONE"
+
+                attempt_msg = f" (attempt {attempt+1}/{max_retries+1})" if attempt > 0 else ""
+                logger.info(f"[get_quote] Fetching {len(symbols)} quotes with token: {token_mask}, api_key length: {len(self.api_key) if self.api_key else 0}{attempt_msg}")
+
+                loop = asyncio.get_event_loop()
+                # Format symbols with exchange prefix for quote API
+                formatted_symbols = [f"NSE:{symbol}" for symbol in symbols]
+                logger.debug(f"[get_quote] Formatted symbols: {formatted_symbols[:5]}...")
+
+                quotes = await loop.run_in_executor(None, self.kite.quote, formatted_symbols)
+                logger.info(f"[get_quote] Successfully fetched quotes for {len(quotes)} symbols")
+
+                # Cache the quotes
+                self._quote_cache[cache_key] = (quotes, datetime.now())
+                return quotes
+
+            except Exception as e:
+                import traceback
+                error_type = type(e).__name__
+                is_timeout = 'timeout' in str(e).lower()
+
+                logger.error(f"[get_quote] FAILED (attempt {attempt+1}): {error_type}: {e}")
+                logger.error(f"[get_quote] Timeout detected: {is_timeout}")
+                logger.error(f"[get_quote] Current token: {f'{self.kite.access_token[:10]}...{self.kite.access_token[-10:]}' if hasattr(self.kite, 'access_token') and self.kite.access_token else 'NONE'}")
+                logger.error(f"[get_quote] API key length: {len(self.api_key) if self.api_key else 0}")
+                logger.error(f"[get_quote] Attempted {len(symbols)} symbols (showing first 5): {symbols[:5]}")
+                logger.debug(f"[get_quote] Full traceback: {traceback.format_exc()}")
+
+                # Retry on timeout or connection errors
+                if attempt < max_retries and (is_timeout or 'connection' in str(e).lower()):
+                    logger.warning(f"[get_quote] Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 1.5  # Exponential backoff
+                else:
+                    raise
+
+    @staticmethod
+    def _get_cache_key(symbols: List[str]) -> str:
+        """Generate cache key from symbol list."""
+        sorted_symbols = sorted(symbols)
+        key_str = ",".join(sorted_symbols)
+        return hashlib.md5(key_str.encode()).hexdigest()
 
     async def get_order_status(self, order_id: str) -> Dict:
         """Get status of a specific order."""

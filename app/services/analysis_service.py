@@ -516,9 +516,16 @@ class AnalysisService:
                 last_close = float(df["close"].iloc[-1])
                 volume = int(df["volume"].iloc[-1])
 
-                if volume < 100_000 or last_close < 10:
+                # Relaxed thresholds in fallback mode (Zerodha timeout)
+                # Normal: vol >= 200K, price >= 10
+                # Fallback: vol >= 50K, price >= 5
+                min_volume_fallback = 50_000
+                min_price_fallback = 5
+
+                if volume < min_volume_fallback or last_close < min_price_fallback:
                     filtered_count += 1
-                    logger.debug(f"[Intraday-FALLBACK] {symbol}: filtered (vol={volume:,}, price={last_close})")
+                    reason = "low_volume" if volume < min_volume_fallback else "low_price"
+                    logger.debug(f"[Intraday-FALLBACK] {symbol}: filtered ({reason}: vol={volume:,}, price={last_close})")
                     continue
 
                 cand = {
