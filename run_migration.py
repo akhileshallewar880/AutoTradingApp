@@ -5,6 +5,7 @@ Migration runner for VanTrade database schema updates.
 Usage:
     python3 run_migration.py              # Run all pending migrations
     python3 run_migration.py rollback     # Rollback last migration
+    python3 run_migration.py fix_analysis_id_schema  # Run specific migration
 """
 
 import sys
@@ -13,7 +14,19 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(__file__))
 
-from app.core.logging import logger
+# Simple logger that doesn't require app config (avoids needing OPENAI_API_KEY, ENCRYPTION_KEY)
+class SimpleLogger:
+    def info(self, msg):
+        print(f"ℹ️  {msg}")
+    def warning(self, msg):
+        print(f"⚠️  {msg}")
+    def error(self, msg, exc_info=False):
+        print(f"❌ {msg}")
+        if exc_info:
+            import traceback
+            traceback.print_exc()
+
+logger = SimpleLogger()
 
 # Import all available migrations
 try:
