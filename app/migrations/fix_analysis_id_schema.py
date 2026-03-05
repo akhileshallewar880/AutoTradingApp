@@ -27,8 +27,22 @@ def migrate_up():
         logger.error("   • DB_SERVER_PRODUCTION, DB_NAME_PRODUCTION, DB_USER_PRODUCTION, DB_PASSWORD_PRODUCTION")
         raise RuntimeError("Database credentials not configured")
 
+    # Detect available ODBC driver (18 or 17)
+    available_drivers = pyodbc.drivers()
+    driver_to_use = None
+
+    if 'ODBC Driver 18 for SQL Server' in available_drivers:
+        driver_to_use = 'ODBC Driver 18 for SQL Server'
+        logger.info("Using ODBC Driver 18 for SQL Server")
+    elif 'ODBC Driver 17 for SQL Server' in available_drivers:
+        driver_to_use = 'ODBC Driver 17 for SQL Server'
+        logger.info("Using ODBC Driver 17 for SQL Server")
+    else:
+        logger.error(f"❌ No SQL Server ODBC driver found. Available drivers: {available_drivers}")
+        raise RuntimeError(f"No SQL Server ODBC driver found. Available: {available_drivers}")
+
     conn_string = (
-        f"Driver={{ODBC Driver 17 for SQL Server}};"
+        f"Driver={{{driver_to_use}}};"
         f"Server={db_server};"
         f"Database={db_name};"
         f"UID={db_user};"
