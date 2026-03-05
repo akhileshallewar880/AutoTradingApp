@@ -8,20 +8,29 @@ This fixes the error: "Conversion failed when converting the varchar value
 """
 
 import pyodbc
-from app.core.config import get_settings
+import os
 from app.core.logging import logger
 
-settings = get_settings()
+# Get DB settings from environment (don't load full app config which requires other env vars)
+db_server = os.getenv("DB_SERVER", "")
+db_name = os.getenv("DB_NAME", "")
+db_user = os.getenv("DB_USER", "")
+db_password = os.getenv("DB_PASSWORD", "")
 
 
 def migrate_up():
     """Apply migration: Change analysis_id to VARCHAR, make user_id nullable."""
+    if not all([db_server, db_name, db_user, db_password]):
+        logger.error("❌ Missing database credentials in environment variables")
+        logger.error("   Required: DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD")
+        raise RuntimeError("Database credentials not configured")
+
     conn_string = (
         f"Driver={{ODBC Driver 17 for SQL Server}};"
-        f"Server={settings.DB_SERVER};"
-        f"Database={settings.DB_NAME};"
-        f"UID={settings.DB_USER};"
-        f"PWD={settings.DB_PASSWORD};"
+        f"Server={db_server};"
+        f"Database={db_name};"
+        f"UID={db_user};"
+        f"PWD={db_password};"
     )
 
     try:
