@@ -43,6 +43,15 @@ except ImportError:
     apply_admin = None
     rollback_admin = None
 
+try:
+    from app.migrations.fix_analysis_id_schema import (
+        migrate_up as migrate_analysis_id_up,
+        migrate_down as migrate_analysis_id_down,
+    )
+except ImportError:
+    migrate_analysis_id_up = None
+    migrate_analysis_id_down = None
+
 
 def main():
     """Run or rollback migrations based on command line arguments."""
@@ -56,9 +65,8 @@ def main():
         logger.info(f"🚀 RUNNING MIGRATION: {migration_name}")
         logger.info("=" * 70)
         try:
-            from app.core.database import engine
-
             if migration_name == "admin_schema":
+                from app.core.database import engine
                 if apply_admin:
                     apply_admin(engine)
                     logger.info("=" * 70)
@@ -66,6 +74,15 @@ def main():
                     logger.info("=" * 70)
                 else:
                     logger.error("❌ admin_schema migration not found")
+                    sys.exit(1)
+            elif migration_name == "fix_analysis_id_schema":
+                if migrate_analysis_id_up:
+                    migrate_analysis_id_up()
+                    logger.info("=" * 70)
+                    logger.info("✅ ANALYSIS_ID SCHEMA MIGRATION SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ fix_analysis_id_schema migration not found")
                     sys.exit(1)
             else:
                 logger.error(f"❌ Unknown migration: {migration_name}")
@@ -80,9 +97,8 @@ def main():
         logger.info(f"🔄 ROLLING BACK: {action}")
         logger.info("=" * 70)
         try:
-            from app.core.database import engine
-
             if action == "admin_schema":
+                from app.core.database import engine
                 if rollback_admin:
                     rollback_admin(engine)
                     logger.info("=" * 70)
@@ -90,6 +106,15 @@ def main():
                     logger.info("=" * 70)
                 else:
                     logger.error("❌ admin_schema rollback not found")
+                    sys.exit(1)
+            elif action == "fix_analysis_id_schema":
+                if migrate_analysis_id_down:
+                    migrate_analysis_id_down()
+                    logger.info("=" * 70)
+                    logger.info("✅ ANALYSIS_ID SCHEMA ROLLBACK SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ fix_analysis_id_schema rollback not found")
                     sys.exit(1)
             else:
                 logger.error(f"❌ Unknown migration: {action}")

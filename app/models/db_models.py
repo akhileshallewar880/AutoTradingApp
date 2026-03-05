@@ -201,8 +201,8 @@ class Analysis(SQLModel, table=True):
     """
     __tablename__ = "vantrade_analyses"
 
-    analysis_id: Optional[int] = Field(default=None, primary_key=True, index=True)
-    user_id: int = Field(foreign_key="vantrade_users.user_id", index=True)
+    analysis_id: Optional[str] = Field(default=None, primary_key=True, index=True)  # UUID string
+    user_id: Optional[int] = Field(None, foreign_key="vantrade_users.user_id", index=True)  # Optional, analyses can exist without users
     status: AnalysisStatusEnum = Field(default=AnalysisStatusEnum.PENDING)
     hold_duration_days: int  # 0 = Intraday, >0 = Swing
     total_investment: Decimal = Field(sa_column=Column(Numeric(12, 2)))
