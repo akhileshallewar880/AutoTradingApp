@@ -111,7 +111,35 @@ class Database:
 
                 if analysis:
                     logger.info(f"✅ Retrieved analysis from SQL: {analysis_id}")
-                    return analysis.result_json
+
+                    # Reconstruct analysis with recommendations from database
+                    result = {
+                        "analysis_id": analysis.analysis_id,
+                        "status": analysis.status,
+                        "hold_duration_days": analysis.hold_duration_days,
+                        "total_investment": float(analysis.total_investment) if analysis.total_investment else 0,
+                        "max_profit": float(analysis.max_profit) if analysis.max_profit else 0,
+                        "max_loss": float(analysis.max_loss) if analysis.max_loss else 0,
+                        "created_at": analysis.created_at.isoformat() if analysis.created_at else None,
+                        "completed_at": analysis.completed_at.isoformat() if analysis.completed_at else None,
+                        "stocks": []
+                    }
+
+                    # Get related stock recommendations
+                    if analysis.recommendations:
+                        for rec in analysis.recommendations:
+                            result["stocks"].append({
+                                "stock_symbol": rec.stock_symbol,
+                                "action": rec.action,
+                                "entry_price": float(rec.entry_price),
+                                "stop_loss": float(rec.stop_loss),
+                                "target_price": float(rec.target_price),
+                                "confidence_score": float(rec.confidence_score),
+                                "ai_reasoning": rec.rationale,
+                                "quantity": getattr(rec, 'quantity', 1)
+                            })
+
+                    return result
                 else:
                     logger.warning(f"Analysis not found: {analysis_id}")
                     return None
