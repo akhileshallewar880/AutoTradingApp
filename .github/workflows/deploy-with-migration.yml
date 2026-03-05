@@ -30,17 +30,21 @@ jobs:
 
       - name: Run Database Migration
         env:
-          # Database credentials (required for migration)
+          # Map _PRODUCTION suffixed secrets to non-suffixed names
+          # (pydantic Settings class looks for these exact names)
+          DB_SERVER: ${{ secrets.DB_SERVER_PRODUCTION }}
+          DB_NAME: ${{ secrets.DB_NAME_PRODUCTION }}
+          DB_USER: ${{ secrets.DB_USER_PRODUCTION }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD_PRODUCTION }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_PRODUCTION }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY_PRODUCTION }}
+          # Also set with _PRODUCTION suffix for backwards compatibility
           DB_SERVER_PRODUCTION: ${{ secrets.DB_SERVER_PRODUCTION }}
           DB_NAME_PRODUCTION: ${{ secrets.DB_NAME_PRODUCTION }}
           DB_USER_PRODUCTION: ${{ secrets.DB_USER_PRODUCTION }}
           DB_PASSWORD_PRODUCTION: ${{ secrets.DB_PASSWORD_PRODUCTION }}
-          # App config (required for migration to load old migration files)
           OPENAI_API_KEY_PRODUCTION: ${{ secrets.OPENAI_API_KEY_PRODUCTION }}
           ENCRYPTION_KEY_PRODUCTION: ${{ secrets.ENCRYPTION_KEY_PRODUCTION }}
-          # Map to non-production names so pydantic config can find them
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_PRODUCTION }}
-          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY_PRODUCTION }}
         run: |
           echo "🚀 Starting database migration..."
           python3 run_migration.py fix_analysis_id_schema
