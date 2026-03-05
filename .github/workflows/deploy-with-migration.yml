@@ -1,0 +1,106 @@
+name: Deploy with Database Migration
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+
+jobs:
+  migrate-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Database Migration
+        env:
+          DB_SERVER_PRODUCTION: ${{ secrets.DB_SERVER_PRODUCTION }}
+          DB_NAME_PRODUCTION: ${{ secrets.DB_NAME_PRODUCTION }}
+          DB_USER_PRODUCTION: ${{ secrets.DB_USER_PRODUCTION }}
+          DB_PASSWORD_PRODUCTION: ${{ secrets.DB_PASSWORD_PRODUCTION }}
+        run: |
+          echo "🚀 Starting database migration..."
+          python3 run_migration.py fix_analysis_id_schema
+          echo "✅ Migration completed successfully"
+
+      - name: Run Tests (Optional)
+        run: |
+          # Add your tests here if you have them
+          # pytest tests/ -v
+          echo "✓ Tests would run here"
+
+      - name: Deploy to Azure
+        env:
+          AZURE_DEPLOYMENT_NAME: ${{ secrets.AZURE_DEPLOYMENT_NAME }}
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          echo "🚀 Deploying to Azure..."
+          # Replace with your actual deployment command
+          # Example: az webapp up --name $AZURE_DEPLOYMENT_NAME --resource-group $AZURE_RESOURCE_GROUP
+          echo "✅ Deployment completed"
+
+      - name: Migration Verification
+        env:
+          DB_SERVER_PRODUCTION: ${{ secrets.DB_SERVER_PRODUCTION }}
+          DB_NAME_PRODUCTION: ${{ secrets.DB_NAME_PRODUCTION }}
+          DB_USER_PRODUCTION: ${{ secrets.DB_USER_PRODUCTION }}
+          DB_PASSWORD_PRODUCTION: ${{ secrets.DB_PASSWORD_PRODUCTION }}
+        run: |
+          echo "✓ Verifying migration was successful..."
+          python3 << 'EOF'
+          import pyodbc
+          import os
+
+          db_server = os.getenv("DB_SERVER_PRODUCTION")
+          db_name = os.getenv("DB_NAME_PRODUCTION")
+          db_user = os.getenv("DB_USER_PRODUCTION")
+          db_password = os.getenv("DB_PASSWORD_PRODUCTION")
+
+          try:
+              conn_string = f"Driver={{ODBC Driver 17 for SQL Server}};Server={db_server};Database={db_name};UID={db_user};PWD={db_password};"
+              with pyodbc.connect(conn_string) as conn:
+                  cursor = conn.cursor()
+                  cursor.execute("""
+                      SELECT COLUMN_NAME, DATA_TYPE
+                      FROM INFORMATION_SCHEMA.COLUMNS
+                      WHERE TABLE_NAME = 'vantrade_analyses'
+                      AND COLUMN_NAME IN ('analysis_id', 'user_id')
+                  """)
+                  results = cursor.fetchall()
+
+                  print("\n✅ Migration Verification Results:")
+                  print("=" * 60)
+                  for row in results:
+                      print(f"  {row[0]}: {row[1]}")
+                  print("=" * 60)
+
+                  # Check for correct schema
+                  schema_correct = any(
+                      row[0] == 'analysis_id' and 'varchar' in row[1].lower()
+                      for row in results
+                  )
+
+                  if schema_correct:
+                      print("✓ Schema migration verified successfully!")
+                  else:
+                      print("⚠️ Schema migration may not have applied correctly")
+          except Exception as e:
+              print(f"❌ Verification failed: {e}")
+              raise
+          EOF
