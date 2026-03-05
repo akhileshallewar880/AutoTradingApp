@@ -117,6 +117,8 @@ class AnalysisService:
 
         # ── Step 1: Dynamic screening from full NSE universe ───────────────
         logger.info("[Intraday] Dynamically screening top intraday candidates from NSE universe...")
+        logger.info(f"[Intraday-CHECK] Using global zerodha_service instance. Access token set: {hasattr(zerodha_service.kite, 'access_token') and zerodha_service.kite.access_token is not None}")
+
         pre_screened = await self.ds.screen_top_movers(limit=80, hold_duration_days=0)
 
         if not pre_screened:
@@ -127,13 +129,18 @@ class AnalysisService:
                             for s in _INTRADAY_LAST_RESORT]
 
         universe = [c["symbol"] for c in pre_screened]
+        logger.info(f"[Intraday] Screened {len(universe)} candidates from NSE universe")
         logger.info(f"[Intraday] Fetching live quotes for {len(universe)} dynamically screened stocks...")
 
         # ── Step 2: Live quotes via Zerodha ────────────────────────────────
         try:
+            logger.debug(f"[Intraday-QUOTE] About to call zerodha_service.get_quote() with {len(universe)} symbols")
             quotes = await zerodha_service.get_quote(universe)
+            logger.info(f"[Intraday-QUOTE] Successfully got quotes for {len(quotes)} symbols")
         except Exception as e:
-            logger.error(f"[Intraday] Zerodha quote fetch failed: {e}. Falling back to yfinance.")
+            logger.error(f"[Intraday-QUOTE-FAIL] Zerodha quote fetch failed with error: {e}")
+            logger.error(f"[Intraday-QUOTE-FAIL] Error type: {type(e).__name__}")
+            logger.error(f"[Intraday-QUOTE-FAIL] Will fall back to yfinance for {len(universe)} candidates")
             return await self._intraday_fallback_yfinance(limit, pre_screened)
 
         # ── Step 3: Build candidate list ───────────────────────────────────
@@ -472,22 +479,27 @@ class AnalysisService:
         Uses pre-screened candidates from screen_top_movers() if available,
         otherwise screens dynamically from the full NSE universe.
         """
-        logger.info("[Intraday] Using yfinance fallback for 5-minute candle analysis")
+        logger.warning("[Intraday-FALLBACK] Zerodha quote fetch failed. Using yfinance as fallback for 5-minute candle analysis")
         from app.engines.strategy_engine import strategy_engine
 
         # Use pre-screened candidates if passed in (avoids double screening)
         if pre_screened is None:
-            logger.info("[Intraday] Screening top movers from NSE universe for yfinance fallback...")
+            logger.info("[Intraday-FALLBACK] Screening top movers from NSE universe for yfinance fallback...")
             pre_screened = await self.ds.screen_top_movers(limit=40, hold_duration_days=0)
+        else:
+            logger.info(f"[Intraday-FALLBACK] Using {len(pre_screened)} pre-screened candidates from earlier screening")
 
         if not pre_screened:
-            logger.warning("[Intraday] Dynamic screening returned nothing, using last-resort list")
+            logger.warning("[Intraday-FALLBACK] Dynamic screening returned nothing, using last-resort list")
             pre_screened = [{"symbol": s, "company_name": s, "last_price": 0,
                              "volume": 0, "volume_ratio": 1.0, "day_change_pct": 0.0,
                              "momentum_5d_pct": 0.0, "volatility_5d": 0.0}
                             for s in _INTRADAY_LAST_RESORT]
+            logger.info(f"[Intraday-FALLBACK] Using {len(pre_screened)} last-resort stocks")
 
+        logger.info(f"[Intraday-FALLBACK] Processing {len(pre_screened)} candidates with yfinance...")
         enriched = []
+        success_count = 0
         for mover in pre_screened:
             symbol = mover["symbol"]
             try:
@@ -496,13 +508,17 @@ class AnalysisService:
                     None, self._fetch_5min_yfinance, symbol
                 )
                 if df.empty or len(df) < 5:
+                    logger.debug(f"[Intraday-FALLBACK] {symbol}: insufficient candles ({len(df) if not df.empty else 0})")
                     continue
 
                 last_close = float(df["close"].iloc[-1])
                 volume = int(df["volume"].iloc[-1])
 
                 if volume < 100_000 or last_close < 10:
+                    logger.debug(f"[Intraday-FALLBACK] {symbol}: filtered (vol={volume}, price={last_close})")
                     continue
+
+                success_count += 1
 
                 cand = {
                     "symbol": symbol,
@@ -532,10 +548,12 @@ class AnalysisService:
                     "volatility_5d": mover.get("volatility_5d", 0.0),
                 })
             except Exception as e:
-                logger.debug(f"yfinance fallback failed for {symbol}: {e}")
+                logger.debug(f"[Intraday-FALLBACK] Error processing {symbol}: {e}")
                 continue
 
         enriched.sort(key=lambda x: x.get("signal_strength", 0), reverse=True)
+        logger.info(f"[Intraday-FALLBACK] Successfully enriched {len(enriched)} stocks out of {len(pre_screened)} candidates (success rate: {len(enriched)*100//len(pre_screened) if pre_screened else 0}%)")
+        logger.info(f"[Intraday-FALLBACK] Returning top {min(limit, len(enriched))} stocks to user")
         return enriched[:limit]
 
     def _fetch_5min_yfinance(self, symbol: str) -> pd.DataFrame:

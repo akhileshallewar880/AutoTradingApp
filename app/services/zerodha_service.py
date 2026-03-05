@@ -194,13 +194,24 @@ class ZerodhaService:
     async def get_quote(self, symbols: List[str]) -> Dict:
         """Get real-time quotes for given symbols."""
         try:
+            # Log which credentials are being used
+            current_token = self.kite.access_token if hasattr(self.kite, 'access_token') else None
+            token_mask = f"{current_token[:10]}...{current_token[-10:]}" if current_token else "NONE"
+            logger.info(f"[get_quote] Fetching {len(symbols)} quotes with token: {token_mask}, api_key length: {len(self.api_key) if self.api_key else 0}")
+
             loop = asyncio.get_event_loop()
             # Format symbols with exchange prefix for quote API
             formatted_symbols = [f"NSE:{symbol}" for symbol in symbols]
+            logger.debug(f"[get_quote] Formatted symbols: {formatted_symbols[:5]}...")
+
             quotes = await loop.run_in_executor(None, self.kite.quote, formatted_symbols)
+            logger.info(f"[get_quote] Successfully fetched quotes for {len(quotes)} symbols")
             return quotes
         except Exception as e:
-            logger.error(f"Error fetching quotes: {e}")
+            logger.error(f"[get_quote] Error fetching quotes: {e}")
+            logger.error(f"[get_quote] Current token: {f'{self.kite.access_token[:10]}...{self.kite.access_token[-10:]}' if hasattr(self.kite, 'access_token') and self.kite.access_token else 'NONE'}")
+            logger.error(f"[get_quote] API key length: {len(self.api_key) if self.api_key else 0}")
+            logger.error(f"[get_quote] Attempted symbols: {symbols[:5] if len(symbols) > 5 else symbols}")
             raise
 
     async def get_order_status(self, order_id: str) -> Dict:

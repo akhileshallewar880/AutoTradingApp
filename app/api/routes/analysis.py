@@ -38,9 +38,14 @@ async def generate_analysis(request: AnalysisRequest):
       Same as before — yfinance daily candles + standard indicators
     """
     try:
+        # Log request details
+        api_key_mask = f"{request.api_key[:5]}...{request.api_key[-5:]}" if len(request.api_key) > 10 else "SHORT_KEY"
+        token_mask = f"{request.access_token[:10]}...{request.access_token[-10:]}" if len(request.access_token) > 20 else "SHORT_TOKEN"
+
         logger.info(
-            f"Generating analysis: {request.num_stocks} stocks | "
-            f"sectors={request.sectors} | hold={request.hold_duration_days}d"
+            f"[ANALYSIS-START] Generating analysis: {request.num_stocks} stocks | "
+            f"sectors={request.sectors} | hold={request.hold_duration_days}d | "
+            f"user_api_key={api_key_mask} | user_token={token_mask}"
         )
 
         # ── Fetch real balance from Zerodha ──────────────────────────────
@@ -48,15 +53,18 @@ async def generate_analysis(request: AnalysisRequest):
             from kiteconnect import KiteConnect
             kite = KiteConnect(api_key=request.api_key)
             kite.set_access_token(request.access_token)
+            logger.debug(f"[ANALYSIS-BALANCE] Created user-specific KiteConnect instance with token: {token_mask}")
             margins = kite.margins()
             available_balance = margins.get("equity", {}).get("net", 100000)
-            logger.info(f"Real balance: ₹{available_balance:,.2f}")
+            logger.info(f"[ANALYSIS-BALANCE] Real balance: ₹{available_balance:,.2f}")
         except Exception as e:
             logger.warning(f"Balance fetch failed, using default: {e}")
             available_balance = 100000
 
         # ── Stage 1+2: Screen + enrich ────────────────────────────────────
         screen_limit = min(request.num_stocks * 3, 60)
+        logger.info(f"[ANALYSIS-SCREEN] Starting screen_and_enrich with limit={screen_limit}, hold={request.hold_duration_days}d")
+
         stocks_data = await analysis_service.screen_and_enrich(
             limit=screen_limit,
             analysis_date=datetime.combine(request.analysis_date, datetime.min.time()),
@@ -65,12 +73,13 @@ async def generate_analysis(request: AnalysisRequest):
         )
 
         if not stocks_data:
+            logger.error(f"[ANALYSIS-SCREEN-FAIL] screen_and_enrich returned EMPTY list. No stocks found for criteria: sectors={request.sectors}, hold={request.hold_duration_days}d")
             raise HTTPException(
                 status_code=404,
                 detail="No stocks found matching criteria. Try different sectors or dates."
             )
 
-        logger.info(f"Screener returned {len(stocks_data)} enriched candidates for LLM")
+        logger.info(f"[ANALYSIS-SCREEN-OK] Screen returned {len(stocks_data)} enriched candidates for LLM")
 
         # ── Prepare compact market data for LLM ───────────────────────────
         is_intraday = request.hold_duration_days == 0
