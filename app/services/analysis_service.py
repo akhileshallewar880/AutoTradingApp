@@ -530,7 +530,7 @@ class AnalysisService:
                 )
                 if df.empty or len(df) < 5:
                     filtered_count += 1
-                    logger.debug(f"[Intraday-FALLBACK] {symbol}: insufficient candles ({len(df) if not df.empty else 0}), skipping")
+                    logger.info(f"[Intraday-FALLBACK] {symbol}: FILTERED (insufficient candles: {len(df) if not df.empty else 0})")
                     continue
 
                 last_close = float(df["close"].iloc[-1])
@@ -545,7 +545,7 @@ class AnalysisService:
                 if volume < min_volume_fallback or last_close < min_price_fallback:
                     filtered_count += 1
                     reason = "low_volume" if volume < min_volume_fallback else "low_price"
-                    logger.debug(f"[Intraday-FALLBACK] {symbol}: filtered ({reason}: vol={volume:,}, price={last_close})")
+                    logger.info(f"[Intraday-FALLBACK] {symbol}: FILTERED ({reason}: vol={volume:,}, price=₹{last_close})")
                     continue
 
                 cand = {
@@ -560,6 +560,8 @@ class AnalysisService:
 
                 indicators = await self.calculate_intraday_indicators(df, cand)
                 if not indicators:
+                    filtered_count += 1
+                    logger.info(f"[Intraday-FALLBACK] {symbol}: FILTERED (no valid indicators)")
                     continue
 
                 signal_data = strategy_engine.generate_intraday_signal(indicators)

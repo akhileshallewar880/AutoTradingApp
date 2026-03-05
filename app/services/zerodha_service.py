@@ -244,7 +244,12 @@ class ZerodhaService:
                 logger.error(f"[get_quote] Attempted {len(symbols)} symbols (showing first 5): {symbols[:5]}")
                 logger.debug(f"[get_quote] Full traceback: {traceback.format_exc()}")
 
-                # Retry on timeout or connection errors
+                # Don't retry on permission errors (won't help)
+                if 'permission' in str(e).lower() or 'insufficient' in str(e).lower():
+                    logger.error(f"[get_quote] Permission error - user's Zerodha account lacks quote API access. Not retrying.")
+                    raise
+
+                # Retry on timeout or connection errors (backoff)
                 if attempt < max_retries and (is_timeout or 'connection' in str(e).lower()):
                     logger.warning(f"[get_quote] Retrying in {retry_delay}s...")
                     await asyncio.sleep(retry_delay)
