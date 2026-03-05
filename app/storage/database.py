@@ -60,10 +60,10 @@ class Database:
                 )
 
                 # Create analysis record
-                # Note: analysis_id is auto-generated, user_id from request
+                # analysis_id is a UUID string (not auto-generated, provided by route)
                 db_analysis = Analysis(
-                    # analysis_id will be auto-generated (don't set it)
-                    user_id=analysis.request.user_id,  # From AnalysisRequest
+                    analysis_id=analysis.analysis_id,  # UUID string from AnalysisResponse
+                    user_id=analysis.request.user_id,  # From AnalysisRequest (optional)
                     status=AnalysisStatusEnum.COMPLETED,
                     hold_duration_days=getattr(analysis, 'holdDurationDays', 0),
                     total_investment=total_investment,
@@ -74,7 +74,7 @@ class Database:
                 )
 
                 session.add(db_analysis)
-                session.flush()  # Flush to get the auto-generated analysis_id
+                session.flush()  # Persist the analysis record
 
                 # Create stock recommendation records
                 for idx, stock in enumerate(analysis.stocks):
