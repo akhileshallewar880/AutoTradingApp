@@ -118,6 +118,7 @@ class ApiService {
     required bool confirmed,
     String? notes,
     required String accessToken,
+    required String apiKey,
     int holdDurationDays = 0,
     List<Map<String, dynamic>>? stockOverrides,
   }) async {
@@ -130,6 +131,7 @@ class ApiService {
       body: jsonEncode({
         'confirmed': confirmed,
         'access_token': accessToken,
+        'api_key': apiKey,
         'user_notes': notes,
         'hold_duration_days': holdDurationDays,
         if (stockOverrides != null) 'stock_overrides': stockOverrides,
@@ -218,7 +220,7 @@ class ApiService {
           'api_key': apiKey,
           'api_secret': apiSecret,
         }),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 90));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

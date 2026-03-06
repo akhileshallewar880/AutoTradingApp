@@ -27,7 +27,30 @@ class AuthProvider with ChangeNotifier {
     try {
       final userData = await SessionManager.getUserData();
       if (userData != null) {
-        _user = userData;
+        // If api_key is missing from saved session (e.g. old session before fix),
+        // supplement it from the separately stored zerodha_api_key credential.
+        if (userData.apiKey.isEmpty) {
+          final creds = await getSavedApiCredentials();
+          if (creds != null && creds['apiKey']!.isNotEmpty) {
+            final patched = UserModel(
+              accessToken: userData.accessToken,
+              apiKey: creds['apiKey']!,
+              userId: userData.userId,
+              userName: userData.userName,
+              email: userData.email,
+              userType: userData.userType,
+              broker: userData.broker,
+              exchanges: userData.exchanges,
+              products: userData.products,
+            );
+            _user = patched;
+            await SessionManager.saveSession(patched); // persist the fix
+          } else {
+            _user = userData;
+          }
+        } else {
+          _user = userData;
+        }
         _error = null;
       }
     } catch (e) {

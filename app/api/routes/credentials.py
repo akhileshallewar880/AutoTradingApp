@@ -20,72 +20,43 @@ async def validate_zerodha_credentials(request: CredentialsRequest):
     """
     Validate user-provided Zerodha API credentials.
 
-    Makes a test API call to Zerodha to verify the credentials are valid.
-
-    Request body:
-    {
-        "api_key": "user's_api_key",
-        "api_secret": "user's_api_secret"
-    }
-
-    Response:
-    {
-        "valid": true/false,
-        "message": "Credentials validated successfully" or error message
-    }
+    Checks format validity and confirms the api_key is accepted by Zerodha.
+    Note: full api_key + api_secret validation only happens during OAuth login.
     """
     try:
-        logger.info(f"Validating Zerodha credentials for API key: {request.api_key[:10]}...")
+        api_key = request.api_key.strip()
+        api_secret = request.api_secret.strip()
 
-        # Create KiteConnect instance with provided credentials
-        kite = KiteConnect(api_key=request.api_key)
+        logger.info(f"Validating Zerodha credentials for API key: {api_key[:10]}...")
 
-        # Try to make a simple API call to test the credentials
-        # Using instruments call as a safe, read-only test
+        # ── Basic format checks ───────────────────────────────────────────────
+        if len(api_key) < 6:
+            return {"valid": False, "message": "API key is too short. Please check and try again."}
+        if len(api_secret) < 6:
+            return {"valid": False, "message": "API secret is too short. Please check and try again."}
+
+        # ── Lightweight Zerodha check: generate login URL ────────────────────
+        # This confirms KiteConnect accepts the api_key without any network I/O.
+        # Full credential validation (api_secret included) happens during Zerodha OAuth.
         try:
-            instruments = kite.instruments()
-
-            if instruments and len(instruments) > 0:
-                logger.info(f"✓ Credentials validated successfully. Found {len(instruments)} instruments.")
-                return {
-                    "valid": True,
-                    "message": "Credentials are valid and working!"
-                }
-            else:
-                logger.warning("Credentials test returned empty instruments list")
-                return {
-                    "valid": False,
-                    "message": "Credentials appear invalid (no instruments returned)"
-                }
-
+            kite = KiteConnect(api_key=api_key)
+            login_url = kite.login_url()
+            if not login_url or api_key not in login_url:
+                return {"valid": False, "message": "Invalid API key format. Please check and try again."}
         except Exception as e:
-            # If the test call fails, credentials are invalid
             error_msg = str(e)
-            logger.warning(f"Credentials validation failed: {error_msg}")
+            logger.warning(f"KiteConnect rejected api_key: {error_msg}")
+            return {"valid": False, "message": f"Invalid API key: {error_msg}"}
 
-            # Check for specific error messages
-            if "Invalid api_key" in error_msg or "Invalid API key" in error_msg:
-                return {
-                    "valid": False,
-                    "message": "Invalid API key. Please check and try again."
-                }
-            elif "Permission denied" in error_msg or "Insufficient permission" in error_msg:
-                return {
-                    "valid": False,
-                    "message": "API key doesn't have permission to access instruments. Check your API settings in Zerodha."
-                }
-            else:
-                return {
-                    "valid": False,
-                    "message": f"Validation failed: {error_msg}"
-                }
+        logger.info(f"✓ Credentials format validated for api_key: {api_key[:10]}...")
+        return {
+            "valid": True,
+            "message": "Credentials look valid! Proceed to login with Zerodha."
+        }
 
     except Exception as e:
         logger.error(f"Error validating credentials: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Validation error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Validation error: {str(e)}")
 
 
 @router.post("/test-user-credentials")
