@@ -65,6 +65,15 @@ except ImportError:
     migrate_analysis_id_up = None
     migrate_analysis_id_down = None
 
+try:
+    from app.migrations.fix_execution_schema import (
+        migrate_up as migrate_execution_up,
+        migrate_down as migrate_execution_down,
+    )
+except ImportError:
+    migrate_execution_up = None
+    migrate_execution_down = None
+
 
 def main():
     """Run or rollback migrations based on command line arguments."""
@@ -97,6 +106,15 @@ def main():
                 else:
                     logger.error("❌ fix_analysis_id_schema migration not found")
                     sys.exit(1)
+            elif migration_name == "fix_execution_schema":
+                if migrate_execution_up:
+                    migrate_execution_up()
+                    logger.info("=" * 70)
+                    logger.info("✅ EXECUTION SCHEMA MIGRATION SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ fix_execution_schema migration not found")
+                    sys.exit(1)
             else:
                 logger.error(f"❌ Unknown migration: {migration_name}")
                 sys.exit(1)
@@ -128,6 +146,15 @@ def main():
                     logger.info("=" * 70)
                 else:
                     logger.error("❌ fix_analysis_id_schema rollback not found")
+                    sys.exit(1)
+            elif action == "fix_execution_schema":
+                if migrate_execution_down:
+                    migrate_execution_down()
+                    logger.info("=" * 70)
+                    logger.info("✅ EXECUTION SCHEMA ROLLBACK SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ fix_execution_schema rollback not found")
                     sys.exit(1)
             else:
                 logger.error(f"❌ Unknown migration: {action}")

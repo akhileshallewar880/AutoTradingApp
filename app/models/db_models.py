@@ -235,12 +235,13 @@ class StockRecommendation(SQLModel, table=True):
     __tablename__ = "vantrade_stock_recommendations"
 
     recommendation_id: Optional[int] = Field(default=None, primary_key=True, index=True)
-    analysis_id: int = Field(foreign_key="vantrade_analyses.analysis_id", index=True)
+    analysis_id: str = Field(foreign_key="vantrade_analyses.analysis_id", index=True)
     stock_symbol: str = Field(index=True, max_length=20)
     action: ActionEnum  # BUY or SELL
     entry_price: Decimal = Field(sa_column=Column(Numeric(10, 2)))
     stop_loss: Decimal = Field(sa_column=Column(Numeric(10, 2)))
     target_price: Decimal = Field(sa_column=Column(Numeric(10, 2)))
+    quantity: int = Field(default=1)
     confidence_score: Decimal = Field(sa_column=Column(Numeric(5, 2)))  # 0-100
     rationale: Optional[str] = Field(None, sa_column=Column(Text))
     created_at: datetime = Field(
@@ -289,7 +290,7 @@ class Order(SQLModel, table=True):
 
     order_id: Optional[int] = Field(default=None, primary_key=True, index=True)
     user_id: int = Field(foreign_key="vantrade_users.user_id", index=True)
-    analysis_id: int = Field(foreign_key="vantrade_analyses.analysis_id", index=True)
+    analysis_id: str = Field(foreign_key="vantrade_analyses.analysis_id", index=True)
     stock_symbol: str = Field(index=True, max_length=20)
     action: ActionEnum  # BUY or SELL
     quantity: int
@@ -358,10 +359,13 @@ class ExecutionUpdate(SQLModel, table=True):
     __tablename__ = "vantrade_execution_updates"
 
     update_id: Optional[int] = Field(default=None, primary_key=True, index=True)
-    analysis_id: int = Field(foreign_key="vantrade_analyses.analysis_id", index=True)
+    analysis_id: str = Field(foreign_key="vantrade_analyses.analysis_id", index=True)
     stock_symbol: str = Field(index=True, max_length=20)
-    update_type: UpdateTypeEnum
-    update_details: dict = Field(sa_column=Column(JSON))  # Additional context as JSON
+    update_type: str  # Free-form string (ORDER_PLACING, ORDER_PLACED, GTT_PLACED, COMPLETED, ERROR, etc.)
+    message: Optional[str] = Field(None, sa_column=Column(Text))
+    order_id: Optional[str] = Field(None, max_length=255)
+    status: Optional[str] = Field(None, max_length=50)
+    timestamp: Optional[datetime] = None
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())

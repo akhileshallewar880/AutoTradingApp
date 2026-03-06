@@ -64,8 +64,8 @@ class Database:
                 db_analysis = Analysis(
                     analysis_id=analysis.analysis_id,  # UUID string from AnalysisResponse
                     user_id=analysis.request.user_id,  # From AnalysisRequest (optional)
-                    status=AnalysisStatusEnum.COMPLETED,
-                    hold_duration_days=getattr(analysis, 'holdDurationDays', 0),
+                    status=AnalysisStatusEnum.PENDING,
+                    hold_duration_days=analysis.request.hold_duration_days,
                     total_investment=total_investment,
                     max_profit=max_profit,
                     max_loss=max_loss,
@@ -85,6 +85,7 @@ class Database:
                         entry_price=stock.entry_price,
                         stop_loss=stock.stop_loss,
                         target_price=stock.target_price,
+                        quantity=stock.quantity,
                         confidence_score=stock.confidence_score,
                         rationale=stock.ai_reasoning,
                         created_at=datetime.utcnow(),
@@ -136,7 +137,7 @@ class Database:
                                 "target_price": float(rec.target_price),
                                 "confidence_score": float(rec.confidence_score),
                                 "ai_reasoning": rec.rationale,
-                                "quantity": getattr(rec, 'quantity', 1)
+                                "quantity": rec.quantity,
                             })
 
                     return result
@@ -177,8 +178,8 @@ class Database:
                     stock_symbol=update.stock_symbol,
                     update_type=update.update_type,
                     message=update.message,
-                    order_id=getattr(update, 'order_id', None),
-                    status=getattr(update, 'status', 'PENDING'),
+                    order_id=update.order_id,
+                    status=update.update_type,
                     timestamp=update.timestamp,
                     created_at=datetime.utcnow(),
                 )
@@ -187,11 +188,11 @@ class Database:
                 session.commit()
                 logger.info(
                     f"✅ Execution update persisted to SQL: "
-                    f"{update.analysis_id} - {update.stock_symbol}"
+                    f"{update.analysis_id} - {update.stock_symbol} [{update.update_type}]"
                 )
         except Exception as e:
+            # Log but don't re-raise — a DB logging failure must not abort trade execution
             logger.error(f"Failed to save execution update: {e}", exc_info=True)
-            raise
 
     async def get_execution_updates(
         self, analysis_id: str
@@ -209,9 +210,10 @@ class Database:
                     ExecutionUpdate(
                         analysis_id=u.analysis_id,
                         stock_symbol=u.stock_symbol,
-                        updateType=u.update_type,
-                        message=u.message,
-                        timestamp=u.timestamp,
+                        update_type=u.update_type,
+                        message=u.message or "",
+                        order_id=u.order_id,
+                        timestamp=u.timestamp or u.created_at,
                     )
                     for u in updates
                 ]
@@ -236,7 +238,19 @@ class Database:
                 )
                 analyses = session.exec(statement).all()
 
-                result = [analysis.result_json for analysis in analyses]
+                result = [
+                    {
+                        "analysis_id": a.analysis_id,
+                        "status": a.status,
+                        "hold_duration_days": a.hold_duration_days,
+                        "total_investment": float(a.total_investment) if a.total_investment else 0,
+                        "max_profit": float(a.max_profit) if a.max_profit else 0,
+                        "max_loss": float(a.max_loss) if a.max_loss else 0,
+                        "created_at": a.created_at.isoformat() if a.created_at else None,
+                        "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+                    }
+                    for a in analyses
+                ]
 
                 logger.info(f"✅ Retrieved {len(result)} analyses from SQL")
                 return result
