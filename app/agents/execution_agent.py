@@ -33,6 +33,7 @@ class ExecutionAgent:
         target: float,
         analysis_id: str,
         access_token: str,
+        api_key: str,
         update_callback: Callable = None,
         hold_duration_days: int = 0,
         action: str = "BUY",
@@ -60,7 +61,9 @@ class ExecutionAgent:
             "updates": [],
         }
 
-        self.zs.kite.set_access_token(access_token)
+        # Reinitialize kite with this user's api_key + access_token.
+        # Critical for multi-user: api_key and access_token must be from the same account.
+        self.zs.set_credentials(api_key, access_token)
 
         try:
             # ── Step 1: Place entry order ──────────────────────────────────

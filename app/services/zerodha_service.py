@@ -31,6 +31,15 @@ class ZerodhaService:
         if self.access_token:
             self.kite.set_access_token(self.access_token)
 
+    def set_credentials(self, api_key: str, access_token: str):
+        """
+        Reinitialize the kite client with a specific user's api_key + access_token.
+        Must be called before any authenticated API call in multi-user mode.
+        """
+        self.kite = KiteConnect(api_key=api_key, timeout=15)
+        self.kite.set_access_token(access_token)
+        logger.info(f"ZerodhaService credentials updated (api_key_len={len(api_key)})")
+
     def get_login_url(self) -> str:
         """Generate Kite Connect login URL using app's credentials."""
         if not self.kite:

@@ -351,6 +351,7 @@ async def confirm_analysis(
             analysis_id,
             analysis_data,
             confirmation.access_token,
+            confirmation.api_key,
             confirmation.hold_duration_days,
             confirmation.stock_overrides,
         )
@@ -372,12 +373,14 @@ async def execute_trades(
     analysis_id: str,
     analysis_data: dict,
     access_token: str,
+    api_key: str,
     hold_duration_days: int = 0,
     stock_overrides: list = None,
 ):
     """Background task: execute all trades for an analysis (supports BUY and SELL/short)."""
     try:
-        zerodha_service.kite.set_access_token(access_token)
+        # Set user-specific credentials before any Zerodha API call
+        zerodha_service.set_credentials(api_key, access_token)
 
         try:
             margins = await zerodha_service.get_margins()
@@ -426,6 +429,7 @@ async def execute_trades(
                 analysis_id=analysis_id,
                 update_callback=update_callback,
                 access_token=access_token,
+                api_key=api_key,
                 hold_duration_days=hold_duration_days,
                 action=action,
             )

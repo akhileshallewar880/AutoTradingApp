@@ -55,6 +55,7 @@ class AnalysisResponse(BaseModel):
 class OrderConfirmation(BaseModel):
     confirmed: bool
     access_token: str  # User's Zerodha access token for executing trades
+    api_key: str       # User's Zerodha API key (must match the access_token)
     user_notes: Optional[str] = None
     hold_duration_days: int = Field(
         default=0,
