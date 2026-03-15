@@ -9,7 +9,6 @@ from app.agents.llm_agent import llm_agent
 from app.models.request_models import AgentRunRequest
 from app.models.response_models import AgentRunResponse, TradeSignal, TradeRecommendationResponse
 from app.models.trade_models import Trade
-from app.storage.database import db # Will implement next
 from typing import List
 
 class TradingAgent:
@@ -79,18 +78,6 @@ class TradingAgent:
                     )
                     
                     if order_id:
-                        # Log Trade
-                        trade = Trade(
-                            id=str(order_id),
-                            symbol=signal.stock_symbol,
-                            entry_price=signal.entry_price,
-                            stop_loss=signal.stop_loss,
-                            target_price=signal.target_price,
-                            quantity=quantity,
-                            risk_amount=(signal.entry_price - signal.stop_loss) * quantity,
-                            status="OPEN"
-                        )
-                        await db.save_trade(trade)
                         executed_trades.append(signal)
 
         return AgentRunResponse(
