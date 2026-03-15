@@ -211,13 +211,16 @@ async def generate_analysis(request: AnalysisRequest):
             })
             total_investment += investment_needed
 
-        # Scale down if total investment exceeds balance
-        if total_investment > available_balance and preliminary_stocks:
+        # Scale down if required margin exceeds balance.
+        # With MIS leverage, Zerodha only requires (total_investment / leverage) as margin.
+        effective_leverage = request.leverage if request.hold_duration_days == 0 else 1
+        required_margin = total_investment / effective_leverage
+        if required_margin > available_balance and preliminary_stocks:
             logger.warning(
-                f"Total investment ₹{total_investment:,.2f} exceeds balance "
-                f"₹{available_balance:,.2f}. Scaling down…"
+                f"Required margin ₹{required_margin:,.2f} (investment ₹{total_investment:,.2f} "
+                f"/ {effective_leverage}x leverage) exceeds balance ₹{available_balance:,.2f}. Scaling down…"
             )
-            scaling_factor = (available_balance * 0.95) / total_investment
+            scaling_factor = (available_balance * 0.95) / required_margin
             total_investment = 0.0
             for stock in preliminary_stocks:
                 stock["quantity"] = max(1, int(stock["quantity"] * scaling_factor))
@@ -282,12 +285,13 @@ async def generate_analysis(request: AnalysisRequest):
             logger.info(f"Analysis generated: {analysis_id} with 0 stocks (NO_STOCKS_FOUND)")
             return analysis
 
-        if total_investment > available_balance:
+        if total_investment / effective_leverage > available_balance:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Total investment ₹{total_investment:,.2f} exceeds "
-                    f"available balance ₹{available_balance:,.2f}"
+                    f"Required margin ₹{total_investment / effective_leverage:,.2f} "
+                    f"(investment ₹{total_investment:,.2f} / {effective_leverage}x leverage) "
+                    f"exceeds available balance ₹{available_balance:,.2f}"
                 ),
             )
 
@@ -298,12 +302,15 @@ async def generate_analysis(request: AnalysisRequest):
             stocks=stock_analyses,
             portfolio_metrics={
                 "total_investment": round(total_investment, 2),
+                "required_margin": round(total_investment / effective_leverage, 2),
                 "total_risk": round(total_risk, 2),
                 "max_profit": round(max_profit, 2),
                 "max_loss": round(max_loss, 2),
                 "num_stocks": len(stock_analyses),
                 "risk_percent": request.risk_percent,
                 "available_balance": available_balance,
+                "leverage": effective_leverage,
+                "effective_capital": round(available_balance * effective_leverage, 2),
                 "sectors": request.sectors,
                 "hold_duration_days": request.hold_duration_days,
                 "universe": "Nifty 50 + Next 50" if is_intraday else "Full NSE Market",
