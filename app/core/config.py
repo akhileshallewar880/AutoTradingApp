@@ -22,20 +22,8 @@ class Settings(BaseSettings):
     DEFAULT_TIMEFRAME: str = "day"
     DEFAULT_RISK_PERCENT: float = 1.0
 
-    # Database Config
-    DB_SERVER: str = "localhost"
-    DB_USER: str = "sa"
-    DB_PASSWORD: str
-    DB_NAME: str = "VanTradeDB"
-    DB_DRIVER: str = "ODBC Driver 17 for SQL Server"
-    DB_POOL_SIZE: int = 20
-    DB_MAX_OVERFLOW: int = 10
-    ENCRYPTION_KEY: str  # Fernet key for credential encryption
-
-    # Admin Dashboard Config
-    ADMIN_JWT_SECRET: str = "your-secret-key-change-in-production"  # Change in .env for production
-    ADMIN_JWT_ALGORITHM: str = "HS256"
-    ADMIN_JWT_EXPIRATION_MINUTES: int = 30
+    # Admin Dashboard Config (kept for potential future use)
+    ADMIN_JWT_SECRET: str = "your-secret-key-change-in-production"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

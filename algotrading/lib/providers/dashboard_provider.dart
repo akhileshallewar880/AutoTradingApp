@@ -8,11 +8,13 @@ class DashboardProvider with ChangeNotifier {
   DashboardModel? _dashboard;
   bool _isLoading = false;
   String? _error;
+  bool _sessionExpired = false;
   Timer? _refreshTimer;
 
   DashboardModel? get dashboard => _dashboard;
   bool get isLoading => _isLoading;
   String? get error => _error;
+  bool get sessionExpired => _sessionExpired;
 
   /// Fetch dashboard data. Call this when the home screen mounts.
   Future<void> fetchDashboard(String accessToken, {String? apiKey}) async {
@@ -25,8 +27,15 @@ class DashboardProvider with ChangeNotifier {
           ? _buildDemoDashboard()
           : await ApiService.getDashboard(accessToken, apiKey: apiKey);
       _error = null;
+      _sessionExpired = false;
     } catch (e) {
-      _error = e.toString();
+      final msg = e.toString();
+      if (msg.contains('SESSION_EXPIRED')) {
+        _sessionExpired = true;
+        _error = 'SESSION_EXPIRED';
+      } else {
+        _error = msg;
+      }
     } finally {
       _isLoading = false;
       notifyListeners();

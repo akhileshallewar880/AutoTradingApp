@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import '../models/user_model.dart';
 import '../models/analysis_model.dart';
 import '../models/dashboard_model.dart';
+import '../models/live_trading_model.dart';
 import '../utils/api_config.dart';
 
 class ApiService {
@@ -202,8 +203,87 @@ class ApiService {
 
     if (response.statusCode == 200) {
       return DashboardModel.fromJson(jsonDecode(response.body));
+    } else if (response.statusCode == 401) {
+      throw Exception('SESSION_EXPIRED');
     } else {
       throw Exception('Failed to load dashboard: ${response.body}');
+    }
+  }
+
+  /// Validate that the Zerodha access token is still alive.
+  /// Returns true if valid, false if expired/invalid.
+  /// Throws only on unexpected network errors.
+  static Future<bool> validateToken({
+    required String accessToken,
+    required String apiKey,
+  }) async {
+    try {
+      final uri = Uri.parse('${ApiConfig.baseUrl}/auth/validate-token')
+          .replace(queryParameters: {
+        'access_token': accessToken,
+        'api_key': apiKey,
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      return response.statusCode == 200;
+    } catch (_) {
+      // Network error — treat as inconclusive (let the home screen handle it)
+      return true;
+    }
+  }
+
+  // Live Trading (Autonomous Agent)
+  static Future<void> startLiveAgent({
+    required String userId,
+    required String accessToken,
+    required String apiKey,
+    int maxPositions = 2,
+    double riskPercent = 1.0,
+    int scanIntervalMinutes = 5,
+    int maxTradesPerDay = 6,
+    double maxDailyLossPct = 2.0,
+    double capitalToUse = 0.0,
+  }) async {
+    final response = await http.post(
+      Uri.parse(ApiConfig.liveAgentStartUrl),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'user_id': userId,
+        'access_token': accessToken,
+        'api_key': apiKey,
+        'max_positions': maxPositions,
+        'risk_percent': riskPercent,
+        'scan_interval_minutes': scanIntervalMinutes,
+        'max_trades_per_day': maxTradesPerDay,
+        'max_daily_loss_pct': maxDailyLossPct,
+        'capital_to_use': capitalToUse,
+      }),
+    ).timeout(const Duration(seconds: 30));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to start agent: ${response.body}');
+    }
+  }
+
+  static Future<void> stopLiveAgent({required String userId}) async {
+    final uri = Uri.parse(ApiConfig.liveAgentStopUrl)
+        .replace(queryParameters: {'user_id': userId});
+    final response = await http.post(uri).timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to stop agent: ${response.body}');
+    }
+  }
+
+  static Future<AgentStatusModel> getLiveAgentStatus({
+    required String userId,
+  }) async {
+    final uri = Uri.parse(ApiConfig.liveAgentStatusUrl)
+        .replace(queryParameters: {'user_id': userId});
+    final response = await http.get(uri).timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 200) {
+      return AgentStatusModel.fromJson(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to get agent status: ${response.body}');
     }
   }
 

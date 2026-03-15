@@ -21,7 +21,12 @@ class ApiConfig {
 
   // Dashboard endpoint
   static const String dashboardUrl = '$baseUrl/dashboard/summary';
-  
+
+  // Live trading (autonomous agent) endpoints
+  static const String liveAgentStartUrl = '$baseUrl/live-trading/start';
+  static const String liveAgentStopUrl = '$baseUrl/live-trading/stop';
+  static const String liveAgentStatusUrl = '$baseUrl/live-trading/status';
+
   // Timeout duration - 2 minutes for analysis (yfinance + AI can be slow)
   static const Duration timeout = Duration(seconds: 120);
 }

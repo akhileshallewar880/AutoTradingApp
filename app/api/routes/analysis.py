@@ -9,7 +9,6 @@ from app.services.order_service import order_service, MarketClosedException
 from app.agents.llm_agent import llm_agent
 from app.agents.execution_agent import execution_agent
 from app.engines.risk_engine import risk_engine
-from app.storage.database import db
 from app.core.logging import logger
 from typing import List
 from datetime import datetime
@@ -18,8 +17,9 @@ import asyncio
 
 router = APIRouter()
 
-# Store active executions for polling
-active_executions = {}
+# In-memory stores (lives for server process lifetime — no DB needed)
+_analyses: dict = {}          # analysis_id → {status, stocks, hold_duration_days, created_at}
+active_executions: dict = {}  # analysis_id → list of ExecutionUpdate
 
 
 @router.post("/generate", response_model=AnalysisResponse)
@@ -309,7 +309,14 @@ async def generate_analysis(request: AnalysisRequest):
             status="PENDING_CONFIRMATION",
         )
 
-        await db.save_analysis(analysis)
+        # Store in-memory for confirm/status endpoints
+        _analyses[analysis_id] = {
+            "analysis_id": analysis_id,
+            "status": "PENDING_CONFIRMATION",
+            "stocks": [s.dict() for s in stock_analyses],
+            "hold_duration_days": request.hold_duration_days,
+            "created_at": datetime.utcnow().isoformat(),
+        }
         logger.info(f"Analysis generated: {analysis_id} with {len(stock_analyses)} stocks")
         return analysis
 
@@ -331,12 +338,12 @@ async def confirm_analysis(
     Returns HTTP 423 immediately if NSE market is closed.
     """
     try:
-        analysis_data = await db.get_analysis(analysis_id)
+        analysis_data = _analyses.get(analysis_id)
         if not analysis_data:
             raise HTTPException(status_code=404, detail="Analysis not found")
 
         if not confirmation.confirmed:
-            await db.update_analysis_status(analysis_id, "CANCELLED")
+            _analyses[analysis_id]["status"] = "CANCELLED"
             return {"status": "cancelled", "message": "Analysis cancelled by user"}
 
         if not order_service.is_market_open():
@@ -344,7 +351,7 @@ async def confirm_analysis(
             logger.warning(f"Execution blocked — market closed: {market_msg}")
             raise HTTPException(status_code=423, detail=market_msg)
 
-        await db.update_analysis_status(analysis_id, "IN_PROGRESS")
+        _analyses[analysis_id]["status"] = "IN_PROGRESS"
 
         background_tasks.add_task(
             execute_trades,
@@ -409,7 +416,6 @@ async def execute_trades(
                     )
 
         async def update_callback(update: ExecutionUpdate):
-            await db.save_execution_update(update)
             if analysis_id not in active_executions:
                 active_executions[analysis_id] = []
             active_executions[analysis_id].append(update)
@@ -434,22 +440,24 @@ async def execute_trades(
                 action=action,
             )
 
-        await db.update_analysis_status(analysis_id, "COMPLETED")
+        if analysis_id in _analyses:
+            _analyses[analysis_id]["status"] = "COMPLETED"
 
     except Exception as e:
         logger.error(f"Trade execution failed: {e}")
-        await db.update_analysis_status(analysis_id, "FAILED")
+        if analysis_id in _analyses:
+            _analyses[analysis_id]["status"] = "FAILED"
 
 
 @router.get("/{analysis_id}/status", response_model=ExecutionStatus)
 async def get_execution_status(analysis_id: str):
     """Get real-time execution status for an analysis."""
     try:
-        analysis_data = await db.get_analysis(analysis_id)
+        analysis_data = _analyses.get(analysis_id)
         if not analysis_data:
             raise HTTPException(status_code=404, detail="Analysis not found")
 
-        updates = await db.get_execution_updates(analysis_id)
+        updates = active_executions.get(analysis_id, [])
         stocks = analysis_data.get("stocks", [])
         total_stocks = len(stocks)
         completed_stocks = len([u for u in updates if u.update_type == "COMPLETED"])
@@ -475,9 +483,10 @@ async def get_execution_status(analysis_id: str):
 
 @router.get("/history", response_model=List[dict])
 async def get_analysis_history(limit: int = 20):
-    """Get recent analysis history."""
-    try:
-        return await db.get_all_analyses(limit=limit)
-    except Exception as e:
-        logger.error(f"History fetch failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Get recent analysis history (current session only — no DB persistence)."""
+    recent = sorted(
+        _analyses.values(),
+        key=lambda x: x.get("created_at", ""),
+        reverse=True,
+    )
+    return recent[:limit]

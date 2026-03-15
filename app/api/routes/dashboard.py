@@ -126,6 +126,16 @@ async def get_dashboard_summary(
             return_exceptions=True,
         )
 
+        # ── Check for token/auth errors ───────────────────────────────────
+        for result in [margins_data, positions_data, orders_data, trades_data, gtts_data]:
+            if isinstance(result, Exception):
+                err_str = str(result).lower()
+                if any(kw in err_str for kw in ("token", "forbidden", "invalid api_key", "access_token", "403", "unauthorized")):
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Session expired. Please login to Zerodha again."
+                    )
+
         # ── Balance ──────────────────────────────────────────────────────
         available_balance = 0.0
         if isinstance(margins_data, dict):

@@ -108,6 +108,19 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     if (authProvider.isAuthenticated) {
+      // Validate that the Zerodha token is still alive (expires after ~24h).
+      // Skip validation in demo mode — no real token to check.
+      if (!authProvider.isDemoMode) {
+        final tokenValid = await authProvider.validateSession();
+        if (!mounted) return;
+        if (!tokenValid) {
+          // Token expired — clear session and send back to login
+          await authProvider.logout();
+          if (!mounted) return;
+          Navigator.pushReplacementNamed(context, '/login');
+          return;
+        }
+      }
       Navigator.pushReplacementNamed(context, '/home');
     } else {
       Navigator.pushReplacementNamed(context, '/login');

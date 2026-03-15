@@ -185,6 +185,21 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  /// Validate that the currently stored Zerodha access token is still alive.
+  /// Returns false if the session has expired (caller should logout + redirect to login).
+  /// Returns true if valid OR if the check is inconclusive (network error).
+  Future<bool> validateSession() async {
+    if (_user == null || isDemoMode) return true; // nothing to validate
+    try {
+      return await ApiService.validateToken(
+        accessToken: _user!.accessToken,
+        apiKey: _user!.apiKey,
+      );
+    } catch (_) {
+      return true; // network error — let the home screen handle it
+    }
+  }
+
   /// Validate API credentials by making a test Zerodha API call
   /// Returns true if credentials are valid, false otherwise
   Future<bool> validateApiCredentials(String apiKey, String apiSecret) async {

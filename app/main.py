@@ -1,8 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
-from app.core.database import init_db, close_db
-from app.api.routes import agent, performance, auth, analysis, dashboard, credentials, admin
+from app.api.routes import agent, performance, auth, analysis, dashboard, credentials, live_trading
 from app.core.logging import logger
 
 settings = get_settings()
@@ -30,26 +29,21 @@ def create_app() -> FastAPI:
     app.include_router(performance.router, prefix="/api/v1", tags=["Performance"])
     app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
     app.include_router(credentials.router, tags=["Credentials"])
-    app.include_router(admin.router, tags=["Admin Dashboard"])
+    app.include_router(live_trading.router, prefix="/api/v1", tags=["Live Trading"])
 
     @app.on_event("startup")
     async def startup_event():
-        logger.info("Application starting up...")
-        try:
-            init_db()
-            logger.info("✓ Database initialized on startup")
-        except Exception as e:
-            logger.error(f"✗ Failed to initialize database: {str(e)}")
-            raise
+        logger.info("Application starting up (DB-free mode)")
 
     @app.on_event("shutdown")
     async def shutdown_event():
         logger.info("Application shutting down...")
         try:
-            close_db()
-            logger.info("✓ Database connections closed")
+            from app.agents.autonomous_agent import autonomous_agent_manager
+            await autonomous_agent_manager.stop_all()
+            logger.info("✓ All autonomous agents stopped")
         except Exception as e:
-            logger.error(f"✗ Error closing database: {str(e)}")
+            logger.error(f"✗ Error stopping autonomous agents: {str(e)}")
 
     @app.get("/health")
     async def health_check():

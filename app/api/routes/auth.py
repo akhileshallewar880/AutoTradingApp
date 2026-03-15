@@ -1,7 +1,7 @@
+import hashlib
 from fastapi import APIRouter, HTTPException, Query
 from app.models.auth_models import LoginUrlResponse, SessionRequest, SessionResponse
 from app.services.zerodha_service import zerodha_service
-from app.services.user_service import user_service
 from app.core.logging import logger
 
 router = APIRouter()
@@ -37,18 +37,13 @@ async def create_session(session_request: SessionRequest):
             session_request.api_secret
         )
 
-        # ── Create/get user record in database ──────────────────────────────
-        zerodha_user_id = session_data["user_id"]  # From Zerodha (e.g., "RI2021")
-        user = user_service.get_or_create_user(
-            zerodha_user_id=zerodha_user_id,
-            email=session_data["email"],
-            full_name=session_data["user_name"],
-        )
+        # Derive a stable user_id from the api_key (no DB needed)
+        user_id = hashlib.sha256(session_request.api_key.encode()).hexdigest()[:16]
 
         return SessionResponse(
             access_token=session_data["access_token"],
             api_key=session_request.api_key,
-            user_id=str(user.user_id),  # Return VanTrade user_id (auto-generated)
+            user_id=user_id,
             user_name=session_data["user_name"],
             email=session_data["email"],
             user_type=session_data["user_type"],
@@ -87,6 +82,32 @@ async def zerodha_callback():
     This endpoint just returns a placeholder response.
     """
     return {"status": "ok", "message": "Login callback received. Return to the app."}
+
+@router.get("/validate-token")
+async def validate_token(
+    api_key: str = Query(..., description="User's Zerodha API key"),
+    access_token: str = Query(..., description="Zerodha access token to validate"),
+):
+    """
+    Lightweight endpoint to check if a Zerodha access token is still valid.
+    Returns 200 if valid, 401 if expired or invalid.
+    Used by the Flutter app on startup to avoid sending users to /home with a dead session.
+    """
+    try:
+        from kiteconnect import KiteConnect
+        import asyncio
+        kite = KiteConnect(api_key=api_key)
+        kite.set_access_token(access_token)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, kite.profile)
+        return {"valid": True}
+    except Exception as e:
+        logger.warning(f"Token validation failed: {e}")
+        raise HTTPException(
+            status_code=401,
+            detail="Session expired. Please login to Zerodha again."
+        )
+
 
 @router.post("/logout")
 async def logout():

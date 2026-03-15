@@ -5,11 +5,13 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/auth_provider.dart';
 import '../providers/dashboard_provider.dart';
+import '../providers/live_trading_provider.dart';
 import '../models/dashboard_model.dart';
 import '../widgets/info_card.dart';
 import 'analysis_input_screen.dart';
 import 'gtt_analysis_screen.dart';
 import 'gtt_portfolio_analysis_screen.dart';
+import 'live_trading_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -31,9 +33,43 @@ class _HomeScreenState extends State<HomeScreen> {
     final auth = context.read<AuthProvider>();
     final dash = context.read<DashboardProvider>();
     if (auth.user != null) {
-      dash.fetchDashboard(auth.user!.accessToken, apiKey: auth.user!.apiKey);
+      dash.fetchDashboard(auth.user!.accessToken, apiKey: auth.user!.apiKey)
+          .then((_) => _checkSessionExpired());
       dash.startAutoRefresh(auth.user!.accessToken, apiKey: auth.user!.apiKey);
     }
+  }
+
+  void _checkSessionExpired() {
+    if (!mounted) return;
+    final dash = context.read<DashboardProvider>();
+    if (dash.sessionExpired) {
+      _handleSessionExpired();
+    }
+  }
+
+  Future<void> _handleSessionExpired() async {
+    if (!mounted) return;
+    context.read<DashboardProvider>().stopAutoRefresh();
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Session Expired'),
+        content: const Text(
+          'Your Zerodha session has expired. Please login again to continue.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    await context.read<AuthProvider>().logout();
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/login');
   }
 
   @override
@@ -49,6 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
         auth.user!.accessToken,
         apiKey: auth.user!.apiKey,
       );
+      _checkSessionExpired();
     }
   }
 
@@ -927,8 +964,10 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Fixed bottom bar ──────────────────────────────────────────────────
   Widget _buildFixedBottomBar(BuildContext context) {
     final dash = context.watch<DashboardProvider>();
+    final live = context.watch<LiveTradingProvider>();
     final gtts = dash.dashboard?.gtts ?? [];
     final hasGtts = gtts.isNotEmpty;
+    final agentRunning = live.isRunning;
 
     return SafeArea(
       child: Container(
@@ -966,7 +1005,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         Icon(Icons.auto_awesome, color: Colors.white, size: 18),
                         SizedBox(width: 6),
                         Text(
-                          'Generate Analysis',
+                          'Analysis',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 13,
@@ -981,7 +1020,65 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
+            // Live Trade button
+            Expanded(
+              child: Material(
+                color: agentRunning ? Colors.indigo[700] : Colors.indigo[50],
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const LiveTradingScreen(),
+                    ),
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (agentRunning)
+                          Container(
+                            width: 7,
+                            height: 7,
+                            margin: const EdgeInsets.only(right: 5),
+                            decoration: BoxDecoration(
+                              color: Colors.greenAccent,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.greenAccent.withValues(alpha: 0.7),
+                                  blurRadius: 5,
+                                ),
+                              ],
+                            ),
+                          )
+                        else
+                          Icon(
+                            Icons.smart_toy_outlined,
+                            color: Colors.indigo[700],
+                            size: 16,
+                          ),
+                        const SizedBox(width: 4),
+                        Text(
+                          agentRunning ? 'Live Agent' : 'Live Trade',
+                          style: TextStyle(
+                            color: agentRunning ? Colors.white : Colors.indigo[700],
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
             // View GTT Analysis button
             Expanded(
               child: Material(
@@ -1010,7 +1107,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          'View Analysis',
+                          'GTT View',
                           style: TextStyle(
                             color: hasGtts ? Colors.white : Colors.grey[500],
                             fontSize: 13,
