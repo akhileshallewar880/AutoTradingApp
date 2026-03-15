@@ -32,5 +32,5 @@ class ApiConfig {
   static const String liveAgentStatusUrl = '$baseUrl/live-trading/status';
 
   // Timeout duration - 2 minutes for analysis (yfinance + AI can be slow)
-  static const Duration timeout = Duration(seconds: 120);
+  static const Duration timeout = Duration(seconds: 150);
 }
