@@ -28,6 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Map<String, dynamic>? _perfData;
   bool _perfLoading = false;
+  String? _perfError;
 
   @override
   void initState() {
@@ -49,7 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _fetchPerformance() async {
     final auth = context.read<AuthProvider>();
     if (auth.user == null || auth.isDemoMode) return;
-    setState(() => _perfLoading = true);
+    if (mounted) setState(() { _perfLoading = true; _perfError = null; });
     try {
       final uri = Uri.parse(ApiConfig.monthlyPerformanceUrl).replace(
         queryParameters: {
@@ -58,11 +59,22 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       );
       final response = await http.get(uri).timeout(const Duration(seconds: 30));
-      if (response.statusCode == 200 && mounted) {
+      if (!mounted) return;
+      if (response.statusCode == 200) {
         setState(() => _perfData = jsonDecode(response.body));
+      } else {
+        // Surface the actual error from the server
+        String msg;
+        try {
+          final body = jsonDecode(response.body);
+          msg = body['detail'] ?? 'Server error ${response.statusCode}';
+        } catch (_) {
+          msg = 'Server error ${response.statusCode}';
+        }
+        setState(() => _perfError = msg);
       }
-    } catch (_) {
-      // silently fail — card shows dashes
+    } on Exception catch (e) {
+      if (mounted) setState(() => _perfError = e.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _perfLoading = false);
     }
@@ -270,7 +282,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         else
                           const SizedBox.shrink(),
                         const SizedBox(height: 12),
-                        _buildMonthCard(dash.dashboard, _perfData, _perfLoading),
+                        _buildMonthCard(dash.dashboard, _perfData, _perfLoading, perfError: _perfError),
                         const SizedBox(height: 12),
                         if ((dash.dashboard?.positions.isNotEmpty ??
                             false)) ...[
@@ -500,7 +512,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── Month P&L ────────────────────────────────────────────────────────────
-  Widget _buildMonthCard(DashboardModel? data, Map<String, dynamic>? perf, bool perfLoading) {
+  Widget _buildMonthCard(DashboardModel? data, Map<String, dynamic>? perf, bool perfLoading, {String? perfError}) {
     final monthPnl = data?.monthPnl ?? 0.0;
     final trades = data?.monthTrades ?? 0;
     final winRate = data?.monthWinRate ?? 0.0;
@@ -619,6 +631,31 @@ class _HomeScreenState extends State<HomeScreen> {
                   width: 16, height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
+              )
+            else if (perfError != null)
+              Row(
+                children: [
+                  Icon(Icons.error_outline, size: 14, color: Colors.red[400]),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      perfError,
+                      style: TextStyle(fontSize: 11, color: Colors.red[600]),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _fetchPerformance,
+                    icon: const Icon(Icons.refresh, size: 14),
+                    label: const Text('Retry', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.blue[700],
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ],
               )
             else ...[
               Row(
