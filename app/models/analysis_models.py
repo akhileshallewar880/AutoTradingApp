@@ -19,6 +19,11 @@ class AnalysisRequest(BaseModel):
         ge=0,
         description="Hold duration in days. 0 = Intraday. Stocks auto-sold after this period."
     )
+    capital_to_use: float = Field(
+        default=0.0,
+        ge=0,
+        description="Capital to deploy. 0 = use full available balance."
+    )
     leverage: int = Field(
         default=1,
         ge=1,

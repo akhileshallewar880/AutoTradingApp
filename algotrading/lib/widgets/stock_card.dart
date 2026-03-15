@@ -352,11 +352,23 @@ class _StockCardState extends State<StockCard> {
                     'Potential Profit',
                     currencyFormat.format(widget.stock.potentialProfit),
                     valueColor: Colors.green,
+                    pct: widget.stock.entryPrice * widget.stock.quantity > 0
+                        ? widget.stock.potentialProfit /
+                            (widget.stock.entryPrice * widget.stock.quantity) *
+                            100
+                        : null,
+                    pctColor: Colors.green[700],
                   ),
                   _buildDetailRow(
                     'Potential Loss',
                     currencyFormat.format(widget.stock.potentialLoss),
                     valueColor: Colors.red,
+                    pct: widget.stock.entryPrice * widget.stock.quantity > 0
+                        ? widget.stock.potentialLoss /
+                            (widget.stock.entryPrice * widget.stock.quantity) *
+                            100
+                        : null,
+                    pctColor: Colors.red[700],
                   ),
                   _buildDetailRow(
                     'Risk:Reward',
@@ -391,7 +403,13 @@ class _StockCardState extends State<StockCard> {
     );
   }
 
-  Widget _buildDetailRow(String label, String value, {Color? valueColor}) {
+  Widget _buildDetailRow(
+    String label,
+    String value, {
+    Color? valueColor,
+    double? pct,
+    Color? pctColor,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
@@ -399,18 +417,38 @@ class _StockCardState extends State<StockCard> {
         children: [
           Text(
             label,
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
+            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: valueColor ?? Colors.black87,
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (pct != null) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: (pctColor ?? Colors.grey).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${pct.toStringAsFixed(1)}%',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: pctColor ?? Colors.grey[700],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: valueColor ?? Colors.black87,
+                ),
+              ),
+            ],
           ),
         ],
       ),

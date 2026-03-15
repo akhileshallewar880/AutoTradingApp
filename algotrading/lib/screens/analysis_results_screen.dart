@@ -451,11 +451,21 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                   'Max Profit',
                   currencyFormat.format(metrics['max_profit'] ?? 0),
                   Colors.green,
+                  pct: (metrics['total_investment'] ?? 0) > 0
+                      ? (metrics['max_profit'] ?? 0) /
+                            (metrics['total_investment'] as num) *
+                            100
+                      : null,
                 ),
                 _buildMetric(
                   'Max Loss',
                   currencyFormat.format(metrics['max_loss'] ?? 0),
                   Colors.red,
+                  pct: (metrics['total_investment'] ?? 0) > 0
+                      ? (metrics['max_loss'] ?? 0) /
+                            (metrics['total_investment'] as num) *
+                            100
+                      : null,
                 ),
               ],
             ),
@@ -501,18 +511,43 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     }
   }
 
-  Widget _buildMetric(String label, String value, Color color) {
+  Widget _buildMetric(String label, String value, Color color, {double? pct}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            if (pct != null) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '${pct.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
       ],
     );

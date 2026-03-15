@@ -61,6 +61,18 @@ async def generate_analysis(request: AnalysisRequest):
             logger.warning(f"Balance fetch failed, using default: {e}")
             available_balance = 100000
 
+        # Use user-specified capital if provided; otherwise fall back to full balance
+        capital_for_sizing = (
+            request.capital_to_use
+            if request.capital_to_use > 0
+            else available_balance
+        )
+        if request.capital_to_use > 0:
+            logger.info(
+                f"[ANALYSIS-CAPITAL] Using user-specified capital ₹{capital_for_sizing:,.2f} "
+                f"(full balance: ₹{available_balance:,.2f})"
+            )
+
         # ── Stage 1+2: Screen + enrich ────────────────────────────────────
         screen_limit = min(request.num_stocks * 3, 60)
         logger.info(f"[ANALYSIS-SCREEN] Starting screen_and_enrich with limit={screen_limit}, hold={request.hold_duration_days}d")
@@ -184,7 +196,7 @@ async def generate_analysis(request: AnalysisRequest):
                 entry_price=entry,
                 stop_loss=sl,
                 risk_per_trade=request.risk_percent,
-                capital=available_balance,
+                capital=capital_for_sizing,
                 action=action,
                 leverage=effective_leverage,
             )
@@ -215,12 +227,12 @@ async def generate_analysis(request: AnalysisRequest):
         # With MIS leverage, Zerodha only requires (total_investment / leverage) as margin.
         effective_leverage = request.leverage if request.hold_duration_days == 0 else 1
         required_margin = total_investment / effective_leverage
-        if required_margin > available_balance and preliminary_stocks:
+        if required_margin > capital_for_sizing and preliminary_stocks:
             logger.warning(
                 f"Required margin ₹{required_margin:,.2f} (investment ₹{total_investment:,.2f} "
-                f"/ {effective_leverage}x leverage) exceeds balance ₹{available_balance:,.2f}. Scaling down…"
+                f"/ {effective_leverage}x leverage) exceeds capital ₹{capital_for_sizing:,.2f}. Scaling down…"
             )
-            scaling_factor = (available_balance * 0.95) / required_margin
+            scaling_factor = (capital_for_sizing * 0.95) / required_margin
             total_investment = 0.0
             for stock in preliminary_stocks:
                 stock["quantity"] = max(1, int(stock["quantity"] * scaling_factor))
@@ -285,13 +297,13 @@ async def generate_analysis(request: AnalysisRequest):
             logger.info(f"Analysis generated: {analysis_id} with 0 stocks (NO_STOCKS_FOUND)")
             return analysis
 
-        if total_investment / effective_leverage > available_balance:
+        if total_investment / effective_leverage > capital_for_sizing:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"Required margin ₹{total_investment / effective_leverage:,.2f} "
                     f"(investment ₹{total_investment:,.2f} / {effective_leverage}x leverage) "
-                    f"exceeds available balance ₹{available_balance:,.2f}"
+                    f"exceeds capital ₹{capital_for_sizing:,.2f}"
                 ),
             )
 
@@ -309,8 +321,9 @@ async def generate_analysis(request: AnalysisRequest):
                 "num_stocks": len(stock_analyses),
                 "risk_percent": request.risk_percent,
                 "available_balance": available_balance,
+                "capital_to_use": round(capital_for_sizing, 2),
                 "leverage": effective_leverage,
-                "effective_capital": round(available_balance * effective_leverage, 2),
+                "effective_capital": round(capital_for_sizing * effective_leverage, 2),
                 "sectors": request.sectors,
                 "hold_duration_days": request.hold_duration_days,
                 "universe": "Nifty 50 + Next 50" if is_intraday else "Full NSE Market",
@@ -409,21 +422,27 @@ async def execute_trades(
 
         stocks = analysis_data.get("stocks", [])
 
-        # Apply user-edited quantity overrides
+        # stock_overrides = list of {stock_symbol, quantity} for SELECTED stocks only.
+        # Use it both to filter which stocks to execute AND to apply quantity edits.
         if stock_overrides:
             override_map = {
                 o["stock_symbol"]: o["quantity"]
                 for o in stock_overrides
                 if "stock_symbol" in o and "quantity" in o
             }
+            # Filter to selected stocks only — deselected stocks are absent from override_map
+            all_count = len(stocks)
+            stocks = [s for s in stocks if s.get("stock_symbol") in override_map]
+            logger.info(
+                f"Stock selection: {len(stocks)}/{all_count} stocks selected for execution"
+            )
+            # Apply quantity overrides
             for stock in stocks:
                 sym = stock.get("stock_symbol")
-                if sym in override_map:
-                    original_qty = stock["quantity"]
-                    stock["quantity"] = override_map[sym]
-                    logger.info(
-                        f"Quantity override for {sym}: {original_qty} → {override_map[sym]}"
-                    )
+                original_qty = stock["quantity"]
+                stock["quantity"] = override_map[sym]
+                if original_qty != override_map[sym]:
+                    logger.info(f"Quantity override for {sym}: {original_qty} → {override_map[sym]}")
 
         async def update_callback(update: ExecutionUpdate):
             if analysis_id not in active_executions:

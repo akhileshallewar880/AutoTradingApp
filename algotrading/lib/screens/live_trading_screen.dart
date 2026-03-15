@@ -739,40 +739,66 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               ],
             ),
             const Divider(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Row(
                   children: [
                     const Text('MIS Leverage', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                    Text(
-                      'Multiplies effective capital (1–5x)',
-                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.orange[50],
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.orange[200]!),
+                      ),
+                      child: Text(
+                        '${_leverage}x',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.orange[800]),
+                      ),
                     ),
                   ],
                 ),
-                Wrap(
-                  spacing: 4,
+                const SizedBox(height: 4),
+                Text(
+                  'Multiplies effective capital for MIS intraday orders',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+                const SizedBox(height: 10),
+                Row(
                   children: [1, 2, 3, 4, 5].map((lev) {
                     final sel = _leverage == lev;
-                    return GestureDetector(
-                      onTap: () => setState(() => _leverage = lev),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: sel ? Colors.orange[700] : Colors.grey[100],
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: sel ? Colors.orange[700]! : Colors.grey[300]!,
+                    final isFirst = lev == 1;
+                    final isLast = lev == 5;
+                    return Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _leverage = lev),
+                        child: Container(
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: sel ? Colors.orange[700] : Colors.grey[50],
+                            borderRadius: BorderRadius.horizontal(
+                              left: isFirst ? const Radius.circular(8) : Radius.zero,
+                              right: isLast ? const Radius.circular(8) : Radius.zero,
+                            ),
+                            border: Border(
+                              top: BorderSide(color: sel ? Colors.orange[700]! : Colors.grey[300]!),
+                              bottom: BorderSide(color: sel ? Colors.orange[700]! : Colors.grey[300]!),
+                              left: BorderSide(color: sel ? Colors.orange[700]! : Colors.grey[300]!),
+                              right: isLast
+                                  ? BorderSide(color: sel ? Colors.orange[700]! : Colors.grey[300]!)
+                                  : BorderSide.none,
+                            ),
                           ),
-                        ),
-                        child: Text(
-                          '${lev}x',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: sel ? Colors.white : Colors.grey[700],
+                          alignment: Alignment.center,
+                          child: Text(
+                            '${lev}x',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: sel ? Colors.white : Colors.grey[600],
+                            ),
                           ),
                         ),
                       ),

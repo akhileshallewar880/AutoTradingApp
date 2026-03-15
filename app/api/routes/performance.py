@@ -82,10 +82,14 @@ async def get_monthly_performance(
         losing_positions = 0
 
         for pos in day_positions:
-            r = float(pos.get("realised") or pos.get("pnl") or 0)
+            # Use pnl directly (= realised + unrealised) — avoids double-counting
+            # when realised == 0.0 (falsy) and we fall back to the combined field.
+            pos_pnl = float(pos.get("pnl") or 0)
+            r = float(pos.get("realised") or 0)
             u = float(pos.get("unrealised") or 0)
-            pos_pnl = r + u
 
+            # pnl should equal r + u; trust pnl as the source of truth
+            # but still track realized/unrealized breakdown separately.
             realized_pnl += r
             unrealized_pnl += u
 
@@ -96,7 +100,11 @@ async def get_monthly_performance(
                 gross_loss += abs(pos_pnl)
                 losing_positions += 1
 
-        total_pnl = realized_pnl + unrealized_pnl
+        # Use the sum of individual pnl fields rather than r+u
+        # to avoid any discrepancy from the falsy-zero fallback.
+        total_pnl = sum(
+            float(p.get("pnl") or 0) for p in day_positions
+        )
         total_positions = winning_positions + losing_positions
         win_rate = round((winning_positions / total_positions) * 100, 1) if total_positions > 0 else 0.0
 
@@ -106,7 +114,7 @@ async def get_monthly_performance(
         total_trades = len(trades_raw)
 
         # ── Max drawdown (simplified on positions) ───────────────────────────
-        pnls = [float(p.get("realised") or 0) + float(p.get("unrealised") or 0) for p in day_positions]
+        pnls = [float(p.get("pnl") or 0) for p in day_positions]
         max_drawdown = 0.0
         if pnls:
             peak = pnls[0]

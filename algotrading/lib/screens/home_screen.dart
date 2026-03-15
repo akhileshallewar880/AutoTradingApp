@@ -110,10 +110,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _refresh() async {
     final auth = context.read<AuthProvider>();
     if (auth.user != null) {
-      await context.read<DashboardProvider>().fetchDashboard(
-        auth.user!.accessToken,
-        apiKey: auth.user!.apiKey,
-      );
+      await Future.wait([
+        context.read<DashboardProvider>().fetchDashboard(
+          auth.user!.accessToken,
+          apiKey: auth.user!.apiKey,
+        ),
+        _fetchPerformance(),
+      ]);
       _checkSessionExpired();
     }
   }
