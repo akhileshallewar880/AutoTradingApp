@@ -13,17 +13,20 @@ class RiskEngine:
         risk_per_trade: float,
         capital: float,
         action: str = "BUY",
+        leverage: int = 1,
     ) -> int:
         """
-        Calculate position size based on risk percentage.
+        Calculate position size based on risk percentage and leverage.
 
         For BUY  (long):  risk_per_share = entry_price - stop_loss
-                          (stop_loss must be < entry_price)
         For SELL (short): risk_per_share = stop_loss - entry_price
-                          (stop_loss must be > entry_price)
 
-        Quantity = (Capital × Risk%) / risk_per_share
+        Quantity = (Capital × Leverage × Risk%) / risk_per_share
+
+        Leverage (1–5x) is for MIS intraday trades only.
+        Zerodha provides up to 5x margin on MIS equity positions.
         """
+        leverage = max(1, min(5, leverage))  # clamp 1–5
         if action == "SELL":
             # Short position: stop is ABOVE entry
             risk_per_share = stop_loss - entry_price
@@ -43,11 +46,13 @@ class RiskEngine:
                 )
                 return 0
 
-        total_risk_amount = capital * (risk_per_trade / 100.0)
+        effective_capital = capital * leverage
+        total_risk_amount = effective_capital * (risk_per_trade / 100.0)
         quantity = math.floor(total_risk_amount / risk_per_share)
 
         logger.info(
-            f"Risk Calc [{action}]: Capital={capital}, Risk%={risk_per_trade}, "
+            f"Risk Calc [{action}]: Capital={capital}, Leverage={leverage}x, "
+            f"EffectiveCapital={effective_capital}, Risk%={risk_per_trade}, "
             f"Risk/Share={risk_per_share:.2f}, Qty={quantity}"
         )
         return max(quantity, 1)

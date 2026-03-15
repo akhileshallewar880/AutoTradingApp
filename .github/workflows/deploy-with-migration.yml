@@ -1,14 +1,9 @@
 name: Deploy with Database Migration
 
+# This workflow is disabled — app migrated to Hostinger VPS (DB-free).
+# Azure SQL migrations no longer needed. Kept for reference only.
 on:
-  push:
-    branches:
-      - master
-      - main
-  pull_request:
-    branches:
-      - master
-      - main
+  workflow_dispatch:  # manual trigger only
 
 jobs:
   migrate-and-deploy:

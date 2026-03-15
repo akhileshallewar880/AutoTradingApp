@@ -241,6 +241,7 @@ class UserTradingAgent:
         max_trades_per_day: int = 6,
         max_daily_loss_pct: float = 2.0,
         capital_to_use: float = 0.0,
+        leverage: int = 1,
     ):
         self.user_id = user_id
         self.api_key = api_key
@@ -251,6 +252,7 @@ class UserTradingAgent:
         self.max_trades_per_day = max_trades_per_day
         self.max_daily_loss_pct = max_daily_loss_pct
         self.capital_to_use = capital_to_use
+        self.leverage = max(1, min(5, leverage))
 
         self.is_running = False
         self.status = "STOPPED"
@@ -486,7 +488,8 @@ class UserTradingAgent:
                     target = round(ltp * 0.97, 2)
 
             risk_per_share = abs(ltp - stop_loss)
-            max_risk = capital * (self.risk_percent / 100)
+            effective_capital = capital * self.leverage
+            max_risk = effective_capital * (self.risk_percent / 100)
             quantity = max(1, int(max_risk / risk_per_share)) if risk_per_share > 0 else 1
 
             # Cap: no more than 10% of capital per trade
@@ -856,6 +859,7 @@ class UserTradingAgent:
                 "max_trades_per_day": self.max_trades_per_day,
                 "max_daily_loss_pct": self.max_daily_loss_pct,
                 "capital_to_use": self.capital_to_use,
+                "leverage": self.leverage,
             },
             "recent_logs": [l.to_dict() for l in self.logs[:50]],
         }
@@ -880,6 +884,7 @@ class AutonomousAgentManager:
         max_trades_per_day: int = 6,
         max_daily_loss_pct: float = 2.0,
         capital_to_use: float = 0.0,
+        leverage: int = 1,
     ) -> Dict:
         if user_id in self._agents and self._agents[user_id].is_running:
             return {"status": "already_running", "message": "Agent is already running for this user"}
@@ -894,6 +899,7 @@ class AutonomousAgentManager:
             max_trades_per_day=max_trades_per_day,
             max_daily_loss_pct=max_daily_loss_pct,
             capital_to_use=capital_to_use,
+            leverage=leverage,
         )
         self._agents[user_id] = agent
         await agent.start()

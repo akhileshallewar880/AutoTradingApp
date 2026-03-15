@@ -19,6 +19,12 @@ class AnalysisRequest(BaseModel):
         ge=0,
         description="Hold duration in days. 0 = Intraday. Stocks auto-sold after this period."
     )
+    leverage: int = Field(
+        default=1,
+        ge=1,
+        le=5,
+        description="MIS leverage multiplier (1–5x). Only applicable for intraday trades."
+    )
 
 
 class StockAnalysis(BaseModel):

@@ -5,7 +5,8 @@ class ApiConfig {
   // - iOS Simulator: 'http://localhost:8000/api/v1'
   // - Real Device: 'http://192.168.x.x:8000/api/v1' (replace with your machine's IP)
   
-  static const String baseUrl = 'https://vantradeapp-h6axgng8hkd9aqba.centralindia-01.azurewebsites.net/api/v1';
+  static const String baseUrl = 'https://api.vantrade.in/api/v1';
+
   
   // API Endpoints
   static const String loginUrl = '$baseUrl/auth/login';
@@ -21,6 +22,9 @@ class ApiConfig {
 
   // Dashboard endpoint
   static const String dashboardUrl = '$baseUrl/dashboard/summary';
+
+  // Performance endpoint
+  static const String monthlyPerformanceUrl = '$baseUrl/monthly-performance';
 
   // Live trading (autonomous agent) endpoints
   static const String liveAgentStartUrl = '$baseUrl/live-trading/start';

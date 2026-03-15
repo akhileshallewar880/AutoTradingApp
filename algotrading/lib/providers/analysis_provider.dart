@@ -86,6 +86,7 @@ class AnalysisProvider with ChangeNotifier {
     required int userId,
     List<String>? sectors,
     double capitalToUse = 0,
+    int leverage = 1,
   }) async {
     _isLoading = true;
     _error = null;
@@ -107,6 +108,7 @@ class AnalysisProvider with ChangeNotifier {
           sectors: sectors ?? _selectedSectors,
           holdDurationDays: _holdDurationDays,
           capitalToUse: capitalToUse,
+          leverage: leverage,
         );
         _currentAnalysis = analysis;
       }

@@ -86,6 +86,7 @@ class ApiService {
     List<String> sectors = const ['ALL'],
     int holdDurationDays = 0,
     double capitalToUse = 0,
+    int leverage = 1,
   }) async {
     final response = await http.post(
       Uri.parse(ApiConfig.generateAnalysisUrl),
@@ -103,6 +104,7 @@ class ApiService {
         'sectors': sectors,
         'hold_duration_days': holdDurationDays,
         if (capitalToUse > 0) 'capital_to_use': capitalToUse,
+        'leverage': leverage,
       }),
     ).timeout(ApiConfig.timeout);
 
@@ -242,6 +244,7 @@ class ApiService {
     int maxTradesPerDay = 6,
     double maxDailyLossPct = 2.0,
     double capitalToUse = 0.0,
+    int leverage = 1,
   }) async {
     final response = await http.post(
       Uri.parse(ApiConfig.liveAgentStartUrl),
@@ -256,6 +259,7 @@ class ApiService {
         'max_trades_per_day': maxTradesPerDay,
         'max_daily_loss_pct': maxDailyLossPct,
         'capital_to_use': capitalToUse,
+        'leverage': leverage,
       }),
     ).timeout(const Duration(seconds: 30));
 

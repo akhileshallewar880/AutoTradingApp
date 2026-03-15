@@ -17,6 +17,7 @@ class StartAgentRequest(BaseModel):
     max_trades_per_day: int = 6
     max_daily_loss_pct: float = 2.0
     capital_to_use: float = 0.0  # 0 = use full available balance
+    leverage: int = 1             # 1–5x MIS leverage
 
 
 @router.post("/live-trading/start")
@@ -37,6 +38,7 @@ async def start_agent(req: StartAgentRequest):
             max_trades_per_day=req.max_trades_per_day,
             max_daily_loss_pct=req.max_daily_loss_pct,
             capital_to_use=req.capital_to_use,
+            leverage=req.leverage,
         )
         return result
     except Exception as e:

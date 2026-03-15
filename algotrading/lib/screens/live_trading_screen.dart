@@ -12,8 +12,13 @@ class LiveTradingScreen extends StatefulWidget {
   State<LiveTradingScreen> createState() => _LiveTradingScreenState();
 }
 
-class _LiveTradingScreenState extends State<LiveTradingScreen> {
+class _LiveTradingScreenState extends State<LiveTradingScreen>
+    with SingleTickerProviderStateMixin {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
+
+  bool _isInitializing = false; // full-screen overlay
+  bool _isStopping = false;
+  late AnimationController _pulseController;
 
   // Settings (editable before starting)
   int _maxPositions = 2;
@@ -22,11 +27,22 @@ class _LiveTradingScreenState extends State<LiveTradingScreen> {
   int _maxTradesPerDay = 6;
   double _maxDailyLossPct = 2.0;
   double _capitalToUse = 0.0;
+  int _leverage = 1;
 
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadStatus());
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
   }
 
   void _loadStatus() {
@@ -65,19 +81,36 @@ class _LiveTradingScreenState extends State<LiveTradingScreen> {
 
     if (confirmed != true || !mounted) return;
 
-    await context.read<LiveTradingProvider>().startAgent(
-      userId: auth.user!.userId,
-      accessToken: auth.user!.accessToken,
-      apiKey: auth.user!.apiKey,
-      settings: AgentSettingsModel(
-        maxPositions: _maxPositions,
-        riskPercent: _riskPercent,
-        scanIntervalMinutes: _scanIntervalMinutes,
-        maxTradesPerDay: _maxTradesPerDay,
-        maxDailyLossPct: _maxDailyLossPct,
-        capitalToUse: _capitalToUse,
-      ),
-    );
+    setState(() {
+      _isInitializing = true;
+      _pulseController.repeat();
+    });
+    await Future.delayed(const Duration(milliseconds: 50));
+    if (!mounted) return;
+    try {
+      await context.read<LiveTradingProvider>().startAgent(
+        userId: auth.user!.userId,
+        accessToken: auth.user!.accessToken,
+        apiKey: auth.user!.apiKey,
+        settings: AgentSettingsModel(
+          maxPositions: _maxPositions,
+          riskPercent: _riskPercent,
+          scanIntervalMinutes: _scanIntervalMinutes,
+          maxTradesPerDay: _maxTradesPerDay,
+          maxDailyLossPct: _maxDailyLossPct,
+          capitalToUse: _capitalToUse,
+          leverage: _leverage,
+        ),
+      );
+    } finally {
+      // Dismiss overlay as soon as API call completes (success or error)
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+          _pulseController.stop();
+        });
+      }
+    }
   }
 
   Future<void> _stopAgent() async {
@@ -108,7 +141,15 @@ class _LiveTradingScreenState extends State<LiveTradingScreen> {
     );
 
     if (confirmed != true || !mounted) return;
-    await context.read<LiveTradingProvider>().stopAgent(auth.user!.userId);
+
+    setState(() => _isStopping = true);
+    await Future.delayed(const Duration(milliseconds: 50)); // let Flutter paint loading state
+    if (!mounted) return;
+    try {
+      await context.read<LiveTradingProvider>().stopAgent(auth.user!.userId);
+    } finally {
+      if (mounted) setState(() => _isStopping = false);
+    }
   }
 
   @override
@@ -117,7 +158,10 @@ class _LiveTradingScreenState extends State<LiveTradingScreen> {
     final status = live.status;
     final isRunning = status.isRunning;
 
-    return Scaffold(
+
+    return Stack(
+      children: [
+        Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text(
@@ -197,6 +241,94 @@ class _LiveTradingScreenState extends State<LiveTradingScreen> {
           ],
         ),
       ),
+    ), // end Scaffold
+
+    // ── Full-screen loading overlay ───────────────────────────────────────
+    if (_isInitializing)
+      _buildLoadingOverlay(
+        live.error != null
+            ? 'Something went wrong'
+            : isRunning
+                ? 'Connecting to live feed...'
+                : 'Starting agent...',
+      ),
+  ], // end Stack children
+); // end Stack
+  }
+
+  // ── Loading overlay ───────────────────────────────────────────────────────
+
+  Widget _buildLoadingOverlay(String message) {
+    return Container(
+      color: Colors.indigo[900]!.withValues(alpha: 0.95),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedBuilder(
+              animation: _pulseController,
+              builder: (ctx, _) {
+                return Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Transform.scale(
+                      scale: 1.0 + _pulseController.value * 0.5,
+                      child: Container(
+                        width: 110,
+                        height: 110,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.indigo[400]!
+                              .withValues(alpha: 0.3 * (1 - _pulseController.value)),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      width: 76,
+                      height: 76,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.indigo[600],
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.indigoAccent.withValues(alpha: 0.4),
+                            blurRadius: 20,
+                          ),
+                        ],
+                      ),
+                      child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 38),
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 36),
+            Text(
+              message,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: Colors.white54,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Please wait...',
+              style: TextStyle(color: Colors.white38, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -249,14 +381,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen> {
                   ),
                 ),
                 const Spacer(),
-                if (isLoading)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white54),
-                  )
-                else
-                  _buildToggleButton(isRunning),
+                _buildToggleButton(isRunning, isLoading: _isStopping),
               ],
             ),
             const SizedBox(height: 16),
@@ -344,7 +469,36 @@ class _LiveTradingScreenState extends State<LiveTradingScreen> {
     );
   }
 
-  Widget _buildToggleButton(bool isRunning) {
+  Widget _buildToggleButton(bool isRunning, {bool isLoading = false}) {
+    if (isLoading) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white24,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              isRunning ? 'Stopping...' : 'Starting...',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return GestureDetector(
       onTap: isRunning ? _stopAgent : _startAgent,
       child: Container(
@@ -584,6 +738,49 @@ class _LiveTradingScreenState extends State<LiveTradingScreen> {
                 ),
               ],
             ),
+            const Divider(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('MIS Leverage', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                    Text(
+                      'Multiplies effective capital (1–5x)',
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    ),
+                  ],
+                ),
+                Wrap(
+                  spacing: 4,
+                  children: [1, 2, 3, 4, 5].map((lev) {
+                    final sel = _leverage == lev;
+                    return GestureDetector(
+                      onTap: () => setState(() => _leverage = lev),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: sel ? Colors.orange[700] : Colors.grey[100],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: sel ? Colors.orange[700]! : Colors.grey[300]!,
+                          ),
+                        ),
+                        child: Text(
+                          '${lev}x',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: sel ? Colors.white : Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -670,6 +867,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen> {
         _badge('Max ${s.maxTradesPerDay} trades/day', Colors.purple),
         _badge('Stop at ${s.maxDailyLossPct.toStringAsFixed(1)}% loss', Colors.red),
         if (s.capitalToUse > 0) _badge('Capital: ${_currency.format(s.capitalToUse)}', Colors.orange),
+        if (s.leverage > 1) _badge('${s.leverage}x leverage', Colors.orange),
       ],
     );
   }

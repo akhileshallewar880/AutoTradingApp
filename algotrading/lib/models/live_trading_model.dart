@@ -5,6 +5,7 @@ class AgentSettingsModel {
   final int maxTradesPerDay;
   final double maxDailyLossPct;
   final double capitalToUse;
+  final int leverage;
 
   const AgentSettingsModel({
     required this.maxPositions,
@@ -13,6 +14,7 @@ class AgentSettingsModel {
     required this.maxTradesPerDay,
     required this.maxDailyLossPct,
     required this.capitalToUse,
+    this.leverage = 1,
   });
 
   factory AgentSettingsModel.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,7 @@ class AgentSettingsModel {
       maxTradesPerDay: json['max_trades_per_day'] as int? ?? 6,
       maxDailyLossPct: (json['max_daily_loss_pct'] as num?)?.toDouble() ?? 2.0,
       capitalToUse: (json['capital_to_use'] as num?)?.toDouble() ?? 0.0,
+      leverage: json['leverage'] as int? ?? 1,
     );
   }
 
@@ -33,6 +36,7 @@ class AgentSettingsModel {
         maxTradesPerDay: 6,
         maxDailyLossPct: 2.0,
         capitalToUse: 0.0,
+        leverage: 1,
       );
 }
 

@@ -21,8 +21,16 @@ class AgentRunResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 class MonthlyPerformanceResponse(BaseModel):
+    month: str
+    realized_pnl: float
+    unrealized_pnl: float
     total_pnl: float
+    gross_profit: float
+    gross_loss: float
+    total_charges: float
+    net_pnl: float              # total_pnl - charges
+    total_trades: int
+    winning_positions: int
+    losing_positions: int
     win_rate: float
     max_drawdown: float
-    total_trades: int
-    month: str

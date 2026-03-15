@@ -36,6 +36,7 @@ class LiveTradingProvider with ChangeNotifier {
         maxTradesPerDay: settings.maxTradesPerDay,
         maxDailyLossPct: settings.maxDailyLossPct,
         capitalToUse: settings.capitalToUse,
+        leverage: settings.leverage,
       );
       // Begin polling for status updates
       _startPolling(userId);

@@ -178,12 +178,15 @@ async def generate_analysis(request: AnalysisRequest):
                 risk_amount = (entry - sl) * 1          # per share
                 risk_reward_ratio = (target - entry) / (entry - sl) if entry > sl else 1.0
 
+            # Apply leverage only for intraday MIS trades
+            effective_leverage = request.leverage if request.hold_duration_days == 0 else 1
             quantity = risk_engine.calculate_quantity(
                 entry_price=entry,
                 stop_loss=sl,
                 risk_per_trade=request.risk_percent,
                 capital=available_balance,
                 action=action,
+                leverage=effective_leverage,
             )
 
             if quantity == 0:

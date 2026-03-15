@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,6 +10,7 @@ import '../providers/dashboard_provider.dart';
 import '../providers/live_trading_provider.dart';
 import '../models/dashboard_model.dart';
 import '../widgets/info_card.dart';
+import '../utils/api_config.dart';
 import 'analysis_input_screen.dart';
 import 'gtt_analysis_screen.dart';
 import 'gtt_portfolio_analysis_screen.dart';
@@ -23,6 +26,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
 
+  Map<String, dynamic>? _perfData;
+  bool _perfLoading = false;
+
   @override
   void initState() {
     super.initState();
@@ -36,6 +42,29 @@ class _HomeScreenState extends State<HomeScreen> {
       dash.fetchDashboard(auth.user!.accessToken, apiKey: auth.user!.apiKey)
           .then((_) => _checkSessionExpired());
       dash.startAutoRefresh(auth.user!.accessToken, apiKey: auth.user!.apiKey);
+      _fetchPerformance();
+    }
+  }
+
+  Future<void> _fetchPerformance() async {
+    final auth = context.read<AuthProvider>();
+    if (auth.user == null || auth.isDemoMode) return;
+    setState(() => _perfLoading = true);
+    try {
+      final uri = Uri.parse(ApiConfig.monthlyPerformanceUrl).replace(
+        queryParameters: {
+          'access_token': auth.user!.accessToken,
+          'api_key': auth.user!.apiKey,
+        },
+      );
+      final response = await http.get(uri).timeout(const Duration(seconds: 30));
+      if (response.statusCode == 200 && mounted) {
+        setState(() => _perfData = jsonDecode(response.body));
+      }
+    } catch (_) {
+      // silently fail — card shows dashes
+    } finally {
+      if (mounted) setState(() => _perfLoading = false);
     }
   }
 
@@ -238,7 +267,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         else
                           const SizedBox.shrink(),
                         const SizedBox(height: 12),
-                        _buildMonthCard(dash.dashboard),
+                        _buildMonthCard(dash.dashboard, _perfData, _perfLoading),
                         const SizedBox(height: 12),
                         if ((dash.dashboard?.positions.isNotEmpty ??
                             false)) ...[
@@ -468,7 +497,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── Month P&L ────────────────────────────────────────────────────────────
-  Widget _buildMonthCard(DashboardModel? data) {
+  Widget _buildMonthCard(DashboardModel? data, Map<String, dynamic>? perf, bool perfLoading) {
     final monthPnl = data?.monthPnl ?? 0.0;
     final trades = data?.monthTrades ?? 0;
     final winRate = data?.monthWinRate ?? 0.0;
@@ -476,6 +505,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final losses = data?.monthLosses ?? 0;
     final isPositive = monthPnl >= 0;
     final monthLabel = DateFormat('MMMM yyyy').format(DateTime.now());
+
+    final grossProfit = perf != null ? ((perf['gross_profit'] as num?) ?? 0).toDouble() : null;
+    final grossLoss = perf != null ? ((perf['gross_loss'] as num?) ?? 0).toDouble() : null;
+    final charges = perf != null ? ((perf['total_charges'] as num?) ?? 0).toDouble() : null;
+    final netPnl = perf != null ? ((perf['net_pnl'] as num?) ?? 0).toDouble() : null;
 
     return Card(
       elevation: 2,
@@ -571,6 +605,76 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ],
+
+            // ── Profit / Loss / Charges from Zerodha API ─────────────────
+            const SizedBox(height: 14),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            if (perfLoading)
+              const Center(
+                child: SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else ...[
+              Row(
+                children: [
+                  _buildPerfTile('Profit', grossProfit, Colors.green[700]!),
+                  const SizedBox(width: 8),
+                  _buildPerfTile('Loss', grossLoss, Colors.red[600]!, isLoss: true),
+                  const SizedBox(width: 8),
+                  _buildPerfTile('Charges', charges, Colors.orange[700]!, isLoss: true),
+                ],
+              ),
+              if (netPnl != null) ...[
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Net P&L (after charges)',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                    Text(
+                      '${netPnl >= 0 ? '+' : ''}${_currency.format(netPnl)}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: netPnl >= 0 ? Colors.green[700] : Colors.red[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPerfTile(String label, double? value, Color color, {bool isLoss = false}) {
+    final display = value == null
+        ? '—'
+        : '${isLoss ? '' : '+'}${_currency.format(value)}';
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+            const SizedBox(height: 3),
+            Text(
+              display,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
         ),
       ),

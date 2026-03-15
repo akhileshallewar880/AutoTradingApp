@@ -21,6 +21,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
   int _numStocks = 5;
   double _riskPercent = 1.0;
   int _holdDurationDays = 0; // 0 = Intraday
+  int _leverage = 1; // 1–5x MIS leverage (intraday only)
   Set<String> _selectedSectors = {'ALL'};
   double _availableBalance = 0;
 
@@ -157,6 +158,11 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                             ),
                             const SizedBox(height: 14),
                             _buildHoldDurationPicker(),
+                            // Leverage picker — only for intraday MIS trades
+                            if (_holdDurationDays == 0) ...[
+                              const SizedBox(height: 20),
+                              _buildLeveragePicker(),
+                            ],
                           ],
                         ),
                       ),
@@ -439,7 +445,11 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           label: Text(opt.label),
           selected: selected,
           onSelected: (_) {
-            setState(() => _holdDurationDays = opt.days);
+            setState(() {
+              _holdDurationDays = opt.days;
+              // Reset leverage to 1x when switching to swing (non-intraday)
+              if (opt.days != 0) _leverage = 1;
+            });
           },
           selectedColor: Colors.green[700],
           labelStyle: TextStyle(
@@ -453,6 +463,67 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           backgroundColor: Colors.grey[50],
         );
       }).toList(),
+    );
+  }
+
+  Widget _buildLeveragePicker() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.bolt, color: Colors.orange[700], size: 16),
+            const SizedBox(width: 6),
+            const Text(
+              'MIS Leverage',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.orange[200]!),
+              ),
+              child: Text(
+                '${_leverage}x',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange[800],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Multiplies effective capital for intraday MIS orders. Higher leverage = higher risk.',
+          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          children: [1, 2, 3, 4, 5].map((lev) {
+            final selected = _leverage == lev;
+            return ChoiceChip(
+              label: Text('${lev}x'),
+              selected: selected,
+              onSelected: (_) => setState(() => _leverage = lev),
+              selectedColor: Colors.orange[700],
+              labelStyle: TextStyle(
+                color: selected ? Colors.white : Colors.grey[700],
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              ),
+              side: BorderSide(
+                color: selected ? Colors.orange[700]! : Colors.grey[300]!,
+              ),
+              backgroundColor: Colors.grey[50],
+            );
+          }).toList(),
+        ),
+      ],
     );
   }
 
@@ -612,6 +683,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           userId: userId,
           sectors: _selectedSectors.toList(),
           capitalToUse: capitalToUse,
+          leverage: _holdDurationDays == 0 ? _leverage : 1,
         );
 
         if (mounted) {
