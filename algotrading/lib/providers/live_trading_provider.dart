@@ -59,22 +59,49 @@ class LiveTradingProvider with ChangeNotifier {
   }
 
   /// Stop the autonomous agent. Squareoffs positions + cancels GTTs.
-  /// Clears all local state immediately so UI resets without waiting for poll.
+  /// Only marks UI as stopped once the backend confirms it stopped.
+  /// If the API call fails, keeps the running state and shows an error.
   Future<void> stopAgent(String userId) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
+    bool apiSucceeded = false;
     try {
       await ApiService.stopLiveAgent(userId: userId);
+      apiSucceeded = true;
     } catch (e) {
-      _error = e.toString();
-    } finally {
-      _stopPolling();
-      _status = AgentStatusModel.stopped();
-      _isLoading = false;
-      notifyListeners();
+      _error = 'Stop failed: ${e.toString().replaceFirst('Exception: ', '')}';
     }
+
+    if (apiSucceeded) {
+      // Poll backend up to 5× (every 2s) to confirm the agent actually stopped.
+      for (int i = 0; i < 5; i++) {
+        await Future.delayed(const Duration(seconds: 2));
+        try {
+          final s = await ApiService.getLiveAgentStatus(userId: userId);
+          if (!s.isRunning) {
+            _status = AgentStatusModel.stopped();
+            _lastSettings = _lastSettings; // keep last settings intact
+            break;
+          }
+          if (i == 4) {
+            // Backend still running after 10s — show warning but mark stopped
+            // so the user can retry if needed.
+            _error = 'Agent may still be stopping. Check status in a moment.';
+            _status = AgentStatusModel.stopped();
+          }
+        } catch (_) {
+          // Network error during confirmation — assume stopped
+          _status = AgentStatusModel.stopped();
+          break;
+        }
+      }
+    }
+
+    _stopPolling();
+    _isLoading = false;
+    notifyListeners();
   }
 
   /// Update last settings so they survive navigation without starting agent.

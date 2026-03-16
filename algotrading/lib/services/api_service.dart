@@ -271,7 +271,8 @@ class ApiService {
   static Future<void> stopLiveAgent({required String userId}) async {
     final uri = Uri.parse(ApiConfig.liveAgentStopUrl)
         .replace(queryParameters: {'user_id': userId});
-    final response = await http.post(uri).timeout(const Duration(seconds: 15));
+    // 60s: squaring off multiple positions + cancelling GTTs can take time
+    final response = await http.post(uri).timeout(const Duration(seconds: 60));
     if (response.statusCode != 200) {
       throw Exception('Failed to stop agent: ${response.body}');
     }

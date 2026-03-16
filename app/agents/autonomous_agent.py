@@ -299,6 +299,7 @@ class UserTradingAgent:
 
     async def start(self):
         if self.is_running:
+            logger.warning(f"[Agent:{self.user_id}] start() called but agent is already running")
             return
         self.is_running = True
         self.status = "SCANNING"
@@ -308,7 +309,12 @@ class UserTradingAgent:
         self.daily_loss_limit_hit = False
         self._scanning_done = False  # fresh start — enable scanning
 
-        self._log("STARTED", "Autonomous trading agent started")
+        self._log(
+            "STARTED",
+            f"Agent started — max_positions={self.max_positions}, "
+            f"risk={self.risk_percent}%, max_trades={self.max_trades_per_day}, "
+            f"leverage={self.leverage}x, scan_interval={self.scan_interval_minutes}min",
+        )
 
         # Fetch starting capital
         try:
@@ -316,15 +322,21 @@ class UserTradingAgent:
             loop = asyncio.get_running_loop()
             margins = await loop.run_in_executor(None, kite.margins)
             equity = margins.get("equity", {})
-            balance = float(
+            available = float(
                 equity.get("available", {}).get("live_balance")
                 or equity.get("net", 0)
             )
             self.starting_capital = (
-                self.capital_to_use if self.capital_to_use > 0 else balance
+                min(self.capital_to_use, available) if self.capital_to_use > 0 else available
             )
-            self._log("CAPITAL", f"Starting capital: ₹{self.starting_capital:,.2f}")
+            self._log(
+                "CAPITAL",
+                f"Zerodha balance: ₹{available:,.2f} | "
+                f"Using: ₹{self.starting_capital:,.2f}"
+                + (f" (capped from ₹{self.capital_to_use:,.2f} setting)" if self.capital_to_use > 0 else ""),
+            )
         except Exception as e:
+            logger.exception(f"[Agent:{self.user_id}] Capital fetch failed")
             self._log("WARN", f"Could not fetch starting capital: {e}")
 
         # Start KiteTicker for real-time price streaming
@@ -335,9 +347,11 @@ class UserTradingAgent:
             self._ticker_manager.start()
             self._log("TICKER", "KiteTicker WebSocket started — real-time prices active")
         except Exception as e:
+            logger.exception(f"[Agent:{self.user_id}] KiteTicker start failed")
             self._log("WARN", f"KiteTicker failed to start (will fall back to API polling): {e}")
             self._ticker_manager = None
 
+        logger.info(f"[Agent:{self.user_id}] Launching scan_task and monitor_task")
         self._scan_task = asyncio.create_task(self._scan_loop())
         self._monitor_task = asyncio.create_task(self._monitor_loop())
 
@@ -349,34 +363,60 @@ class UserTradingAgent:
         - Then halt scan/monitor loops and KiteTicker
         """
         if not self.is_running:
+            logger.warning(f"[Agent:{self.user_id}] stop() called but agent is not running")
             return
 
+        logger.info(f"[Agent:{self.user_id}] Stop requested — open positions: {list(self.positions.keys())}")
         self.is_running = False  # halt loops at next iteration
 
         if self.positions:
+            pos_summary = ", ".join(
+                f"{sym}({p.action} ₹{p.current_pnl:+.2f})" for sym, p in self.positions.items()
+            )
             if _is_market_open():
                 self.status = "SQUARING_OFF"
-                self._log("SQUAREOFF", "Agent stopping — squaring off all open positions and cancelling GTTs")
+                self._log(
+                    "SQUAREOFF",
+                    f"Squaring off {len(self.positions)} position(s): {pos_summary}",
+                )
                 await self._force_squareoff()
             else:
-                self._log("GTT_CANCEL", "Agent stopping — market closed, cancelling all active GTTs")
+                self._log(
+                    "GTT_CANCEL",
+                    f"Market closed — cancelling GTTs for {len(self.positions)} position(s): {pos_summary}",
+                )
                 await self._cancel_all_gtts()
+        else:
+            logger.info(f"[Agent:{self.user_id}] No open positions to close")
 
         self.status = "STOPPED"
 
-        for task in [self._scan_task, self._monitor_task]:
-            if task:
-                task.cancel()
+        # Cancel tasks and await them so they fully terminate before we return.
+        tasks_to_cancel = [
+            t for t in [self._scan_task, self._monitor_task]
+            if t and not t.done()
+        ]
+        logger.info(f"[Agent:{self.user_id}] Cancelling {len(tasks_to_cancel)} background task(s)")
+        for t in tasks_to_cancel:
+            t.cancel()
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+        logger.info(f"[Agent:{self.user_id}] All tasks cancelled")
 
         # Stop KiteTicker
         if self._ticker_manager:
             try:
                 self._ticker_manager.stop()
+                logger.info(f"[Agent:{self.user_id}] KiteTicker stopped")
             except Exception:
                 pass
             self._ticker_manager = None
 
-        self._log("STOPPED", "Autonomous trading agent stopped")
+        self._log(
+            "STOPPED",
+            f"Agent stopped — total P&L today: ₹{self.daily_pnl:+.2f}, "
+            f"trades: {self.trade_count_today}",
+        )
 
     # ── Scan loop ─────────────────────────────────────────────────────────────
 
@@ -389,7 +429,7 @@ class UserTradingAgent:
         while self.is_running:
             try:
                 if not _is_market_open():
-                    self._log("WAIT", "Market closed — sleeping")
+                    self._log("WAIT", "Market closed — waiting for market open (60s sleep)")
                     await asyncio.sleep(60)
                     continue
 
@@ -399,20 +439,26 @@ class UserTradingAgent:
                     continue
 
                 if self.daily_loss_limit_hit:
-                    self._log("PAUSED", "Daily loss limit hit — no new trades today")
+                    self._log("PAUSED", "Daily loss limit hit — no new scan until tomorrow")
                     self._scanning_done = True
                     await asyncio.sleep(300)
                     continue
 
                 mins_left = _minutes_until_squareoff()
                 if mins_left <= 20:
-                    self._log("SCAN_SKIP", f"Only {mins_left} min until squareoff — skipping new entries")
+                    self._log(
+                        "SCAN_SKIP",
+                        f"Only {mins_left} min until 3:10 PM squareoff — will not open new positions",
+                    )
                     self._scanning_done = True
                     await asyncio.sleep(60)
                     continue
 
                 if self.trade_count_today >= self.max_trades_per_day:
-                    self._log("SCAN_SKIP", f"Max trades/day ({self.max_trades_per_day}) reached — done for today")
+                    self._log(
+                        "SCAN_SKIP",
+                        f"Max trades/day ({self.max_trades_per_day}) reached — no more entries today",
+                    )
                     self._scanning_done = True
                     await asyncio.sleep(300)
                     continue
@@ -420,13 +466,17 @@ class UserTradingAgent:
                 await self._run_scan()
 
             except asyncio.CancelledError:
+                logger.info(f"[Agent:{self.user_id}] Scan loop cancelled")
                 break
             except Exception as e:
+                logger.exception(f"[Agent:{self.user_id}] Scan loop unhandled error")
                 self._log("ERROR", f"Scan loop error: {e}")
                 await asyncio.sleep(60)
 
             if not self._scanning_done:
-                await asyncio.sleep(self.scan_interval_minutes * 60)
+                next_scan = self.scan_interval_minutes
+                self._log("WAIT", f"Next scan in {next_scan} min — sleeping")
+                await asyncio.sleep(next_scan * 60)
 
     async def _run_scan(self):
         """
@@ -435,18 +485,25 @@ class UserTradingAgent:
         to True once at least one position is open, preventing further scans.
         """
         self.status = "SCANNING"
-        self._log("SCAN_START", f"Market scan running ({len(self.positions)} open, {self.trade_count_today} trades today)")
+        self._log(
+            "SCAN_START",
+            f"Market scan started — open={len(self.positions)}/{self.max_positions}, "
+            f"trades_today={self.trade_count_today}/{self.max_trades_per_day}, "
+            f"mins_to_squareoff={_minutes_until_squareoff()}",
+        )
         self.last_scan_at = _ist_now().isoformat()
 
         try:
+            logger.info(f"[Agent:{self.user_id}] Calling screen_and_enrich_intraday(limit=20)")
             candidates = await self._analysis_svc.screen_and_enrich_intraday(
                 limit=20,
                 user_api_key=self.api_key,
                 user_access_token=self.access_token,
             )
+            logger.info(f"[Agent:{self.user_id}] Screener returned {len(candidates) if candidates else 0} candidates")
 
             if not candidates:
-                self._log("SCAN_EMPTY", "Screener returned no candidates")
+                self._log("SCAN_EMPTY", "Screener returned no candidates this cycle")
                 return
 
             # Skip stocks already in an open position
@@ -454,7 +511,10 @@ class UserTradingAgent:
             fresh = [c for c in candidates if c["symbol"] not in open_symbols]
 
             if not fresh:
-                self._log("SCAN_SKIP", "All top candidates already in open positions")
+                self._log(
+                    "SCAN_SKIP",
+                    f"All {len(candidates)} candidate(s) already in open positions: {list(open_symbols)}",
+                )
                 return
 
             # Score each candidate
@@ -464,13 +524,18 @@ class UserTradingAgent:
                 if not indicators:
                     continue
                 sig = strategy_engine.generate_intraday_signal(indicators)
+                logger.debug(
+                    f"[Agent:{self.user_id}] {c['symbol']}: signal={sig['signal']} "
+                    f"strength={sig['strength']} score={sig.get('score', 0)}"
+                )
                 if sig["strength"] >= 2 and sig["signal"] != "NEUTRAL":
                     qualified.append({**c, "sig": sig})
 
             if not qualified:
                 self._log(
                     "SCAN_NONE",
-                    f"Scanned {len(fresh)} stocks — no signal with strength ≥ 2",
+                    f"Screened {len(fresh)} stocks — none reached signal strength ≥ 2 "
+                    f"(best candidates had strength < 2)",
                 )
                 return
 
@@ -479,9 +544,14 @@ class UserTradingAgent:
             slots_available = self.max_positions - len(self.positions)
             to_trade = qualified[:slots_available]
 
+            top_summary = " | ".join(
+                f"{x['symbol']}({x['sig']['signal']} str={x['sig']['strength']})"
+                for x in qualified[:5]
+            )
             self._log(
                 "SCAN_RESULT",
-                f"Found {len(qualified)} qualifying signals — entering {len(to_trade)} position(s)",
+                f"Found {len(qualified)} qualifying signal(s), entering {len(to_trade)} "
+                f"(slots={slots_available}). Top: {top_summary}",
             )
 
             # Get available capital once for this scan cycle
@@ -499,30 +569,30 @@ class UserTradingAgent:
                     if self.capital_to_use > 0
                     else available
                 )
-            except Exception:
+                logger.info(
+                    f"[Agent:{self.user_id}] Capital check — available: ₹{available:,.2f}, "
+                    f"using: ₹{capital:,.2f}, effective (×{self.leverage}): ₹{capital * self.leverage:,.2f}"
+                )
+            except Exception as e:
+                logger.warning(f"[Agent:{self.user_id}] Capital fetch failed, using starting_capital: {e}")
                 capital = self.starting_capital
 
             if capital < 1000:
-                self._log("SKIP", f"Insufficient capital (₹{capital:.0f}) — skipping all entries")
+                self._log("SKIP", f"Insufficient capital ₹{capital:.0f} (min ₹1,000) — skipping all entries")
                 return
 
             # Execute each qualifying stock
             for best in to_trade:
                 if not self.is_running:
+                    logger.info(f"[Agent:{self.user_id}] Agent stopped mid-scan — aborting remaining entries")
                     break
                 if self.trade_count_today >= self.max_trades_per_day:
-                    self._log("SCAN_SKIP", f"Max trades/day ({self.max_trades_per_day}) reached")
+                    self._log("SCAN_SKIP", f"Max trades/day ({self.max_trades_per_day}) reached during entry loop")
                     break
 
                 symbol = best["symbol"]
                 sig = best["sig"]
                 ltp = float(best["last_price"])
-
-                self._log(
-                    "SIGNAL",
-                    f"{symbol}: {sig['signal']} strength={sig['strength']} score={sig['score']} @ ₹{ltp:.2f}",
-                    symbol=symbol,
-                )
 
                 # Position sizing: ATR-based SL/target, risk% of capital
                 indicators = best.get("indicators", {})
@@ -535,12 +605,14 @@ class UserTradingAgent:
                     if not (stop_loss < ltp < target):
                         stop_loss = round(ltp * 0.985, 2)
                         target = round(ltp * 1.03, 2)
+                        logger.debug(f"[Agent:{self.user_id}] {symbol}: ATR SL/target invalid, using % fallback")
                 else:  # SELL (short)
                     stop_loss = round(ltp + (1.5 * atr), 2)
                     target = round(ltp - (3.0 * atr), 2)
                     if not (target < ltp < stop_loss):
                         stop_loss = round(ltp * 1.015, 2)
                         target = round(ltp * 0.97, 2)
+                        logger.debug(f"[Agent:{self.user_id}] {symbol}: ATR SL/target invalid, using % fallback")
 
                 risk_per_share = abs(ltp - stop_loss)
                 effective_capital = capital * self.leverage
@@ -552,13 +624,20 @@ class UserTradingAgent:
                 quantity = min(quantity, max(1, max_by_capital))
 
                 self._log(
-                    "ENTRY",
-                    f"{symbol}: {action} {quantity} shares @ ₹{ltp:.2f} | SL: ₹{stop_loss:.2f} | Target: ₹{target:.2f}",
+                    "SIGNAL",
+                    f"{symbol}: {action} | strength={sig['strength']} score={sig.get('score',0)} | "
+                    f"LTP=₹{ltp:.2f} ATR=₹{atr:.2f} | "
+                    f"SL=₹{stop_loss:.2f} TGT=₹{target:.2f} QTY={quantity} | "
+                    f"Risk=₹{max_risk:.0f} RiskPerShare=₹{risk_per_share:.2f}",
                     symbol=symbol,
                 )
 
                 # Execute trade using existing execution_agent
                 analysis_id = str(uuid.uuid4())
+                logger.info(
+                    f"[Agent:{self.user_id}] Placing order — {symbol} {action} "
+                    f"qty={quantity} entry=₹{ltp:.2f} sl=₹{stop_loss:.2f} tgt=₹{target:.2f}"
+                )
                 try:
                     result = await self._exec_agent.execute_trade_with_gtt(
                         stock_symbol=symbol,
@@ -573,6 +652,7 @@ class UserTradingAgent:
                         action=action,
                     )
                 except Exception as e:
+                    logger.exception(f"[Agent:{self.user_id}] {symbol}: execute_trade_with_gtt raised")
                     self._log("TRADE_FAIL", f"{symbol}: Execution error — {e}", symbol=symbol)
                     continue
 
@@ -592,7 +672,9 @@ class UserTradingAgent:
                     self.trade_count_today += 1
                     self._log(
                         "TRADE_OPEN",
-                        f"{symbol}: Position opened — GTT ID: {result.get('gtt_order_id')}",
+                        f"{symbol}: ✓ Order placed — entry_order={result.get('entry_order_id')} "
+                        f"GTT={result.get('gtt_order_id')} | "
+                        f"SL=₹{stop_loss:.2f} TGT=₹{target:.2f} QTY={quantity}",
                         symbol=symbol,
                     )
 
@@ -601,20 +683,27 @@ class UserTradingAgent:
                 else:
                     self._log(
                         "TRADE_FAIL",
-                        f"{symbol}: Trade failed — {result.get('error', result['status'])}",
+                        f"{symbol}: ✗ Trade failed — {result.get('error', result['status'])}",
                         symbol=symbol,
                     )
 
         except Exception as e:
+            logger.exception(f"[Agent:{self.user_id}] _run_scan unhandled error")
             self._log("ERROR", f"Scan error: {e}")
         finally:
             # Switch to monitoring mode once we have open positions
             if self.positions:
                 self._scanning_done = True
+                pos_list = ", ".join(
+                    f"{sym}({p.action} qty={p.quantity} @₹{p.entry_price:.2f})"
+                    for sym, p in self.positions.items()
+                )
                 self._log(
                     "SCAN_DONE",
-                    f"Stock selection complete — {len(self.positions)} position(s) open. Switching to monitoring mode.",
+                    f"Scanning complete — {len(self.positions)} position(s): {pos_list}. Now monitoring only.",
                 )
+            else:
+                self._log("SCAN_DONE", "Scan complete — no positions entered this cycle")
             self.status = "MONITORING"
 
     async def _subscribe_ticker(self, symbol: str):
@@ -658,8 +747,13 @@ class UserTradingAgent:
                 if not self.positions or not _is_market_open():
                     continue
 
-                if _minutes_until_squareoff() <= 2:
-                    self._log("SQUAREOFF", "3:10 PM squareoff triggered — closing all MIS positions")
+                mins = _minutes_until_squareoff()
+                if mins <= 2:
+                    pos_list = ", ".join(self.positions.keys())
+                    self._log(
+                        "SQUAREOFF",
+                        f"3:10 PM auto-squareoff — closing {len(self.positions)} position(s): {pos_list}",
+                    )
                     await self._force_squareoff()
                     continue
 
@@ -668,8 +762,10 @@ class UserTradingAgent:
                 await self._monitor_positions(check_gtts=check_gtts)
 
             except asyncio.CancelledError:
+                logger.info(f"[Agent:{self.user_id}] Monitor loop cancelled")
                 break
             except Exception as e:
+                logger.exception(f"[Agent:{self.user_id}] Monitor loop unhandled error")
                 self._log("ERROR", f"Monitor loop error: {e}")
 
     async def _monitor_positions(self, check_gtts: bool = False):
@@ -696,6 +792,9 @@ class UserTradingAgent:
 
             # Fetch cache misses via API
             if cache_miss_symbols:
+                logger.debug(
+                    f"[Agent:{self.user_id}] Ticker cache miss for {cache_miss_symbols} — fetching via kite.quote()"
+                )
                 try:
                     kite = self._get_kite()
                     loop = asyncio.get_running_loop()
@@ -707,7 +806,12 @@ class UserTradingAgent:
                         ltp = quote.get("last_price")
                         if ltp is not None:
                             prices[symbol] = float(ltp)
+                    logger.debug(
+                        f"[Agent:{self.user_id}] API price fetch OK — "
+                        + ", ".join(f"{s}=₹{prices.get(s, 'N/A')}" for s in cache_miss_symbols)
+                    )
                 except Exception as e:
+                    logger.warning(f"[Agent:{self.user_id}] API price fallback failed: {e}")
                     self._log("WARN", f"API price fallback failed: {e}")
 
             # Step 2: Fetch active GTT IDs (only every 30s to limit API calls)
@@ -722,8 +826,11 @@ class UserTradingAgent:
                         for g in gtts
                         if g.get("status", "").lower() in ("active",)
                     }
-                except Exception:
-                    pass
+                    logger.info(
+                        f"[Agent:{self.user_id}] GTT poll — {len(active_gtt_ids)} active GTT(s): {active_gtt_ids}"
+                    )
+                except Exception as e:
+                    logger.warning(f"[Agent:{self.user_id}] GTT fetch failed: {e}")
 
             filled_symbols = []
 
@@ -743,7 +850,10 @@ class UserTradingAgent:
                     progress = (move_done / move_total * 100) if move_total > 0 else 0
                     self._log(
                         "POS_UPDATE",
-                        f"{symbol}: LTP ₹{ltp:.2f} | P&L ₹{pos.current_pnl:+.2f} | {progress:.0f}% to target",
+                        f"{symbol}: LTP=₹{ltp:.2f} entry=₹{pos.entry_price:.2f} "
+                        f"P&L=₹{pos.current_pnl:+.2f} ({progress:.0f}% to TGT) "
+                        f"SL=₹{pos.stop_loss:.2f} TGT=₹{pos.target:.2f}"
+                        + (f" [trail×{pos.trail_count}]" if pos.trail_activated else ""),
                         symbol=symbol,
                     )
 
@@ -837,10 +947,16 @@ class UserTradingAgent:
                 if check_gtts and pos.gtt_id and str(pos.gtt_id) not in active_gtt_ids:
                     self._log(
                         "POSITION_CLOSED",
-                        f"{symbol}: GTT no longer active — position closed. P&L ≈ ₹{pos.current_pnl:+.2f}",
+                        f"{symbol}: GTT {pos.gtt_id} triggered — position closed | "
+                        f"P&L ≈ ₹{pos.current_pnl:+.2f} | "
+                        f"entry=₹{pos.entry_price:.2f} exit≈₹{ltp:.2f}",
                         symbol=symbol,
                     )
                     self.daily_pnl += pos.current_pnl
+                    logger.info(
+                        f"[Agent:{self.user_id}] {symbol} closed — "
+                        f"P&L=₹{pos.current_pnl:+.2f}, daily_pnl=₹{self.daily_pnl:+.2f}"
+                    )
                     filled_symbols.append(symbol)
                     continue
 
@@ -966,6 +1082,9 @@ class UserTradingAgent:
                 # Close position at market
                 close_txn = "SELL" if pos.action == "BUY" else "BUY"
                 qty = pos.quantity
+                logger.info(
+                    f"[Agent:{self.user_id}] Placing squareoff — {symbol} {close_txn} {qty} MIS MARKET"
+                )
                 order_id = await loop.run_in_executor(
                     None,
                     lambda: kite.place_order(
@@ -980,7 +1099,8 @@ class UserTradingAgent:
                 )
                 self._log(
                     "SQUAREOFF",
-                    f"{symbol}: Squareoff order placed ({close_txn} {qty} MIS MARKET) — ID: {order_id}",
+                    f"{symbol}: ✓ Squareoff placed — {close_txn} {qty} MIS MARKET | "
+                    f"order_id={order_id} | P&L≈₹{pos.current_pnl:+.2f}",
                     symbol=symbol,
                 )
                 self.daily_pnl += pos.current_pnl
@@ -992,7 +1112,8 @@ class UserTradingAgent:
                 self.positions.pop(symbol, None)
 
             except Exception as e:
-                self._log("ERROR", f"{symbol}: Squareoff failed: {e}", symbol=symbol)
+                logger.exception(f"[Agent:{self.user_id}] {symbol}: Squareoff raised exception")
+                self._log("ERROR", f"{symbol}: Squareoff failed — {e}", symbol=symbol)
 
         self.status = "MONITORING"
 

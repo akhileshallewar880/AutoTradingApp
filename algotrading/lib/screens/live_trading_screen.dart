@@ -154,18 +154,77 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     if (auth.user == null) return;
 
     final provider = context.read<LiveTradingProvider>();
-    final hasPositions = provider.status.openPositions.isNotEmpty;
+    final positions = provider.status.openPositions;
+    final gttCount = positions.where((p) => p.gttId != null).length;
+    final hasPositions = positions.isNotEmpty;
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Stop Agent'),
-        content: Text(
-          hasPositions
-              ? 'The agent will stop and immediately square off all open positions at market price.\n\n'
-                'All active GTTs will be cancelled.\n\n'
-                'This action cannot be undone.'
-              : 'The agent will stop scanning. No open positions to close.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (hasPositions) ...[
+              Text(
+                '${positions.length} open position${positions.length > 1 ? 's' : ''} will be squared off at market price.',
+                style: const TextStyle(fontSize: 14),
+              ),
+              if (gttCount > 0) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '$gttCount active GTT${gttCount > 1 ? 's' : ''} will be cancelled.',
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ],
+              const SizedBox(height: 12),
+              // Show each position
+              ...positions.map((p) {
+                final isProfit = p.currentPnl >= 0;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: p.action == 'BUY' ? Colors.green[50] : Colors.red[50],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          p.action,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: p.action == 'BUY' ? Colors.green[700] : Colors.red[700],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(p.symbol, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      ),
+                      Text(
+                        '${isProfit ? '+' : ''}${_currency.format(p.currentPnl)}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: isProfit ? Colors.green[700] : Colors.red[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              const SizedBox(height: 12),
+              Text(
+                'This action cannot be undone.',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ] else
+              const Text('The agent will stop scanning. No open positions to close.'),
+          ],
         ),
         actions: [
           TextButton(
@@ -186,8 +245,6 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
 
     if (confirmed != true || !mounted) return;
 
-    // Provider sets isLoading=true internally — the button shows "Stopping..."
-    // automatically. Restore sliders to last used settings once stopped.
     await context.read<LiveTradingProvider>().stopAgent(auth.user!.userId);
     if (mounted) {
       _applySlidersFromSettings(
