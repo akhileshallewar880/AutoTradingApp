@@ -9,12 +9,19 @@ class LiveTradingProvider with ChangeNotifier {
   String? _error;
   Timer? _pollTimer;
 
+  /// Last settings the user started the agent with.
+  /// Persists across navigation so sliders restore correctly.
+  AgentSettingsModel _lastSettings = AgentSettingsModel.defaults();
+
   AgentStatusModel get status => _status;
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get isRunning => _status.isRunning;
+  AgentSettingsModel get lastSettings => _lastSettings;
 
   /// Start the autonomous agent on the backend.
+  /// Saves settings locally, calls API, then immediately fetches status so
+  /// the UI transitions to "running" without waiting for the first poll.
   Future<void> startAgent({
     required String userId,
     required String accessToken,
@@ -22,6 +29,7 @@ class LiveTradingProvider with ChangeNotifier {
     required AgentSettingsModel settings,
   }) async {
     _isLoading = true;
+    _lastSettings = settings; // persist before API call
     _error = null;
     notifyListeners();
 
@@ -38,7 +46,9 @@ class LiveTradingProvider with ChangeNotifier {
         capitalToUse: settings.capitalToUse,
         leverage: settings.leverage,
       );
-      // Begin polling for status updates
+
+      // Immediately confirm running state — no 10-second wait
+      await _fetchStatusSilent(userId);
       _startPolling(userId);
     } catch (e) {
       _error = e.toString();
@@ -48,8 +58,8 @@ class LiveTradingProvider with ChangeNotifier {
     }
   }
 
-  /// Stop the autonomous agent on the backend.
-  /// Squareoffs open positions + cancels GTTs, then clears all local state.
+  /// Stop the autonomous agent. Squareoffs positions + cancels GTTs.
+  /// Clears all local state immediately so UI resets without waiting for poll.
   Future<void> stopAgent(String userId) async {
     _isLoading = true;
     _error = null;
@@ -57,38 +67,74 @@ class LiveTradingProvider with ChangeNotifier {
 
     try {
       await ApiService.stopLiveAgent(userId: userId);
-      _stopPolling();
-      // Clear all state — agent memory is wiped on backend too
-      _status = AgentStatusModel.stopped();
-      _error = null;
     } catch (e) {
       _error = e.toString();
-      // Still stop polling and clear state even on error
+    } finally {
       _stopPolling();
       _status = AgentStatusModel.stopped();
-    } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  /// Fetch current agent status (called by polling or manually).
+  /// Fetch status and update UI — only notifies listeners if meaningful
+  /// fields changed to prevent unnecessary screen rebuilds on each poll.
   Future<void> fetchStatus(String userId) async {
     try {
       final data = await ApiService.getLiveAgentStatus(userId: userId);
+
+      final changed = _statusChanged(data);
       _status = data;
       _error = null;
-      // Start polling if agent is running but poll timer isn't active
+
       if (_status.isRunning && _pollTimer == null) {
         _startPolling(userId);
       } else if (!_status.isRunning) {
         _stopPolling();
       }
+
+      if (changed) notifyListeners();
     } catch (e) {
       _error = e.toString();
-    } finally {
       notifyListeners();
     }
+  }
+
+  /// Same as fetchStatus but always notifies — used after start/stop actions
+  /// where we need the UI to update regardless of diff.
+  Future<void> _fetchStatusSilent(String userId) async {
+    try {
+      final data = await ApiService.getLiveAgentStatus(userId: userId);
+      _status = data;
+      _error = null;
+    } catch (_) {}
+  }
+
+  /// Returns true if anything meaningful changed since last fetch.
+  bool _statusChanged(AgentStatusModel next) {
+    if (next.isRunning != _status.isRunning) return true;
+    if (next.status != _status.status) return true;
+    if (next.scanningDone != _status.scanningDone) return true;
+    if (next.tradeCountToday != _status.tradeCountToday) return true;
+    if (next.openPositions.length != _status.openPositions.length) return true;
+    if (next.dailyLossLimitHit != _status.dailyLossLimitHit) return true;
+    if (next.tickerConnected != _status.tickerConnected) return true;
+    if (next.recentLogs.isNotEmpty &&
+        (_status.recentLogs.isEmpty ||
+            next.recentLogs.first.timestamp != _status.recentLogs.first.timestamp)) {
+      return true;
+    }
+    // Check if any position P&L changed
+    if (next.openPositions.length == _status.openPositions.length) {
+      for (int i = 0; i < next.openPositions.length; i++) {
+        if (next.openPositions[i].currentPnl != _status.openPositions[i].currentPnl ||
+            next.openPositions[i].stopLoss != _status.openPositions[i].stopLoss ||
+            next.openPositions[i].target != _status.openPositions[i].target) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   void _startPolling(String userId) {

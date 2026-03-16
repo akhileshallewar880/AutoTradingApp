@@ -16,11 +16,10 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     with SingleTickerProviderStateMixin {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
 
-  bool _isInitializing = false; // full-screen overlay
-  bool _isStopping = false;
+  bool _isInitializing = false; // full-screen overlay during start
   late AnimationController _pulseController;
 
-  // Settings (editable before starting)
+  // Settings (editable before starting) — restored from lastSettings on init
   int _maxPositions = 2;
   double _riskPercent = 1.0;
   int _scanIntervalMinutes = 5;
@@ -47,9 +46,30 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
 
   void _loadStatus() {
     final auth = context.read<AuthProvider>();
-    if (auth.user != null) {
-      context.read<LiveTradingProvider>().fetchStatus(auth.user!.userId);
-    }
+    if (auth.user == null) return;
+
+    final provider = context.read<LiveTradingProvider>();
+
+    // Restore sliders from last used settings so they don't reset to
+    // defaults every time the user navigates away and back.
+    final settings = provider.status.isRunning
+        ? provider.status.settings
+        : provider.lastSettings;
+    _applySlidersFromSettings(settings);
+
+    provider.fetchStatus(auth.user!.userId);
+  }
+
+  void _applySlidersFromSettings(AgentSettingsModel s) {
+    setState(() {
+      _maxPositions = s.maxPositions;
+      _riskPercent = s.riskPercent;
+      _scanIntervalMinutes = s.scanIntervalMinutes;
+      _maxTradesPerDay = s.maxTradesPerDay;
+      _maxDailyLossPct = s.maxDailyLossPct;
+      _capitalToUse = s.capitalToUse;
+      _leverage = s.leverage;
+    });
   }
 
   Future<void> _startAgent() async {
@@ -150,13 +170,13 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
 
     if (confirmed != true || !mounted) return;
 
-    setState(() => _isStopping = true);
-    await Future.delayed(const Duration(milliseconds: 50)); // let Flutter paint loading state
-    if (!mounted) return;
-    try {
-      await context.read<LiveTradingProvider>().stopAgent(auth.user!.userId);
-    } finally {
-      if (mounted) setState(() => _isStopping = false);
+    // Provider sets isLoading=true internally — the button shows "Stopping..."
+    // automatically. Restore sliders to last used settings once stopped.
+    await context.read<LiveTradingProvider>().stopAgent(auth.user!.userId);
+    if (mounted) {
+      _applySlidersFromSettings(
+        context.read<LiveTradingProvider>().lastSettings,
+      );
     }
   }
 
@@ -389,7 +409,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                   ),
                 ),
                 const Spacer(),
-                _buildToggleButton(isRunning, isLoading: _isStopping),
+                _buildToggleButton(isRunning, isLoading: isLoading),
               ],
             ),
             const SizedBox(height: 16),

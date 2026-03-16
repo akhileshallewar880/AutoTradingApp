@@ -40,6 +40,7 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
         queryParameters: {
           'access_token': auth.user!.accessToken,
           'api_key': auth.user!.apiKey,
+          'user_id': auth.user!.userId,
         },
       );
       final response = await http.get(uri).timeout(const Duration(seconds: 30));
