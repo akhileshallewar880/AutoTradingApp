@@ -50,6 +50,9 @@ class AgentPositionModel {
   final String? gttId;
   final String enteredAt;
   final bool trailActivated;
+  final int trailCount;
+  final bool targetAdjusted;
+  final double originalTarget;
   final double currentPnl;
 
   const AgentPositionModel({
@@ -62,20 +65,27 @@ class AgentPositionModel {
     this.gttId,
     required this.enteredAt,
     required this.trailActivated,
+    this.trailCount = 0,
+    this.targetAdjusted = false,
+    double? originalTarget,
     required this.currentPnl,
-  });
+  }) : originalTarget = originalTarget ?? target;
 
   factory AgentPositionModel.fromJson(Map<String, dynamic> json) {
+    final target = (json['target'] as num?)?.toDouble() ?? 0.0;
     return AgentPositionModel(
       symbol: json['symbol'] as String? ?? '',
       action: json['action'] as String? ?? 'BUY',
       quantity: json['quantity'] as int? ?? 0,
       entryPrice: (json['entry_price'] as num?)?.toDouble() ?? 0.0,
       stopLoss: (json['stop_loss'] as num?)?.toDouble() ?? 0.0,
-      target: (json['target'] as num?)?.toDouble() ?? 0.0,
+      target: target,
       gttId: json['gtt_id']?.toString(),
       enteredAt: json['entered_at'] as String? ?? '',
       trailActivated: json['trail_activated'] as bool? ?? false,
+      trailCount: json['trail_count'] as int? ?? 0,
+      targetAdjusted: json['target_adjusted'] as bool? ?? false,
+      originalTarget: (json['original_target'] as num?)?.toDouble() ?? target,
       currentPnl: (json['current_pnl'] as num?)?.toDouble() ?? 0.0,
     );
   }
@@ -110,6 +120,7 @@ class AgentStatusModel {
   final String? startedAt;
   final String? lastScanAt;
   final bool tickerConnected;
+  final bool scanningDone;
   final List<AgentPositionModel> openPositions;
   final int tradeCountToday;
   final double dailyPnl;
@@ -123,6 +134,7 @@ class AgentStatusModel {
     this.startedAt,
     this.lastScanAt,
     this.tickerConnected = false,
+    this.scanningDone = false,
     required this.openPositions,
     required this.tradeCountToday,
     required this.dailyPnl,
@@ -138,6 +150,7 @@ class AgentStatusModel {
       startedAt: json['started_at'] as String?,
       lastScanAt: json['last_scan_at'] as String?,
       tickerConnected: json['ticker_connected'] as bool? ?? false,
+      scanningDone: json['scanning_done'] as bool? ?? false,
       openPositions: (json['open_positions'] as List<dynamic>?)
               ?.map((e) => AgentPositionModel.fromJson(e as Map<String, dynamic>))
               .toList() ??
@@ -159,6 +172,7 @@ class AgentStatusModel {
         isRunning: false,
         status: 'STOPPED',
         tickerConnected: false,
+        scanningDone: false,
         openPositions: const [],
         tradeCountToday: 0,
         dailyPnl: 0.0,

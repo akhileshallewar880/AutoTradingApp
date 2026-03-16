@@ -80,17 +80,24 @@ Pre-Screened Market Data (sorted by signal strength / composite score):
 {hold_instruction}
 """
 
+        # o-series reasoning models (o1, o3, o4) don't support custom temperature
+        # and require max_completion_tokens instead of max_tokens.
+        is_reasoning_model = self.model.startswith("o")
+
+        call_kwargs = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "response_format": {"type": "json_object"},
+            "max_completion_tokens": 4000,
+        }
+        if not is_reasoning_model:
+            call_kwargs["temperature"] = 0.2
+
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.2,
-                max_tokens=4000,
-            )
+            response = await self.client.chat.completions.create(**call_kwargs)
 
             content = response.choices[0].message.content
             logger.info("LLM analysis complete")

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # OpenAI Config
     OPENAI_API_KEY: str
-    OPENAI_MODEL: str = "gpt-4o"
+    OPENAI_MODEL: str = "gpt-5.4"
 
     # Trading Config
     DEFAULT_TIMEFRAME: str = "day"

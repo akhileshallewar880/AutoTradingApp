@@ -48,7 +48,12 @@ async def start_agent(req: StartAgentRequest):
 
 @router.post("/live-trading/stop")
 async def stop_agent(user_id: str = Query(...)):
-    """Stop the autonomous trading agent for a user. Does NOT close open positions."""
+    """
+    Stop the autonomous trading agent for a user.
+    If market is open: squareoffs all open positions (MARKET order) and cancels GTTs.
+    If market is closed: cancels GTTs only.
+    Agent state is cleared from memory after stop.
+    """
     try:
         result = await autonomous_agent_manager.stop_agent(user_id)
         return result

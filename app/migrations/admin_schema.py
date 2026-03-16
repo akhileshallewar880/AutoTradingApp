@@ -16,7 +16,7 @@ def apply(engine):
                 id INT IDENTITY(1,1) PRIMARY KEY,
                 user_id INT NULL REFERENCES vantrade_users(user_id),
                 analysis_id VARCHAR(50) NULL,
-                model VARCHAR(50) NOT NULL DEFAULT 'gpt-4o',
+                model VARCHAR(50) NOT NULL DEFAULT 'gpt-5.4',
                 prompt_tokens INT NOT NULL DEFAULT 0,
                 completion_tokens INT NOT NULL DEFAULT 0,
                 total_tokens INT NOT NULL DEFAULT 0,

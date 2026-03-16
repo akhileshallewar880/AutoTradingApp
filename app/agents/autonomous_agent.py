@@ -1,21 +1,17 @@
 """
 Autonomous Live Trading Agent
 ------------------------------
-Runs an intraday trading loop for a single user:
-  - Scan loop  : every N minutes during market hours → fetch signals → enter if strength ≥ 2
-  - Monitor    : every 5 seconds → trail SL, update P&L (using KiteTicker cache)
-                 GTT fill detection every 30 seconds (API call)
-  - Risk guards: max positions, max trades/day, daily loss limit, no entry inside last 20 min
+Phase 1 - SCANNING:  Scan market once → find all qualifying stocks → execute all positions
+Phase 2 - MONITORING: Stop scanning. Monitor open positions only.
+  - Continuous trailing stop-loss adjustment (every 30 s)
+  - GTT fill detection (every 30 s)
+  - P&L updates (every 5 s)
+  - Auto squareoff at 3:10 PM IST
 
-Uses existing engines:
-  - analysis_service.screen_and_enrich_intraday()  for live quote + candle pipeline
-  - strategy_engine.generate_intraday_signal()     for BUY/SELL/NEUTRAL vote
-  - execution_agent.execute_trade_with_gtt()       for entry order + GTT placement
-
-KiteTicker WebSocket:
-  - Streams real-time tick data for open positions (MODE_QUOTE)
-  - Replaces 2-minute API polling with 5-second cache reads
-  - No additional Zerodha subscription needed — KiteTicker is included in the standard plan
+Stop behaviour:
+  - If market is open → squareoff all open positions (MARKET order) + cancel GTTs
+  - If market is closed → cancel GTTs only
+  - Agent removed from memory after stop → clean slate on next start
 """
 import asyncio
 import threading
@@ -178,6 +174,7 @@ class PositionState:
         entry_order_id: str,
         analysis_id: str,
         instrument_token: Optional[int] = None,
+        atr: float = 0.0,
     ):
         self.symbol = symbol
         self.action = action
@@ -189,6 +186,12 @@ class PositionState:
         self.entry_order_id = entry_order_id
         self.analysis_id = analysis_id
         self.instrument_token = instrument_token
+        self.atr = atr
+        # Watermark: tracks highest (BUY) or lowest (SELL) price seen — for trailing SL
+        self.watermark = entry_price
+        self.trail_count = 0
+        self.original_target = target     # preserved for reference
+        self.target_adjusted = False      # True once target is revised down on reversal
         self.entered_at = _ist_now().isoformat()
         self.trail_activated = False
         self.current_pnl = 0.0
@@ -201,10 +204,13 @@ class PositionState:
             "entry_price": self.entry_price,
             "stop_loss": self.stop_loss,
             "target": self.target,
+            "original_target": self.original_target,
             "gtt_id": self.gtt_id,
             "entry_order_id": self.entry_order_id,
             "entered_at": self.entered_at,
             "trail_activated": self.trail_activated,
+            "trail_count": self.trail_count,
+            "target_adjusted": self.target_adjusted,
             "current_pnl": round(self.current_pnl, 2),
         }
 
@@ -265,6 +271,9 @@ class UserTradingAgent:
         self.last_scan_at: Optional[str] = None
         self.started_at: Optional[str] = None
 
+        # Phase flag: True once we've entered positions — no more scanning
+        self._scanning_done = False
+
         self._scan_task: Optional[asyncio.Task] = None
         self._monitor_task: Optional[asyncio.Task] = None
         self._analysis_svc = AnalysisService()
@@ -297,6 +306,8 @@ class UserTradingAgent:
         self.trade_count_today = 0
         self.daily_pnl = 0.0
         self.daily_loss_limit_hit = False
+        self._scanning_done = False  # fresh start — enable scanning
+
         self._log("STARTED", "Autonomous trading agent started")
 
         # Fetch starting capital
@@ -331,8 +342,28 @@ class UserTradingAgent:
         self._monitor_task = asyncio.create_task(self._monitor_loop())
 
     async def stop(self):
-        self.is_running = False
+        """
+        Stop the agent gracefully:
+        - If market is open: squareoff all positions (MARKET) + cancel GTTs
+        - If market is closed: cancel GTTs only
+        - Then halt scan/monitor loops and KiteTicker
+        """
+        if not self.is_running:
+            return
+
+        self.is_running = False  # halt loops at next iteration
+
+        if self.positions:
+            if _is_market_open():
+                self.status = "SQUARING_OFF"
+                self._log("SQUAREOFF", "Agent stopping — squaring off all open positions and cancelling GTTs")
+                await self._force_squareoff()
+            else:
+                self._log("GTT_CANCEL", "Agent stopping — market closed, cancelling all active GTTs")
+                await self._cancel_all_gtts()
+
         self.status = "STOPPED"
+
         for task in [self._scan_task, self._monitor_task]:
             if task:
                 task.cancel()
@@ -350,6 +381,11 @@ class UserTradingAgent:
     # ── Scan loop ─────────────────────────────────────────────────────────────
 
     async def _scan_loop(self):
+        """
+        Scans market at configured interval until stocks are selected and entered.
+        Once positions are open (_scanning_done = True), this loop becomes a no-op
+        and the agent switches to pure monitoring mode.
+        """
         while self.is_running:
             try:
                 if not _is_market_open():
@@ -357,24 +393,27 @@ class UserTradingAgent:
                     await asyncio.sleep(60)
                     continue
 
+                # Phase 2: scanning complete — only monitoring
+                if self._scanning_done:
+                    await asyncio.sleep(60)
+                    continue
+
                 if self.daily_loss_limit_hit:
                     self._log("PAUSED", "Daily loss limit hit — no new trades today")
+                    self._scanning_done = True
                     await asyncio.sleep(300)
                     continue
 
                 mins_left = _minutes_until_squareoff()
                 if mins_left <= 20:
                     self._log("SCAN_SKIP", f"Only {mins_left} min until squareoff — skipping new entries")
+                    self._scanning_done = True
                     await asyncio.sleep(60)
-                    continue
-
-                if len(self.positions) >= self.max_positions:
-                    self._log("SCAN_SKIP", f"Max positions ({self.max_positions}) held — waiting")
-                    await asyncio.sleep(self.scan_interval_minutes * 60)
                     continue
 
                 if self.trade_count_today >= self.max_trades_per_day:
                     self._log("SCAN_SKIP", f"Max trades/day ({self.max_trades_per_day}) reached — done for today")
+                    self._scanning_done = True
                     await asyncio.sleep(300)
                     continue
 
@@ -386,24 +425,28 @@ class UserTradingAgent:
                 self._log("ERROR", f"Scan loop error: {e}")
                 await asyncio.sleep(60)
 
-            await asyncio.sleep(self.scan_interval_minutes * 60)
+            if not self._scanning_done:
+                await asyncio.sleep(self.scan_interval_minutes * 60)
 
     async def _run_scan(self):
-        """Fetch live signals → pick best → execute if strength ≥ 2."""
+        """
+        Scan market → score all signals → execute top-N positions in one pass.
+        After this call completes (regardless of result), _scanning_done is set
+        to True once at least one position is open, preventing further scans.
+        """
         self.status = "SCANNING"
         self._log("SCAN_START", f"Market scan running ({len(self.positions)} open, {self.trade_count_today} trades today)")
         self.last_scan_at = _ist_now().isoformat()
 
         try:
             candidates = await self._analysis_svc.screen_and_enrich_intraday(
-                limit=10,
+                limit=20,
                 user_api_key=self.api_key,
                 user_access_token=self.access_token,
             )
 
             if not candidates:
                 self._log("SCAN_EMPTY", "Screener returned no candidates")
-                self.status = "MONITORING"
                 return
 
             # Skip stocks already in an open position
@@ -412,7 +455,6 @@ class UserTradingAgent:
 
             if not fresh:
                 self._log("SCAN_SKIP", "All top candidates already in open positions")
-                self.status = "MONITORING"
                 return
 
             # Score each candidate
@@ -430,23 +472,19 @@ class UserTradingAgent:
                     "SCAN_NONE",
                     f"Scanned {len(fresh)} stocks — no signal with strength ≥ 2",
                 )
-                self.status = "MONITORING"
                 return
 
-            # Pick best by score
+            # Sort best first and take up to available position slots
             qualified.sort(key=lambda x: x["sig"]["score"], reverse=True)
-            best = qualified[0]
-            symbol = best["symbol"]
-            sig = best["sig"]
-            ltp = float(best["last_price"])
+            slots_available = self.max_positions - len(self.positions)
+            to_trade = qualified[:slots_available]
 
             self._log(
-                "SIGNAL",
-                f"{symbol}: {sig['signal']} strength={sig['strength']} score={sig['score']} @ ₹{ltp:.2f}",
-                symbol=symbol,
+                "SCAN_RESULT",
+                f"Found {len(qualified)} qualifying signals — entering {len(to_trade)} position(s)",
             )
 
-            # Get available capital
+            # Get available capital once for this scan cycle
             try:
                 kite = self._get_kite()
                 loop = asyncio.get_event_loop()
@@ -465,90 +503,118 @@ class UserTradingAgent:
                 capital = self.starting_capital
 
             if capital < 1000:
-                self._log("SKIP", f"{symbol}: insufficient capital (₹{capital:.0f})")
-                self.status = "MONITORING"
+                self._log("SKIP", f"Insufficient capital (₹{capital:.0f}) — skipping all entries")
                 return
 
-            # Position sizing: ATR-based SL/target, risk% of capital
-            indicators = best.get("indicators", {})
-            atr = float(indicators.get("atr_14", ltp * 0.01) or ltp * 0.01)
-            action = sig["signal"]  # BUY or SELL
+            # Execute each qualifying stock
+            for best in to_trade:
+                if not self.is_running:
+                    break
+                if self.trade_count_today >= self.max_trades_per_day:
+                    self._log("SCAN_SKIP", f"Max trades/day ({self.max_trades_per_day}) reached")
+                    break
 
-            if action == "BUY":
-                stop_loss = round(ltp - (1.5 * atr), 2)
-                target = round(ltp + (3.0 * atr), 2)
-                if not (stop_loss < ltp < target):
-                    stop_loss = round(ltp * 0.985, 2)
-                    target = round(ltp * 1.03, 2)
-            else:  # SELL (short)
-                stop_loss = round(ltp + (1.5 * atr), 2)
-                target = round(ltp - (3.0 * atr), 2)
-                if not (target < ltp < stop_loss):
-                    stop_loss = round(ltp * 1.015, 2)
-                    target = round(ltp * 0.97, 2)
+                symbol = best["symbol"]
+                sig = best["sig"]
+                ltp = float(best["last_price"])
 
-            risk_per_share = abs(ltp - stop_loss)
-            effective_capital = capital * self.leverage
-            max_risk = effective_capital * (self.risk_percent / 100)
-            quantity = max(1, int(max_risk / risk_per_share)) if risk_per_share > 0 else 1
-
-            # Cap: no more than 10% of capital per trade
-            max_by_capital = int((capital * 0.10) / ltp) if ltp > 0 else 1
-            quantity = min(quantity, max(1, max_by_capital))
-
-            self._log(
-                "ENTRY",
-                f"{symbol}: {action} {quantity} shares @ ₹{ltp:.2f} | SL: ₹{stop_loss:.2f} | Target: ₹{target:.2f}",
-                symbol=symbol,
-            )
-
-            # Execute trade using existing execution_agent
-            analysis_id = str(uuid.uuid4())
-            result = await self._exec_agent.execute_trade_with_gtt(
-                stock_symbol=symbol,
-                quantity=quantity,
-                entry_price=ltp,
-                stop_loss=stop_loss,
-                target=target,
-                analysis_id=analysis_id,
-                access_token=self.access_token,
-                api_key=self.api_key,
-                hold_duration_days=0,
-                action=action,
-            )
-
-            if result["status"] == "COMPLETED":
-                self.positions[symbol] = PositionState(
-                    symbol=symbol,
-                    action=action,
-                    quantity=quantity,
-                    entry_price=ltp,
-                    stop_loss=stop_loss,
-                    target=target,
-                    gtt_id=result.get("gtt_order_id"),
-                    entry_order_id=result.get("entry_order_id", ""),
-                    analysis_id=analysis_id,
-                )
-                self.trade_count_today += 1
                 self._log(
-                    "TRADE_OPEN",
-                    f"{symbol}: Position opened — GTT ID: {result.get('gtt_order_id')}",
+                    "SIGNAL",
+                    f"{symbol}: {sig['signal']} strength={sig['strength']} score={sig['score']} @ ₹{ltp:.2f}",
                     symbol=symbol,
                 )
 
-                # Subscribe symbol to KiteTicker for real-time price streaming
-                await self._subscribe_ticker(symbol)
+                # Position sizing: ATR-based SL/target, risk% of capital
+                indicators = best.get("indicators", {})
+                atr = float(indicators.get("atr_14", ltp * 0.01) or ltp * 0.01)
+                action = sig["signal"]  # BUY or SELL
 
-            else:
+                if action == "BUY":
+                    stop_loss = round(ltp - (1.5 * atr), 2)
+                    target = round(ltp + (3.0 * atr), 2)
+                    if not (stop_loss < ltp < target):
+                        stop_loss = round(ltp * 0.985, 2)
+                        target = round(ltp * 1.03, 2)
+                else:  # SELL (short)
+                    stop_loss = round(ltp + (1.5 * atr), 2)
+                    target = round(ltp - (3.0 * atr), 2)
+                    if not (target < ltp < stop_loss):
+                        stop_loss = round(ltp * 1.015, 2)
+                        target = round(ltp * 0.97, 2)
+
+                risk_per_share = abs(ltp - stop_loss)
+                effective_capital = capital * self.leverage
+                max_risk = effective_capital * (self.risk_percent / 100)
+                quantity = max(1, int(max_risk / risk_per_share)) if risk_per_share > 0 else 1
+
+                # Cap: no more than 10% of capital per trade
+                max_by_capital = int((capital * 0.10) / ltp) if ltp > 0 else 1
+                quantity = min(quantity, max(1, max_by_capital))
+
                 self._log(
-                    "TRADE_FAIL",
-                    f"{symbol}: Trade failed — {result.get('error', result['status'])}",
+                    "ENTRY",
+                    f"{symbol}: {action} {quantity} shares @ ₹{ltp:.2f} | SL: ₹{stop_loss:.2f} | Target: ₹{target:.2f}",
                     symbol=symbol,
                 )
+
+                # Execute trade using existing execution_agent
+                analysis_id = str(uuid.uuid4())
+                try:
+                    result = await self._exec_agent.execute_trade_with_gtt(
+                        stock_symbol=symbol,
+                        quantity=quantity,
+                        entry_price=ltp,
+                        stop_loss=stop_loss,
+                        target=target,
+                        analysis_id=analysis_id,
+                        access_token=self.access_token,
+                        api_key=self.api_key,
+                        hold_duration_days=0,
+                        action=action,
+                    )
+                except Exception as e:
+                    self._log("TRADE_FAIL", f"{symbol}: Execution error — {e}", symbol=symbol)
+                    continue
+
+                if result["status"] == "COMPLETED":
+                    self.positions[symbol] = PositionState(
+                        symbol=symbol,
+                        action=action,
+                        quantity=quantity,
+                        entry_price=ltp,
+                        stop_loss=stop_loss,
+                        target=target,
+                        gtt_id=result.get("gtt_order_id"),
+                        entry_order_id=result.get("entry_order_id", ""),
+                        analysis_id=analysis_id,
+                        atr=atr,
+                    )
+                    self.trade_count_today += 1
+                    self._log(
+                        "TRADE_OPEN",
+                        f"{symbol}: Position opened — GTT ID: {result.get('gtt_order_id')}",
+                        symbol=symbol,
+                    )
+
+                    # Subscribe to KiteTicker for real-time price streaming
+                    await self._subscribe_ticker(symbol)
+                else:
+                    self._log(
+                        "TRADE_FAIL",
+                        f"{symbol}: Trade failed — {result.get('error', result['status'])}",
+                        symbol=symbol,
+                    )
 
         except Exception as e:
             self._log("ERROR", f"Scan error: {e}")
         finally:
+            # Switch to monitoring mode once we have open positions
+            if self.positions:
+                self._scanning_done = True
+                self._log(
+                    "SCAN_DONE",
+                    f"Stock selection complete — {len(self.positions)} position(s) open. Switching to monitoring mode.",
+                )
             self.status = "MONITORING"
 
     async def _subscribe_ticker(self, symbol: str):
@@ -582,7 +648,7 @@ class UserTradingAgent:
         """
         Runs every 5 seconds.
         - Price updates: reads from KiteTicker cache (no API call), falls back to kite.quote() on cache miss
-        - GTT fill detection: API call every 30 seconds (every 6th iteration)
+        - GTT fill detection + trailing SL: API call every 30 seconds (every 6th iteration)
         """
         gtt_check_counter = 0
         while self.is_running:
@@ -607,7 +673,11 @@ class UserTradingAgent:
                 self._log("ERROR", f"Monitor loop error: {e}")
 
     async def _monitor_positions(self, check_gtts: bool = False):
-        """Check live prices → trail SL, detect GTT fill, update P&L."""
+        """
+        Check live prices → update P&L → trail SL continuously → detect GTT fills.
+        Trailing SL and GTT operations only happen when check_gtts=True (every 30s)
+        to avoid hammering the Zerodha API.
+        """
         symbols = list(self.positions.keys())
         if not symbols:
             return
@@ -640,7 +710,7 @@ class UserTradingAgent:
                 except Exception as e:
                     self._log("WARN", f"API price fallback failed: {e}")
 
-            # Step 2: Fetch active GTT IDs (only every 30s)
+            # Step 2: Fetch active GTT IDs (only every 30s to limit API calls)
             active_gtt_ids: set = set()
             if check_gtts:
                 try:
@@ -660,50 +730,108 @@ class UserTradingAgent:
             for symbol, pos in list(self.positions.items()):
                 ltp = prices.get(symbol, pos.entry_price)
 
-                # P&L update
+                # ── P&L update ────────────────────────────────────────────
                 if pos.action == "BUY":
                     pos.current_pnl = (ltp - pos.entry_price) * pos.quantity
-                    move_done = ltp - pos.entry_price
-                    move_total = pos.target - pos.entry_price
                 else:
                     pos.current_pnl = (pos.entry_price - ltp) * pos.quantity
-                    move_done = pos.entry_price - ltp
-                    move_total = pos.entry_price - pos.target
 
-                progress = move_done / move_total if move_total > 0 else 0
-
-                # Log position update at reduced frequency (every 30s = when check_gtts fires)
+                # Log position update at reduced frequency (every 30s)
                 if check_gtts:
+                    move_done = (ltp - pos.entry_price) if pos.action == "BUY" else (pos.entry_price - ltp)
+                    move_total = (pos.target - pos.entry_price) if pos.action == "BUY" else (pos.entry_price - pos.target)
+                    progress = (move_done / move_total * 100) if move_total > 0 else 0
                     self._log(
                         "POS_UPDATE",
-                        f"{symbol}: LTP ₹{ltp:.2f} | P&L ₹{pos.current_pnl:+.2f} | {progress*100:.0f}% to target",
+                        f"{symbol}: LTP ₹{ltp:.2f} | P&L ₹{pos.current_pnl:+.2f} | {progress:.0f}% to target",
                         symbol=symbol,
                     )
 
-                # ── Trail SL when 50% of move achieved ───────────────────
-                if progress >= 0.5 and not pos.trail_activated:
+                # ── Continuous Trailing Stop-Loss (every 30s only) ────────
+                # Only trail when price has moved favourably by at least 1 ATR.
+                # New SL trails 1.5 ATR behind the best price seen (watermark).
+                if check_gtts and pos.atr > 0:
                     if pos.action == "BUY":
-                        new_sl = round(pos.entry_price + (move_total * 0.25), 2)
-                        if new_sl > pos.stop_loss:
-                            await self._update_gtt_sl(pos, new_sl, ltp)
-                            pos.stop_loss = new_sl
-                            pos.trail_activated = True
-                            self._log(
-                                "TRAIL_SL",
-                                f"{symbol}: SL trailed to ₹{new_sl:.2f}",
-                                symbol=symbol,
-                            )
-                    else:
-                        new_sl = round(pos.entry_price - (move_total * 0.25), 2)
-                        if new_sl < pos.stop_loss:
-                            await self._update_gtt_sl(pos, new_sl, ltp)
-                            pos.stop_loss = new_sl
-                            pos.trail_activated = True
-                            self._log(
-                                "TRAIL_SL",
-                                f"{symbol}: SL trailed to ₹{new_sl:.2f}",
-                                symbol=symbol,
-                            )
+                        # Update high watermark
+                        if ltp > pos.watermark:
+                            pos.watermark = ltp
+                        profit_from_peak = pos.watermark - pos.entry_price
+                        if profit_from_peak >= pos.atr:
+                            new_sl = round(pos.watermark - 1.5 * pos.atr, 2)
+                            if new_sl > pos.stop_loss + 0.05:  # meaningful improvement
+                                old_sl = pos.stop_loss
+                                pos.stop_loss = new_sl
+                                pos.trail_activated = True
+                                pos.trail_count += 1
+                                await self._update_gtt_exits(pos, new_sl, pos.target, ltp, reason="trail SL")
+                                self._log(
+                                    "TRAIL_SL",
+                                    f"{symbol}: SL trailed ₹{old_sl:.2f} → ₹{new_sl:.2f} "
+                                    f"(peak: ₹{pos.watermark:.2f}, trail #{pos.trail_count})",
+                                    symbol=symbol,
+                                )
+                    else:  # SELL (short)
+                        # Update low watermark
+                        if ltp < pos.watermark:
+                            pos.watermark = ltp
+                        profit_from_trough = pos.entry_price - pos.watermark
+                        if profit_from_trough >= pos.atr:
+                            new_sl = round(pos.watermark + 1.5 * pos.atr, 2)
+                            if new_sl < pos.stop_loss - 0.05:  # meaningful improvement (lower = tighter)
+                                old_sl = pos.stop_loss
+                                pos.stop_loss = new_sl
+                                pos.trail_activated = True
+                                pos.trail_count += 1
+                                await self._update_gtt_exits(pos, new_sl, pos.target, ltp, reason="trail SL")
+                                self._log(
+                                    "TRAIL_SL",
+                                    f"{symbol}: SL trailed ₹{old_sl:.2f} → ₹{new_sl:.2f} "
+                                    f"(trough: ₹{pos.watermark:.2f}, trail #{pos.trail_count})",
+                                    symbol=symbol,
+                                )
+
+                # ── Dynamic Target Adjustment on Trend Reversal (every 30s) ──
+                # When a position was moving favourably but price has since reversed
+                # by ≥ 0.5 ATR from the watermark (and we're still in profit), lower
+                # the target so the GTT fires sooner and locks in the remaining gain.
+                # Only done once per position to avoid GTT-churn.
+                if check_gtts and pos.atr > 0 and not pos.target_adjusted:
+                    if pos.action == "BUY":
+                        reversal = pos.watermark - ltp  # how far price has dropped from peak
+                        in_profit = ltp > pos.entry_price
+                        if reversal >= 0.5 * pos.atr and in_profit:
+                            # Set new target just above current price (+0.3 ATR) so GTT fires quickly
+                            new_target = round(ltp + 0.3 * pos.atr, 2)
+                            # Only lower — and must still be profitable (above entry)
+                            if new_target < pos.target and new_target > pos.entry_price:
+                                old_target = pos.target
+                                pos.target = new_target
+                                pos.target_adjusted = True
+                                await self._update_gtt_exits(pos, pos.stop_loss, new_target, ltp, reason="target revision")
+                                self._log(
+                                    "TARGET_ADJ",
+                                    f"{symbol}: Target revised ₹{old_target:.2f} → ₹{new_target:.2f} "
+                                    f"(bearish reversal — price dropped ₹{reversal:.2f} from peak ₹{pos.watermark:.2f})",
+                                    symbol=symbol,
+                                )
+                    else:  # SELL (short)
+                        reversal = ltp - pos.watermark  # how far price has risen from trough
+                        in_profit = ltp < pos.entry_price
+                        if reversal >= 0.5 * pos.atr and in_profit:
+                            # Set new target just below current price (−0.3 ATR)
+                            new_target = round(ltp - 0.3 * pos.atr, 2)
+                            # Only raise (closer to entry) — must still be profitable (below entry)
+                            if new_target > pos.target and new_target < pos.entry_price:
+                                old_target = pos.target
+                                pos.target = new_target
+                                pos.target_adjusted = True
+                                await self._update_gtt_exits(pos, pos.stop_loss, new_target, ltp, reason="target revision")
+                                self._log(
+                                    "TARGET_ADJ",
+                                    f"{symbol}: Target revised ₹{old_target:.2f} → ₹{new_target:.2f} "
+                                    f"(bullish reversal on short — price rose ₹{reversal:.2f} from trough ₹{pos.watermark:.2f})",
+                                    symbol=symbol,
+                                )
 
                 # ── GTT fill detection (only when we fetched GTTs this iteration) ──
                 if check_gtts and pos.gtt_id and str(pos.gtt_id) not in active_gtt_ids:
@@ -737,9 +865,17 @@ class UserTradingAgent:
         except Exception as e:
             self._log("ERROR", f"Monitor positions error: {e}")
 
-    # ── Trail SL: cancel GTT + re-issue ──────────────────────────────────────
+    # ── Update exits: cancel GTT + re-issue with new SL and/or target ────────
 
-    async def _update_gtt_sl(self, pos: PositionState, new_sl: float, ltp: float):
+    async def _update_gtt_exits(
+        self,
+        pos: PositionState,
+        new_sl: float,
+        new_target: float,
+        ltp: float,
+        reason: str = "",
+    ):
+        """Cancel the existing GTT and place a new one with updated SL and/or target."""
         try:
             kite = self._get_kite()
             loop = asyncio.get_event_loop()
@@ -748,22 +884,22 @@ class UserTradingAgent:
                 try:
                     gtt_id = pos.gtt_id
                     await loop.run_in_executor(None, lambda: kite.delete_gtt(gtt_id))
-                    self._log("GTT_CANCEL", f"{pos.symbol}: GTT {pos.gtt_id} cancelled", symbol=pos.symbol)
+                    self._log("GTT_CANCEL", f"{pos.symbol}: GTT {pos.gtt_id} cancelled ({reason})", symbol=pos.symbol)
                 except Exception as e:
                     self._log("WARN", f"{pos.symbol}: Could not cancel GTT: {e}", symbol=pos.symbol)
 
             is_short = pos.action == "SELL"
             if is_short:
-                trigger_values = sorted([pos.target, new_sl])
+                trigger_values = sorted([new_target, new_sl])
                 orders = [
-                    {"transaction_type": "BUY", "quantity": pos.quantity, "order_type": "LIMIT", "product": "MIS", "price": pos.target},
+                    {"transaction_type": "BUY", "quantity": pos.quantity, "order_type": "LIMIT", "product": "MIS", "price": new_target},
                     {"transaction_type": "BUY", "quantity": pos.quantity, "order_type": "LIMIT", "product": "MIS", "price": new_sl},
                 ]
             else:
-                trigger_values = sorted([new_sl, pos.target])
+                trigger_values = sorted([new_sl, new_target])
                 orders = [
                     {"transaction_type": "SELL", "quantity": pos.quantity, "order_type": "LIMIT", "product": "MIS", "price": new_sl},
-                    {"transaction_type": "SELL", "quantity": pos.quantity, "order_type": "LIMIT", "product": "MIS", "price": pos.target},
+                    {"transaction_type": "SELL", "quantity": pos.quantity, "order_type": "LIMIT", "product": "MIS", "price": new_target},
                 ]
 
             new_gtt_id = await loop.run_in_executor(
@@ -778,12 +914,34 @@ class UserTradingAgent:
                 ),
             )
             pos.gtt_id = new_gtt_id
-            self._log("GTT_UPDATED", f"{pos.symbol}: New GTT {new_gtt_id} with SL ₹{new_sl:.2f}", symbol=pos.symbol)
+            self._log(
+                "GTT_UPDATED",
+                f"{pos.symbol}: New GTT {new_gtt_id} | SL ₹{new_sl:.2f} | Target ₹{new_target:.2f}",
+                symbol=pos.symbol,
+            )
 
         except Exception as e:
             self._log("ERROR", f"{pos.symbol}: GTT update failed: {e}", symbol=pos.symbol)
 
-    # ── Force squareoff at 3:10 PM ───────────────────────────────────────────
+    # ── Cancel all GTTs (no position close — used when market is closed) ──────
+
+    async def _cancel_all_gtts(self):
+        """Cancel all active GTTs without closing positions. Used on off-hours stop."""
+        if not self.positions:
+            return
+        kite = self._get_kite()
+        loop = asyncio.get_event_loop()
+        for symbol, pos in list(self.positions.items()):
+            if pos.gtt_id:
+                try:
+                    gtt_id = pos.gtt_id
+                    await loop.run_in_executor(None, lambda: kite.delete_gtt(gtt_id))
+                    pos.gtt_id = None
+                    self._log("GTT_CANCEL", f"{symbol}: GTT cancelled on agent stop", symbol=symbol)
+                except Exception as e:
+                    self._log("WARN", f"{symbol}: GTT cancel failed: {e}", symbol=symbol)
+
+    # ── Force squareoff at 3:10 PM or on manual stop ─────────────────────────
 
     async def _force_squareoff(self):
         self.status = "SQUARING_OFF"
@@ -796,7 +954,7 @@ class UserTradingAgent:
 
         for symbol, pos in list(self.positions.items()):
             try:
-                # Cancel GTT first
+                # Cancel GTT first to avoid double-fill
                 if pos.gtt_id:
                     try:
                         gtt_id = pos.gtt_id
@@ -847,6 +1005,7 @@ class UserTradingAgent:
             "status": self.status,
             "started_at": self.started_at,
             "last_scan_at": self.last_scan_at,
+            "scanning_done": self._scanning_done,
             "ticker_connected": self._ticker_manager.is_connected if self._ticker_manager else False,
             "open_positions": [p.to_dict() for p in self.positions.values()],
             "trade_count_today": self.trade_count_today,
@@ -907,9 +1066,13 @@ class AutonomousAgentManager:
 
     async def stop_agent(self, user_id: str) -> Dict:
         if user_id not in self._agents or not self._agents[user_id].is_running:
+            # Clean up stale agent if present
+            self._agents.pop(user_id, None)
             return {"status": "not_running", "message": "No active agent for this user"}
         await self._agents[user_id].stop()
-        return {"status": "stopped", "message": "Agent stopped"}
+        # Remove from memory — clean slate for next start, no stale state on refresh
+        del self._agents[user_id]
+        return {"status": "stopped", "message": "Agent stopped. Open positions have been squared off and GTTs cancelled."}
 
     def get_agent_status(self, user_id: str) -> Optional[Dict]:
         if user_id not in self._agents:
@@ -923,6 +1086,7 @@ class AutonomousAgentManager:
         for agent in self._agents.values():
             if agent.is_running:
                 await agent.stop()
+        self._agents.clear()
 
 
 # Module-level singleton

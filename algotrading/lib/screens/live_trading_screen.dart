@@ -117,14 +117,19 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     final auth = context.read<AuthProvider>();
     if (auth.user == null) return;
 
+    final provider = context.read<LiveTradingProvider>();
+    final hasPositions = provider.status.openPositions.isNotEmpty;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Stop Agent'),
-        content: const Text(
-          'The agent will stop scanning for new trades.\n\n'
-          'Open positions will NOT be closed automatically — '
-          'you must manage them manually or wait for GTTs to trigger.',
+        content: Text(
+          hasPositions
+              ? 'The agent will stop and immediately square off all open positions at market price.\n\n'
+                'All active GTTs will be cancelled.\n\n'
+                'This action cannot be undone.'
+              : 'The agent will stop scanning. No open positions to close.',
         ),
         actions: [
           TextButton(
@@ -134,7 +139,10 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red[700]),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Stop', style: TextStyle(color: Colors.white)),
+            child: Text(
+              hasPositions ? 'Stop & Square Off' : 'Stop',
+              style: const TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -406,11 +414,35 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               ],
             ),
 
-            // Ticker / feed status (only when running)
+            // Phase indicator + ticker feed status (only when running)
             if (isRunning) ...[
               const SizedBox(height: 10),
               Row(
                 children: [
+                  // Phase badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: status.scanningDone
+                          ? Colors.green.withValues(alpha: 0.25)
+                          : Colors.amber.withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: status.scanningDone ? Colors.greenAccent : Colors.amber,
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Text(
+                      status.scanningDone ? 'Phase 2: Monitoring' : 'Phase 1: Scanning',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: status.scanningDone ? Colors.greenAccent[100] : Colors.amber[200],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Ticker dot
                   Container(
                     width: 7,
                     height: 7,
@@ -419,14 +451,12 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                       shape: BoxShape.circle,
                     ),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                   Text(
-                    status.tickerConnected
-                        ? 'Live WebSocket feed active'
-                        : 'Polling mode (WebSocket reconnecting…)',
+                    status.tickerConnected ? 'Live feed' : 'Polling',
                     style: TextStyle(
                       color: status.tickerConnected ? Colors.greenAccent[100] : Colors.orange[200],
-                      fontSize: 11,
+                      fontSize: 10,
                     ),
                   ),
                 ],
@@ -610,8 +640,22 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      'TRAILING',
+                      pos.trailCount > 0 ? 'TRAIL ×${pos.trailCount}' : 'TRAIL',
                       style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.orange[700]),
+                    ),
+                  ),
+                ],
+                if (pos.targetAdjusted) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.purple[50],
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'TGT ADJ',
+                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.purple[700]),
                     ),
                   ),
                 ],
@@ -632,13 +676,37 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               children: [
                 _buildPriceLabel('Entry', pos.entryPrice),
                 _buildPriceLabel('SL', pos.stopLoss, color: Colors.red[600]),
-                _buildPriceLabel('Target', pos.target, color: Colors.green[700]),
+                if (pos.targetAdjusted)
+                  _buildAdjustedTargetLabel(pos)
+                else
+                  _buildPriceLabel('Target', pos.target, color: Colors.green[700]),
                 _buildPriceLabel('Qty', pos.quantity.toDouble(), isQty: true),
               ],
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildAdjustedTargetLabel(AgentPositionModel pos) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Target', style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+        Text(
+          _currency.format(pos.target),
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.purple[700]),
+        ),
+        Text(
+          _currency.format(pos.originalTarget),
+          style: TextStyle(
+            fontSize: 10,
+            color: Colors.grey[400],
+            decoration: TextDecoration.lineThrough,
+          ),
+        ),
+      ],
     );
   }
 
@@ -985,7 +1053,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     switch (status) {
       case 'SCANNING': return 'Scanning Markets...';
       case 'MONITORING': return 'Monitoring Positions';
-      case 'SQUARING_OFF': return 'Squaring Off...';
+      case 'SQUARING_OFF': return 'Squaring Off Positions...';
       case 'PAUSED': return 'Paused (daily limit)';
       default: return status;
     }
@@ -999,10 +1067,15 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       case 'SQUAREOFF': return (icon: Icons.alarm, color: Colors.red[700]!);
       case 'SIGNAL': return (icon: Icons.bolt, color: Colors.amber[700]!);
       case 'SCAN_START': return (icon: Icons.search, color: Colors.indigo[400]!);
+      case 'SCAN_RESULT': return (icon: Icons.checklist, color: Colors.indigo[600]!);
+      case 'SCAN_DONE': return (icon: Icons.done_all, color: Colors.green[600]!);
+      case 'TARGET_ADJ': return (icon: Icons.adjust, color: Colors.purple[600]!);
       case 'ERROR': return (icon: Icons.error_outline, color: Colors.red[600]!);
       case 'DAILY_LIMIT': return (icon: Icons.block, color: Colors.red[700]!);
       case 'GTT_UPDATED': return (icon: Icons.update, color: Colors.teal[600]!);
+      case 'GTT_CANCEL': return (icon: Icons.cancel, color: Colors.orange[600]!);
       case 'CAPITAL': return (icon: Icons.account_balance_wallet, color: Colors.green[600]!);
+      case 'POS_UPDATE': return (icon: Icons.show_chart, color: Colors.blue[500]!);
       default: return (icon: Icons.info_outline, color: Colors.grey[600]!);
     }
   }

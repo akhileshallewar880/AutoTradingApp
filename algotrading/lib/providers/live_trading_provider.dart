@@ -49,6 +49,7 @@ class LiveTradingProvider with ChangeNotifier {
   }
 
   /// Stop the autonomous agent on the backend.
+  /// Squareoffs open positions + cancels GTTs, then clears all local state.
   Future<void> stopAgent(String userId) async {
     _isLoading = true;
     _error = null;
@@ -57,9 +58,14 @@ class LiveTradingProvider with ChangeNotifier {
     try {
       await ApiService.stopLiveAgent(userId: userId);
       _stopPolling();
+      // Clear all state — agent memory is wiped on backend too
       _status = AgentStatusModel.stopped();
+      _error = null;
     } catch (e) {
       _error = e.toString();
+      // Still stop polling and clear state even on error
+      _stopPolling();
+      _status = AgentStatusModel.stopped();
     } finally {
       _isLoading = false;
       notifyListeners();

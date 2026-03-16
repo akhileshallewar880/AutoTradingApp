@@ -519,7 +519,7 @@ class TokenUsage(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True, index=True)
     user_id: Optional[int] = Field(None, foreign_key="vantrade_users.user_id", index=True)
     analysis_id: Optional[str] = None  # Analysis ID that consumed these tokens
-    model: str = Field(default="gpt-4o", max_length=50)
+    model: str = Field(default="gpt-5.4", max_length=50)
     prompt_tokens: int = Field(default=0)
     completion_tokens: int = Field(default=0)
     total_tokens: int = Field(default=0)
