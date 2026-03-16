@@ -90,7 +90,16 @@ class PriceCache:
 # ── KiteTicker manager ────────────────────────────────────────────────────────
 
 class _TickerManager:
-    """Wraps KiteTicker WebSocket lifecycle for a single user session."""
+    """
+    Wraps KiteTicker WebSocket lifecycle for a single user session.
+
+    Rules:
+    - Only starts when market is open (avoids 403 Forbidden from Zerodha)
+    - Auto-reconnect is DISABLED on the ticker; reconnect is managed by the
+      monitor loop so it respects market hours and doesn't spam the log
+    - 403 error → stops immediately, marks _forbidden=True so callers know
+      not to retry until the next session
+    """
 
     def __init__(self, api_key: str, access_token: str, price_cache: PriceCache):
         self._api_key = api_key
@@ -98,30 +107,54 @@ class _TickerManager:
         self._cache = price_cache
         self._ticker = None
         self._connected = False
+        self._forbidden = False   # True after a 403 — don't retry same session
         self._subscribed: set = set()
 
     def start(self):
+        """Connect to KiteTicker. Should only be called when market is open."""
+        if self._forbidden:
+            logger.warning("[Ticker] Start skipped — 403 was received, access token may lack WebSocket permissions")
+            return
+
         from kiteconnect import KiteTicker  # local import to avoid top-level noise
-        self._ticker = KiteTicker(self._api_key, self._access_token)
+
+        # reconnect=False: we manage reconnect ourselves so we can check market hours
+        self._ticker = KiteTicker(self._api_key, self._access_token, reconnect=False)
 
         def on_ticks(ws, ticks):
             self._cache.update(ticks)
 
         def on_connect(ws, response):
             self._connected = True
-            logger.info("[Ticker] WebSocket connected")
-            # Re-subscribe to any tokens already queued before connect
+            logger.info("[Ticker] WebSocket connected — live price streaming active")
             if self._subscribed:
                 tokens = list(self._subscribed)
                 ws.subscribe(tokens)
                 ws.set_mode(ws.MODE_QUOTE, tokens)
+                logger.info(f"[Ticker] Re-subscribed to {len(tokens)} token(s) after connect")
 
         def on_close(ws, code, reason):
             self._connected = False
             logger.info(f"[Ticker] WebSocket closed: {code} {reason}")
 
         def on_error(ws, code, reason):
-            logger.warning(f"[Ticker] Error {code}: {reason}")
+            if code == 403:
+                # 403 = Forbidden. This usually means market is closed or the
+                # access token doesn't have WebSocket permission. Stop the ticker
+                # immediately — don't let KiteConnect's internal thread retry.
+                self._forbidden = True
+                self._connected = False
+                logger.warning(
+                    "[Ticker] 403 Forbidden — WebSocket not allowed. "
+                    "Will fall back to REST API polling. "
+                    "(Expected outside market hours)"
+                )
+                try:
+                    ws.stop()
+                except Exception:
+                    pass
+            else:
+                logger.warning(f"[Ticker] Error {code}: {reason}")
 
         self._ticker.on_ticks = on_ticks
         self._ticker.on_connect = on_connect
@@ -339,17 +372,20 @@ class UserTradingAgent:
             logger.exception(f"[Agent:{self.user_id}] Capital fetch failed")
             self._log("WARN", f"Could not fetch starting capital: {e}")
 
-        # Start KiteTicker for real-time price streaming
-        try:
-            self._ticker_manager = _TickerManager(
-                self.api_key, self.access_token, self._price_cache
-            )
-            self._ticker_manager.start()
-            self._log("TICKER", "KiteTicker WebSocket started — real-time prices active")
-        except Exception as e:
-            logger.exception(f"[Agent:{self.user_id}] KiteTicker start failed")
-            self._log("WARN", f"KiteTicker failed to start (will fall back to API polling): {e}")
-            self._ticker_manager = None
+        # Prepare KiteTicker — only connect when market is actually open to
+        # avoid Zerodha 403 Forbidden errors that spam the log outside hours.
+        self._ticker_manager = _TickerManager(
+            self.api_key, self.access_token, self._price_cache
+        )
+        if _is_market_open():
+            try:
+                self._ticker_manager.start()
+                self._log("TICKER", "KiteTicker WebSocket started — real-time prices active")
+            except Exception as e:
+                logger.exception(f"[Agent:{self.user_id}] KiteTicker start failed")
+                self._log("WARN", f"KiteTicker failed to start (will fall back to API polling): {e}")
+        else:
+            self._log("TICKER", "Market closed — KiteTicker will connect when market opens")
 
         logger.info(f"[Agent:{self.user_id}] Launching scan_task and monitor_task")
         self._scan_task = asyncio.create_task(self._scan_loop())
@@ -743,6 +779,24 @@ class UserTradingAgent:
         while self.is_running:
             try:
                 await asyncio.sleep(5)
+
+                # Lazily connect KiteTicker once market opens (if not already connected
+                # and no 403 was received)
+                if (
+                    self._ticker_manager
+                    and not self._ticker_manager.is_connected
+                    and not self._ticker_manager._forbidden
+                    and _is_market_open()
+                ):
+                    logger.info(f"[Agent:{self.user_id}] Market opened — connecting KiteTicker")
+                    try:
+                        self._ticker_manager.start()
+                        # Re-subscribe any existing positions
+                        for sym, pos in self.positions.items():
+                            if pos.instrument_token:
+                                self._ticker_manager.subscribe(pos.instrument_token)
+                    except Exception as e:
+                        logger.warning(f"[Agent:{self.user_id}] KiteTicker lazy-start failed: {e}")
 
                 if not self.positions or not _is_market_open():
                     continue

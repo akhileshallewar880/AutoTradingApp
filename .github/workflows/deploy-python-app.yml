@@ -46,6 +46,19 @@ jobs:
             git pull origin master
             source venv/bin/activate
             pip install -r requirements.txt --quiet
+
+            # ── Enforce single worker ────────────────────────────────────────
+            # The autonomous trading agent manager is in-memory state.
+            # Multiple uvicorn workers = multiple separate managers = duplicate
+            # agents for the same user. Must run with exactly 1 worker.
+            SERVICE_FILE="/etc/systemd/system/${{ secrets.VPS_SERVICE_NAME }}.service"
+            if grep -q "\-\-workers [2-9]" "$SERVICE_FILE" 2>/dev/null; then
+              echo "⚠️  Fixing --workers to 1 in service file (multi-worker causes duplicate agents)"
+              sudo sed -i 's/--workers [0-9]*/--workers 1/g' "$SERVICE_FILE"
+              sudo systemctl daemon-reload
+              echo "✅ Service file updated"
+            fi
+
             sudo systemctl restart ${{ secrets.VPS_SERVICE_NAME }}
             sleep 3
             sudo systemctl is-active ${{ secrets.VPS_SERVICE_NAME }} \
