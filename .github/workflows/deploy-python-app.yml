@@ -27,37 +27,34 @@ jobs:
         run: |
           python -c "from app.main import app; print('✅ App imports OK')"
 
-  # ── Job 2: deploy runs ON the VPS (self-hosted runner) ─────────────────────
-  # No inbound SSH needed — the runner polls GitHub from the VPS.
+  # ── Job 2: deploy via SSH from GitHub's cloud runner ───────────────────────
   deploy:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: lint
 
     steps:
-      - name: Pull latest code
-        run: |
-          cd ${{ secrets.VPS_APP_DIR }}
-          git pull origin master
-
-      - name: Install/update Python dependencies
-        run: |
-          cd ${{ secrets.VPS_APP_DIR }}
-          source venv/bin/activate
-          pip install -r requirements.txt --quiet
-
-      - name: Restart service
-        run: |
-          sudo systemctl restart ${{ secrets.VPS_SERVICE_NAME }}
-
-      - name: Verify service is running
-        run: |
-          sleep 3
-          sudo systemctl is-active ${{ secrets.VPS_SERVICE_NAME }} \
-            && echo "✅ Service is running" \
-            || (sudo journalctl -u ${{ secrets.VPS_SERVICE_NAME }} --no-pager -n 30 && exit 1)
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            cd ${{ secrets.VPS_APP_DIR }}
+            git pull origin master
+            source venv/bin/activate
+            pip install -r requirements.txt --quiet
+            sudo systemctl restart ${{ secrets.VPS_SERVICE_NAME }}
+            sleep 3
+            sudo systemctl is-active ${{ secrets.VPS_SERVICE_NAME }} \
+              && echo "✅ Service is running" \
+              || (sudo journalctl -u ${{ secrets.VPS_SERVICE_NAME }} --no-pager -n 30 && exit 1)
 
       - name: Smoke test health endpoint
         run: |
+          sleep 5
           curl -sf https://api.vantrade.in/health \
             && echo "✅ Health check passed" \
             || echo "⚠️ Health check failed (non-fatal)"
