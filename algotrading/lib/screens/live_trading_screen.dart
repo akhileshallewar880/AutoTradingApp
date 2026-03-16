@@ -72,6 +72,22 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     });
   }
 
+  /// Build the current slider state as a settings model and persist it in
+  /// the provider so navigation away + back restores whatever the user set.
+  void _persistCurrentSliders() {
+    context.read<LiveTradingProvider>().updateLastSettings(
+      AgentSettingsModel(
+        maxPositions: _maxPositions,
+        riskPercent: _riskPercent,
+        scanIntervalMinutes: _scanIntervalMinutes,
+        maxTradesPerDay: _maxTradesPerDay,
+        maxDailyLossPct: _maxDailyLossPct,
+        capitalToUse: _capitalToUse,
+        leverage: _leverage,
+      ),
+    );
+  }
+
   Future<void> _startAgent() async {
     final auth = context.read<AuthProvider>();
     if (auth.user == null) return;
@@ -765,6 +781,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               divisions: 4,
               display: '$_maxPositions',
               onChanged: (v) => setState(() => _maxPositions = v.round()),
+              onChangeEnd: _persistCurrentSliders,
             ),
             const Divider(height: 20),
             _buildSliderRow(
@@ -775,6 +792,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               divisions: 5,
               display: '${_riskPercent.toStringAsFixed(1)}%',
               onChanged: (v) => setState(() => _riskPercent = double.parse(v.toStringAsFixed(1))),
+              onChangeEnd: _persistCurrentSliders,
             ),
             const Divider(height: 20),
             _buildSliderRow(
@@ -785,6 +803,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               divisions: 5,
               display: '$_scanIntervalMinutes min',
               onChanged: (v) => setState(() => _scanIntervalMinutes = v.round()),
+              onChangeEnd: _persistCurrentSliders,
             ),
             const Divider(height: 20),
             _buildSliderRow(
@@ -795,6 +814,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               divisions: 8,
               display: '$_maxTradesPerDay',
               onChanged: (v) => setState(() => _maxTradesPerDay = v.round()),
+              onChangeEnd: _persistCurrentSliders,
             ),
             const Divider(height: 20),
             _buildSliderRow(
@@ -805,6 +825,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               divisions: 4,
               display: '${_maxDailyLossPct.toStringAsFixed(1)}%',
               onChanged: (v) => setState(() => _maxDailyLossPct = double.parse(v.toStringAsFixed(1))),
+              onChangeEnd: _persistCurrentSliders,
             ),
             const Divider(height: 20),
             Row(
@@ -861,7 +882,10 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                     final isLast = lev == 5;
                     return Expanded(
                       child: GestureDetector(
-                        onTap: () => setState(() => _leverage = lev),
+                        onTap: () {
+                          setState(() => _leverage = lev);
+                          _persistCurrentSliders();
+                        },
                         child: Container(
                           height: 36,
                           decoration: BoxDecoration(
@@ -909,6 +933,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     required int divisions,
     required String display,
     required ValueChanged<double> onChanged,
+    VoidCallback? onChangeEnd,
   }) {
     return Row(
       children: [
@@ -924,6 +949,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             divisions: divisions,
             activeColor: Colors.indigo[700],
             onChanged: onChanged,
+            onChangeEnd: onChangeEnd != null ? (_) => onChangeEnd() : null,
           ),
         ),
         SizedBox(
@@ -961,6 +987,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             onPressed: () {
               final val = double.tryParse(controller.text) ?? 0.0;
               setState(() => _capitalToUse = val);
+              _persistCurrentSliders();
               Navigator.pop(ctx);
             },
             child: const Text('Set'),

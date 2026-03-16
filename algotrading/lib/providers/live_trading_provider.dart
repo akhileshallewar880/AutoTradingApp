@@ -77,6 +77,11 @@ class LiveTradingProvider with ChangeNotifier {
     }
   }
 
+  /// Update last settings so they survive navigation without starting agent.
+  void updateLastSettings(AgentSettingsModel settings) {
+    _lastSettings = settings;
+  }
+
   /// Fetch status and update UI — only notifies listeners if meaningful
   /// fields changed to prevent unnecessary screen rebuilds on each poll.
   Future<void> fetchStatus(String userId) async {
@@ -86,6 +91,12 @@ class LiveTradingProvider with ChangeNotifier {
       final changed = _statusChanged(data);
       _status = data;
       _error = null;
+
+      // Keep lastSettings in sync with whatever the backend says is running,
+      // so that after a stop the sliders restore to the last-used values.
+      if (data.isRunning && data.settings.maxPositions > 0) {
+        _lastSettings = data.settings;
+      }
 
       if (_status.isRunning && _pollTimer == null) {
         _startPolling(userId);

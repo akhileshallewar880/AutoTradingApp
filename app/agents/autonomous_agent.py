@@ -313,7 +313,7 @@ class UserTradingAgent:
         # Fetch starting capital
         try:
             kite = self._get_kite()
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             margins = await loop.run_in_executor(None, kite.margins)
             equity = margins.get("equity", {})
             balance = float(
@@ -487,7 +487,7 @@ class UserTradingAgent:
             # Get available capital once for this scan cycle
             try:
                 kite = self._get_kite()
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 margins = await loop.run_in_executor(None, kite.margins)
                 equity = margins.get("equity", {})
                 available = float(
@@ -623,7 +623,7 @@ class UserTradingAgent:
             return
         try:
             kite = self._get_kite()
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             ltp_data = await loop.run_in_executor(
                 None, lambda: kite.ltp([f"NSE:{symbol}"])
             )
@@ -698,7 +698,7 @@ class UserTradingAgent:
             if cache_miss_symbols:
                 try:
                     kite = self._get_kite()
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     quotes = await loop.run_in_executor(
                         None, lambda: kite.quote([f"NSE:{s}" for s in cache_miss_symbols])
                     )
@@ -715,7 +715,7 @@ class UserTradingAgent:
             if check_gtts:
                 try:
                     kite = self._get_kite()
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     gtts = await loop.run_in_executor(None, kite.get_gtts)
                     active_gtt_ids = {
                         str(g.get("id"))
@@ -878,7 +878,7 @@ class UserTradingAgent:
         """Cancel the existing GTT and place a new one with updated SL and/or target."""
         try:
             kite = self._get_kite()
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             if pos.gtt_id:
                 try:
@@ -930,7 +930,7 @@ class UserTradingAgent:
         if not self.positions:
             return
         kite = self._get_kite()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         for symbol, pos in list(self.positions.items()):
             if pos.gtt_id:
                 try:
@@ -950,7 +950,7 @@ class UserTradingAgent:
             return
 
         kite = self._get_kite()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         for symbol, pos in list(self.positions.items()):
             try:
