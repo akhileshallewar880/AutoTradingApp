@@ -137,7 +137,7 @@ class ApiService {
         'api_key': apiKey,
         'user_notes': notes,
         'hold_duration_days': holdDurationDays,
-        if (stockOverrides != null) 'stock_overrides': stockOverrides,
+        'stock_overrides': ?stockOverrides,
       }),
     ).timeout(ApiConfig.timeout);
 

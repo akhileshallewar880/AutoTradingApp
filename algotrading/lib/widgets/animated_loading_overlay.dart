@@ -171,7 +171,7 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
             // ── Background particle field ──────────────────────────────
             AnimatedBuilder(
               animation: _particleController,
-              builder: (_, __) => CustomPaint(
+              builder: (_, _) => CustomPaint(
                 size: size,
                 painter: _ParticleFieldPainter(
                   progress: _particleController.value,
@@ -188,7 +188,7 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
               height: size.height * 0.32,
               child: AnimatedBuilder(
                 animation: _candleController,
-                builder: (_, __) => CustomPaint(
+                builder: (_, _) => CustomPaint(
                   painter: _CandleChartPainter(
                     candles: _candles,
                     animValue: _candleController.value,
@@ -212,7 +212,7 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
                         _pulseController,
                         _glowController,
                       ]),
-                      builder: (_, __) => CustomPaint(
+                      builder: (_, _) => CustomPaint(
                         painter: _AIBrainPainter(
                           orbit: _orbitController.value,
                           pulse: _pulseAnim.value,
@@ -294,7 +294,7 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
                       children: [
                         AnimatedBuilder(
                           animation: _progressController,
-                          builder: (_, __) {
+                          builder: (_, _) {
                             return Column(
                               children: [
                                 ClipRRect(
@@ -769,7 +769,7 @@ class _TickerStripState extends State<_TickerStrip>
       color: Colors.black.withOpacity(0.4),
       child: AnimatedBuilder(
         animation: _offset,
-        builder: (_, __) {
+        builder: (_, _) {
           return ClipRect(
             child: OverflowBox(
               maxWidth: double.infinity,

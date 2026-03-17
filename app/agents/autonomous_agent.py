@@ -108,12 +108,19 @@ class _TickerManager:
         self._ticker = None
         self._connected = False
         self._forbidden = False   # True after a 403 — don't retry same session
+        self._started = False     # True once connect() has been called — Twisted reactor cannot restart
         self._subscribed: set = set()
 
     def start(self):
         """Connect to KiteTicker. Should only be called when market is open."""
         if self._forbidden:
             logger.warning("[Ticker] Start skipped — 403 was received, access token may lack WebSocket permissions")
+            return
+        if self._started:
+            # Twisted reactor is a per-process singleton — once started it cannot be
+            # restarted. Calling connect(threaded=True) again raises ReactorNotRestartable.
+            # Fall back to REST API polling for prices instead.
+            logger.debug("[Ticker] Start skipped — reactor already started (reconnect not possible in same process)")
             return
 
         from kiteconnect import KiteTicker  # local import to avoid top-level noise
@@ -161,7 +168,9 @@ class _TickerManager:
         self._ticker.on_close = on_close
         self._ticker.on_error = on_error
 
-        # Runs in a background thread — non-blocking
+        # Runs in a background thread — non-blocking.
+        # Mark _started before connect() so any re-entry attempt is blocked.
+        self._started = True
         self._ticker.connect(threaded=True)
 
     def stop(self):
