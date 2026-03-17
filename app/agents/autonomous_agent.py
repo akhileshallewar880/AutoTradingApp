@@ -145,7 +145,9 @@ class _TickerManager:
             logger.info(f"[Ticker] WebSocket closed: {code} {reason}")
 
         def on_error(ws, code, reason):
-            if code == 403:
+            reason_str = str(reason) if reason else ""
+            is_forbidden = (code == 403) or (str(code) == "1006" and "403" in reason_str)
+            if is_forbidden:
                 # 403 = Forbidden. This usually means market is closed or the
                 # access token doesn't have WebSocket permission. Stop the ticker
                 # immediately — don't let KiteConnect's internal thread retry.
@@ -795,6 +797,7 @@ class UserTradingAgent:
                     self._ticker_manager
                     and not self._ticker_manager.is_connected
                     and not self._ticker_manager._forbidden
+                    and not self._ticker_manager._started
                     and _is_market_open()
                 ):
                     logger.info(f"[Agent:{self.user_id}] Market opened — connecting KiteTicker")
