@@ -350,7 +350,7 @@ class UserTradingAgent:
             os.makedirs(log_dir, exist_ok=True)
 
             log_path = os.path.join(log_dir, f"trade_{uid_short}_{date_str}.txt")
-            self._trade_log = open(log_path, "a", encoding="utf-8", buffering=1)  # line-buffered
+            self._trade_log = open(log_path, "a", encoding="utf-8")  # default buffering
 
             sep = "=" * 80
             self._trade_log.write(f"\n{sep}\n")
@@ -385,6 +385,7 @@ class UserTradingAgent:
         try:
             ts = _ist_now().strftime("%H:%M:%S")
             self._trade_log.write(f"[{ts}] [{event:<14}] {message}\n")
+            self._trade_log.flush()
         except Exception:
             pass  # never let logging crash the agent
 
