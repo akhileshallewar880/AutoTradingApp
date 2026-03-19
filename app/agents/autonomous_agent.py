@@ -341,8 +341,11 @@ class UserTradingAgent:
             date_str = now.strftime("%Y-%m-%d")
             uid_short = self.user_id[:8]
 
-            log_dir = os.path.join(
-                os.path.dirname(__file__), "..", "..", "logs", "trades"
+            # Use abspath to guarantee an absolute path regardless of CWD or
+            # whether __file__ is relative (happens with some uvicorn setups).
+            _agents_dir = os.path.dirname(os.path.abspath(__file__))
+            log_dir = os.path.abspath(
+                os.path.join(_agents_dir, "..", "..", "logs", "trades")
             )
             os.makedirs(log_dir, exist_ok=True)
 
@@ -369,7 +372,10 @@ class UserTradingAgent:
 
             logger.info(f"[Agent:{self.user_id}] Trade journal opened: {log_path}")
         except Exception as e:
-            logger.warning(f"[Agent:{self.user_id}] Could not open trade journal: {e}")
+            logger.error(
+                f"[Agent:{self.user_id}] Could not open trade journal: {e}",
+                exc_info=True,
+            )
             self._trade_log = None
 
     def _write_trade_log(self, event: str, message: str):
