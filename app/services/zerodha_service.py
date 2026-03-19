@@ -255,7 +255,7 @@ class ZerodhaService:
 
                 # Don't retry on permission errors (won't help)
                 if 'permission' in str(e).lower() or 'insufficient' in str(e).lower():
-                    logger.error(f"[get_quote] Permission error - user's Zerodha account lacks quote API access. Not retrying.")
+                    logger.error(f"[get_quote] Permission error — check that the user's api_key matches the access_token and the Zerodha Connect plan is active. Not retrying.")
                     raise
 
                 # Retry on timeout or connection errors (backoff)
@@ -265,6 +265,26 @@ class ZerodhaService:
                     retry_delay *= 1.5  # Exponential backoff
                 else:
                     raise
+
+    async def get_ltp(self, symbols: List[str]) -> Dict:
+        """
+        Get last traded price for symbols.
+        Lighter than get_quote() — returns only last_price + instrument_token.
+        Requires paid Zerodha Connect plan.
+        """
+        formatted = [f"NSE:{s}" if not s.startswith("NSE:") else s for s in symbols]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.kite.ltp(formatted))
+
+    async def get_ohlc(self, symbols: List[str]) -> Dict:
+        """
+        Get OHLC + last_price for symbols.
+        Lighter than get_quote() — no depth/tick data.
+        Requires paid Zerodha Connect plan.
+        """
+        formatted = [f"NSE:{s}" if not s.startswith("NSE:") else s for s in symbols]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.kite.ohlc(formatted))
 
     @staticmethod
     def _get_cache_key(symbols: List[str]) -> str:

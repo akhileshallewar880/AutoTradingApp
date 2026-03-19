@@ -129,8 +129,8 @@ class AnalysisService:
         # Create user-specific Zerodha service with their credentials
         if user_api_key and user_access_token:
             user_zerodha = ZerodhaService()
-            user_zerodha.kite.set_access_token(user_access_token)
-            logger.info(f"[Intraday-CREDS] Using USER-SPECIFIC zerodha instance with token: {user_access_token[:10]}...{user_access_token[-10:]}")
+            user_zerodha.set_credentials(user_api_key, user_access_token)
+            logger.info(f"[Intraday-CREDS] Using USER-SPECIFIC zerodha instance with api_key={user_api_key[:6]}... token={user_access_token[:10]}...{user_access_token[-10:]}")
         else:
             from app.services.zerodha_service import zerodha_service
             user_zerodha = zerodha_service

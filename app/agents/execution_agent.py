@@ -37,7 +37,13 @@ class ExecutionAgent:
         update_callback: Callable = None,
         hold_duration_days: int = 0,
         action: str = "BUY",
+        sl_only: bool = False,
     ) -> Dict:
+        """
+        sl_only=True  → place single-leg SL-only GTT (used with multi-target strategy
+                         where T1/T2 exits are managed by the agent, not GTT).
+        sl_only=False → place two-leg GTT with SL + target (legacy/single-target mode).
+        """
         """
         Execute a complete trade workflow:
           1. Place entry order  (BUY or SELL/short)
@@ -145,15 +151,25 @@ class ExecutionAgent:
                 analysis_id, stock_symbol, "GTT_PLACING", gtt_desc, update_callback
             )
 
-            gtt_id = await self._place_gtt_order(
-                symbol=stock_symbol,
-                quantity=quantity,
-                entry_price=entry_price,
-                stop_loss=stop_loss,
-                target=target,
-                product=product,
-                is_short=is_short,
-            )
+            if sl_only:
+                gtt_id = await self._place_sl_gtt(
+                    symbol=stock_symbol,
+                    quantity=quantity,
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    product=product,
+                    is_short=is_short,
+                )
+            else:
+                gtt_id = await self._place_gtt_order(
+                    symbol=stock_symbol,
+                    quantity=quantity,
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    target=target,
+                    product=product,
+                    is_short=is_short,
+                )
 
             execution_log["gtt_order_id"] = gtt_id
 
@@ -276,6 +292,40 @@ class ExecutionAgent:
             last_price=entry_price,
             orders=orders,
             gtt_type="two-leg",
+        )
+        return gtt_id
+
+    async def _place_sl_gtt(
+        self,
+        symbol: str,
+        quantity: int,
+        entry_price: float,
+        stop_loss: float,
+        product: str,
+        is_short: bool = False,
+    ) -> str:
+        """
+        Place a single-leg SL-only GTT.
+        Used with the multi-target (scaling-out) strategy where partial target exits
+        are executed directly by the agent via MARKET orders.
+        """
+        txn = "BUY" if is_short else "SELL"
+        orders = [
+            {
+                "transaction_type": txn,
+                "quantity": quantity,
+                "order_type": "LIMIT",
+                "product": product,
+                "price": stop_loss,
+            }
+        ]
+        gtt_id = await self.zs.place_gtt(
+            tradingsymbol=symbol,
+            exchange="NSE",
+            trigger_values=[stop_loss],
+            last_price=entry_price,
+            orders=orders,
+            gtt_type="single",
         )
         return gtt_id
 

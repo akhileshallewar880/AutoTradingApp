@@ -38,12 +38,51 @@ class AnalysisProvider with ChangeNotifier {
         .toList();
   }
 
+  // Recalculate portfolio metrics from SELECTED stocks only.
+  // Call this whenever selection or quantity changes.
+  void _recalculatePortfolioMetrics() {
+    if (_currentAnalysis == null) return;
+
+    double totalInvestment = 0;
+    double totalRisk = 0;
+    double maxProfit = 0;
+    double maxLoss = 0;
+
+    for (final index in _selectedStockIndices) {
+      if (index >= _currentAnalysis!.stocks.length) continue;
+      final s = _currentAnalysis!.stocks[index];
+      totalInvestment += s.entryPrice * s.quantity;
+      final sRisk = (s.entryPrice - s.stopLoss).abs() * s.quantity;
+      final sProfit = (s.targetPrice - s.entryPrice).abs() * s.quantity;
+      totalRisk += sRisk;
+      maxProfit += sProfit;
+      maxLoss += sRisk;
+    }
+
+    final updatedMetrics = Map<String, dynamic>.from(
+      _currentAnalysis!.portfolioMetrics,
+    );
+    updatedMetrics['total_investment'] = totalInvestment;
+    updatedMetrics['total_risk'] = totalRisk;
+    updatedMetrics['max_profit'] = maxProfit;
+    updatedMetrics['max_loss'] = maxLoss;
+    updatedMetrics['num_stocks'] = _selectedStockIndices.length;
+
+    _currentAnalysis = AnalysisResponseModel(
+      analysisId: _currentAnalysis!.analysisId,
+      analysisDate: _currentAnalysis!.analysisDate,
+      stocks: _currentAnalysis!.stocks,
+      portfolioMetrics: updatedMetrics,
+    );
+  }
+
   void toggleStockSelection(int index) {
     if (_selectedStockIndices.contains(index)) {
       _selectedStockIndices.remove(index);
     } else {
       _selectedStockIndices.add(index);
     }
+    _recalculatePortfolioMetrics();
     notifyListeners();
   }
 
@@ -52,11 +91,13 @@ class AnalysisProvider with ChangeNotifier {
     _selectedStockIndices = Set<int>.from(
       List.generate(_currentAnalysis!.stocks.length, (i) => i),
     );
+    _recalculatePortfolioMetrics();
     notifyListeners();
   }
 
   void deselectAllStocks() {
     _selectedStockIndices.clear();
+    _recalculatePortfolioMetrics();
     notifyListeners();
   }
 
@@ -240,34 +281,14 @@ class AnalysisProvider with ChangeNotifier {
       potentialProfit: newPotentialProfit,
     );
 
-    double totalInvestment = 0;
-    double totalRisk = 0;
-    double maxProfit = 0;
-    double maxLoss = 0;
-
-    for (final s in stocks) {
-      totalInvestment += s.entryPrice * s.quantity;
-      final sRisk = (s.entryPrice - s.stopLoss).abs() * s.quantity;
-      final sProfit = (s.targetPrice - s.entryPrice).abs() * s.quantity;
-      totalRisk += sRisk;
-      maxProfit += sProfit;
-      maxLoss += sRisk;
-    }
-
-    final updatedMetrics = Map<String, dynamic>.from(
-      _currentAnalysis!.portfolioMetrics,
-    );
-    updatedMetrics['total_investment'] = totalInvestment;
-    updatedMetrics['total_risk'] = totalRisk;
-    updatedMetrics['max_profit'] = maxProfit;
-    updatedMetrics['max_loss'] = maxLoss;
-
+    // Commit updated stocks list first, then recalculate from selected only
     _currentAnalysis = AnalysisResponseModel(
       analysisId: _currentAnalysis!.analysisId,
       analysisDate: _currentAnalysis!.analysisDate,
       stocks: stocks,
-      portfolioMetrics: updatedMetrics,
+      portfolioMetrics: _currentAnalysis!.portfolioMetrics,
     );
+    _recalculatePortfolioMetrics();
     notifyListeners();
   }
 
