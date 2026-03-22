@@ -163,7 +163,20 @@ class AnalysisService:
             logger.error(f"[Intraday-QUOTE-FAIL] Will fall back to yfinance for {len(universe)} candidates")
             return await self._intraday_fallback_yfinance(limit, pre_screened)
 
+        # now_ist used for both time-aware volume filter and candle from_date
+        now_ist = datetime.now(self.IST)
+
         # ── Step 3: Build candidate list ───────────────────────────────────
+        # Use time-aware volume threshold — early in the day full volume hasn't
+        # accumulated yet. Before 11 AM IST: 50K; after 11 AM: 150K.
+        market_hour = now_ist.hour
+        if market_hour < 11:
+            min_volume_threshold = 50_000    # early session — volume still building
+        elif market_hour < 13:
+            min_volume_threshold = 100_000   # mid-morning
+        else:
+            min_volume_threshold = 150_000   # afternoon — full volume available
+
         candidates = []
         for symbol in universe:
             quote_key = f"NSE:{symbol}"
@@ -182,7 +195,7 @@ class AnalysisService:
 
             if last_price < 10 or last_price > 15000:
                 continue
-            if volume < 200_000:
+            if volume < min_volume_threshold:
                 continue
 
             day_change_pct = (
@@ -208,12 +221,12 @@ class AnalysisService:
             logger.warning("[Intraday] No candidates from live quotes, using yfinance fallback")
             return await self._intraday_fallback_yfinance(limit, pre_screened)
 
-        # Sort by volume descending, take top 25 for candle analysis
+        # Sort by volume descending, take top 35 for candle analysis
+        # (increased from 25 → gives LLM a richer candidate pool)
         candidates.sort(key=lambda x: x["volume"], reverse=True)
-        top_candidates = candidates[: min(25, len(candidates))]
+        top_candidates = candidates[: min(35, len(candidates))]
 
         # ── Step 4: 5-minute candles + indicator calculation ───────────────
-        now_ist = datetime.now(self.IST)
         from_date = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
 
         enriched = []
