@@ -16,17 +16,17 @@ class LiveTradingScreen extends StatefulWidget {
 class _LiveTradingScreenState extends State<LiveTradingScreen>
     with SingleTickerProviderStateMixin {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
+  final _capitalController = TextEditingController();
 
-  bool _isInitializing = false; // full-screen overlay during start
+  bool _isInitializing = false;
+  String _overlayMessage = 'Processing...';
   late AnimationController _pulseController;
 
-  // Settings (editable before starting)
-  int _maxPositions = 5;
-  double _riskPercent = 3.0;
-  int _scanIntervalMinutes = 5;
-  int _maxTradesPerDay = 10;
-  double _maxDailyLossPct = 5.0;
-  double _capitalToUse = 0.0;
+  // Config state
+  String _orderType = 'LIMIT';   // 'LIMIT' or 'MARKET'
+  int _maxPositions = 3;
+  double _riskPercent = 1.5;
+  double _maxDailyLossPct = 3.0;
   int _leverage = 1;
 
   @override
@@ -42,6 +42,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
   @override
   void dispose() {
     _pulseController.dispose();
+    _capitalController.dispose();
     super.dispose();
   }
 
@@ -49,259 +50,216 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     final auth = context.read<AuthProvider>();
     if (auth.user == null) return;
     final provider = context.read<LiveTradingProvider>();
-    final settings = provider.status.isRunning
+    final s = provider.status.isRunning
         ? provider.status.settings
         : provider.lastSettings;
-    _applySlidersFromSettings(settings);
+    _applyFromSettings(s);
     provider.fetchStatus(auth.user!.userId);
   }
 
-  void _applySlidersFromSettings(AgentSettingsModel s) {
+  void _applyFromSettings(AgentSettingsModel s) {
     setState(() {
       _maxPositions = s.maxPositions;
       _riskPercent = s.riskPercent;
-      _scanIntervalMinutes = s.scanIntervalMinutes;
-      _maxTradesPerDay = s.maxTradesPerDay;
       _maxDailyLossPct = s.maxDailyLossPct;
-      _capitalToUse = s.capitalToUse;
       _leverage = s.leverage;
+      if (s.capitalToUse > 0) {
+        _capitalController.text = s.capitalToUse.toStringAsFixed(0);
+      }
     });
   }
 
-  void _persistCurrentSliders() {
-    context.read<LiveTradingProvider>().updateLastSettings(
-      AgentSettingsModel(
-        maxPositions: _maxPositions,
-        riskPercent: _riskPercent,
-        scanIntervalMinutes: _scanIntervalMinutes,
-        maxTradesPerDay: _maxTradesPerDay,
-        maxDailyLossPct: _maxDailyLossPct,
-        capitalToUse: _capitalToUse,
-        leverage: _leverage,
-      ),
-    );
-  }
+  double get _parsedCapital =>
+      double.tryParse(_capitalController.text.replaceAll(',', '').trim()) ?? 0.0;
 
-  // ── Analyze market ─────────────────────────────────────────────────────────
+  // ── Execute & Monitor ──────────────────────────────────────────────────────
 
-  Future<void> _analyzeMarket() async {
+  Future<void> _executeAndMonitor() async {
     final auth = context.read<AuthProvider>();
     if (auth.user == null) return;
-    // Clear order badges from prior analysis run
-    context.read<LiveTradingProvider>().placedOrderSymbols.clear();
-    await context.read<LiveTradingProvider>().analyzeMarket(
-      userId: auth.user!.userId,
-      accessToken: auth.user!.accessToken,
-      apiKey: auth.user!.apiKey,
-      limit: 5,
-    );
-  }
 
-  // ── Execute limit order ─────────────────────────────────────────────────────
+    final capital = _parsedCapital;
+    if (capital <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Please enter a valid capital amount first.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
 
-  Future<void> _executeLimitOrder(Map<String, dynamic> candidate) async {
-    final auth = context.read<AuthProvider>();
-    if (auth.user == null) return;
-    final live = context.read<LiveTradingProvider>();
-
-    final symbol     = candidate['symbol']       as String? ?? '';
-    final limitPrice = (candidate['entry_price'] as num?)?.toDouble() ?? 0;
-    final sl         = (candidate['stop_loss']   as num?)?.toDouble() ?? 0;
-    final tgt        = (candidate['target']      as num?)?.toDouble() ?? 0;
-    final atr        = (candidate['atr']         as num?)?.toDouble() ?? 0;
-    final signal     = candidate['signal']       as String? ?? 'BUY';
-    final action     = signal == 'SELL' ? 'SELL' : 'BUY';
-
-    final riskPerShare = (limitPrice - sl).abs();
-    final effectiveCap = _capitalToUse * _leverage;
-    final maxRisk      = effectiveCap * (_riskPercent / 100);
-    final previewQty   = riskPerShare > 0 ? (maxRisk / riskPerShare).floor().clamp(1, 9999) : 1;
-    final limitPriceCtrl = TextEditingController(text: limitPrice.toStringAsFixed(2));
-
+    // Confirm before executing
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: (action == 'BUY' ? Colors.green[700]! : Colors.red[700]!).withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(action,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold,
-                    color: action == 'BUY' ? Colors.green[700] : Colors.red[700])),
-          ),
-          const SizedBox(width: 8),
-          Text(symbol, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          Icon(Icons.rocket_launch_rounded, color: Colors.indigo[700], size: 22),
+          const SizedBox(width: 10),
+          const Text('Execute & Monitor', style: TextStyle(fontSize: 17)),
         ]),
-        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'A LIMIT $action order will be placed on Zerodha.\n'
-              'Quantity is calculated from your capital and risk settings.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            const Text(
+              'The agent will analyze the market, place orders automatically, '
+              'then monitor them until stop-loss, target, or manual exit.',
+              style: TextStyle(fontSize: 13, color: Colors.black87),
             ),
             const SizedBox(height: 16),
-            TextField(
-              controller: limitPriceCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                labelText: 'Limit Price (₹)',
-                helperText: 'Adjust slightly below LTP for a better fill',
-                helperStyle: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                isDense: true,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(children: [
-              _miniLabel('Stop Loss', '₹${sl.toStringAsFixed(2)}', Colors.red[700]!),
-              const SizedBox(width: 16),
-              _miniLabel('Target',   '₹${tgt.toStringAsFixed(2)}', Colors.green[700]!),
-            ]),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.indigo[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.indigo[200]!),
-              ),
-              child: RichText(
-                text: TextSpan(
-                  style: TextStyle(fontSize: 12, color: Colors.indigo[800]),
-                  children: [
-                    const TextSpan(text: 'Est. qty: '),
-                    TextSpan(
-                      text: '$previewQty shares',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                    TextSpan(
-                      text: ' — final qty calculated by agent',
-                      style: TextStyle(fontSize: 10, color: Colors.indigo[400]),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            _confirmRow(Icons.currency_rupee, 'Capital', _currency.format(capital)),
+            _confirmRow(Icons.swap_horiz, 'Order type', _orderType),
+            _confirmRow(Icons.layers, 'Max stocks', '$_maxPositions'),
+            _confirmRow(Icons.percent, 'Risk / trade', '${_riskPercent.toStringAsFixed(1)}%'),
+            _confirmRow(Icons.trending_down, 'Daily loss cap', '${_maxDailyLossPct.toStringAsFixed(1)}%'),
+            if (_leverage > 1)
+              _confirmRow(Icons.speed, 'Leverage', '${_leverage}x'),
           ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: action == 'BUY' ? Colors.green[700] : Colors.red[700],
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            icon: const Icon(Icons.bolt_rounded, color: Colors.white, size: 16),
-            label: Text('Place $action Order',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            onPressed: () => Navigator.pop(ctx, true),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-    final parsedLimit = double.tryParse(limitPriceCtrl.text) ?? limitPrice;
-
-    setState(() => _isInitializing = true);
-    try {
-      final qty = await live.placeLimitOrder(
-        userId: auth.user!.userId, accessToken: auth.user!.accessToken,
-        apiKey: auth.user!.apiKey, symbol: symbol, action: action,
-        limitPrice: parsedLimit, stopLoss: sl, target: tgt, atr: atr,
-        capitalToUse: _capitalToUse, riskPercent: _riskPercent, leverage: _leverage,
-      );
-      if (!mounted) return;
-      if (qty > 0) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('✓ $symbol: Limit $action placed — $qty shares @ ₹${parsedLimit.toStringAsFixed(2)}'),
-          backgroundColor: Colors.green[700],
-          duration: const Duration(seconds: 4),
-        ));
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(live.error ?? 'Failed to place order for $symbol'),
-          backgroundColor: Colors.red[700],
-        ));
-      }
-    } finally {
-      if (mounted) setState(() => _isInitializing = false);
-    }
-  }
-
-  Widget _miniLabel(String label, String value, Color color) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
-      Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
-    ],
-  );
-
-  // ── Start monitoring agent ─────────────────────────────────────────────────
-
-  Future<void> _startMonitoringAgent() async {
-    final auth = context.read<AuthProvider>();
-    if (auth.user == null) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Start Position Monitor'),
-        content: const Text(
-          'The agent will monitor positions you register — watching stop-loss, '
-          'targets, and trailing SL.\n\n'
-          'The agent does NOT place trades automatically. '
-          'You must execute trades manually on Zerodha, then register them here.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo[700]),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.indigo[700],
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            icon: const Icon(Icons.bolt_rounded, color: Colors.white, size: 16),
+            label: const Text('Execute', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Start Monitor', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
-
     if (confirmed != true || !mounted) return;
+
+    final live = context.read<LiveTradingProvider>();
+    final settings = AgentSettingsModel(
+      maxPositions: _maxPositions,
+      riskPercent: _riskPercent,
+      scanIntervalMinutes: 5,
+      maxTradesPerDay: _maxPositions * 2,
+      maxDailyLossPct: _maxDailyLossPct,
+      capitalToUse: capital,
+      leverage: _leverage,
+    );
 
     setState(() {
       _isInitializing = true;
-      _pulseController.repeat();
+      _overlayMessage = 'Starting monitor...';
     });
-    _persistCurrentSliders();
+    _pulseController.repeat();
+
     try {
-      await context.read<LiveTradingProvider>().startAgent(
+      // 1. Start the monitoring agent
+      await live.startAgent(
         userId: auth.user!.userId,
         accessToken: auth.user!.accessToken,
         apiKey: auth.user!.apiKey,
-        settings: AgentSettingsModel(
-          maxPositions: _maxPositions,
-          riskPercent: _riskPercent,
-          scanIntervalMinutes: _scanIntervalMinutes,
-          maxTradesPerDay: _maxTradesPerDay,
-          maxDailyLossPct: _maxDailyLossPct,
-          capitalToUse: _capitalToUse,
-          leverage: _leverage,
-        ),
+        settings: settings,
       );
+      if (!mounted) return;
+      if (live.error != null) throw Exception(live.error);
+
+      // 2. Analyze market
+      setState(() => _overlayMessage = 'Analyzing market...');
+      live.placedOrderSymbols.clear();
+      await live.analyzeMarket(
+        userId: auth.user!.userId,
+        accessToken: auth.user!.accessToken,
+        apiKey: auth.user!.apiKey,
+        limit: _maxPositions + 3,
+      );
+      if (!mounted) return;
+      if (live.analyzeError != null) throw Exception(live.analyzeError);
+
+      final qualifying = live.analysisResults
+          .where((c) => c['signal'] == 'BUY' || c['signal'] == 'SELL')
+          .take(_maxPositions)
+          .toList();
+
+      if (qualifying.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text(
+              'No qualifying signals found right now. '
+              'Agent is running — you can register positions manually.',
+            ),
+            backgroundColor: Colors.orange[700],
+            duration: const Duration(seconds: 6),
+          ));
+        }
+        return;
+      }
+
+      // 3. Place orders for each qualifying candidate
+      int placed = 0;
+      int failed = 0;
+      for (int i = 0; i < qualifying.length; i++) {
+        if (!mounted) break;
+        final c = qualifying[i];
+        final symbol = c['symbol'] as String? ?? '';
+        setState(() => _overlayMessage = 'Placing order ${i + 1}/${qualifying.length} — $symbol...');
+
+        final ltp = (c['ltp'] as num?)?.toDouble() ?? 0;
+        final qty = await live.placeLimitOrder(
+          userId: auth.user!.userId,
+          accessToken: auth.user!.accessToken,
+          apiKey: auth.user!.apiKey,
+          symbol: symbol,
+          action: c['signal'] == 'SELL' ? 'SELL' : 'BUY',
+          limitPrice: (c['entry_price'] as num?)?.toDouble() ?? ltp,
+          stopLoss: (c['stop_loss'] as num?)?.toDouble() ?? 0,
+          target: (c['target'] as num?)?.toDouble() ?? 0,
+          atr: (c['atr'] as num?)?.toDouble() ?? 0,
+          capitalToUse: capital,
+          riskPercent: _riskPercent,
+          leverage: _leverage,
+          orderType: _orderType,
+        );
+        if (qty > 0) { placed++; } else { failed++; }
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(placed > 0
+            ? '✓ $placed $_orderType order${placed == 1 ? '' : 's'} placed. Agent is monitoring...'
+                '${failed > 0 ? ' ($failed failed)' : ''}'
+            : 'All orders failed. Check Zerodha. Agent is still running.'),
+        backgroundColor: placed > 0 ? Colors.green[700] : Colors.red[700],
+        duration: const Duration(seconds: 5),
+      ));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.red[700],
+          duration: const Duration(seconds: 5),
+        ));
+      }
     } finally {
       if (mounted) {
         setState(() {
           _isInitializing = false;
-          _pulseController.stop();
+          _overlayMessage = 'Processing...';
         });
+        _pulseController.stop();
       }
     }
+  }
+
+  Widget _confirmRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(children: [
+        Icon(icon, size: 14, color: Colors.grey[600]),
+        const SizedBox(width: 8),
+        Text('$label: ', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+        Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+      ]),
+    );
   }
 
   // ── Stop agent ─────────────────────────────────────────────────────────────
@@ -332,38 +290,31 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                 final isProfit = p.currentPnl >= 0;
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: p.action == 'BUY' ? Colors.green[50] : Colors.red[50],
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          p.action,
+                  child: Row(children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: p.action == 'BUY' ? Colors.green[50] : Colors.red[50],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(p.action,
                           style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: p.action == 'BUY' ? Colors.green[700] : Colors.red[700],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: p.action == 'BUY' ? Colors.green[700] : Colors.red[700])),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
                         child: Text(p.symbol,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                      ),
-                      Text(
-                        '${isProfit ? '+' : ''}${_currency.format(p.currentPnl)}',
-                        style: TextStyle(
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                    Text(
+                      '${isProfit ? '+' : ''}${_currency.format(p.currentPnl)}',
+                      style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
-                          color: isProfit ? Colors.green[700] : Colors.red[600],
-                        ),
-                      ),
-                    ],
-                  ),
+                          color: isProfit ? Colors.green[700] : Colors.red[600]),
+                    ),
+                  ]),
                 );
               }),
               const SizedBox(height: 12),
@@ -393,7 +344,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     if (confirmed != true || !mounted) return;
     await context.read<LiveTradingProvider>().stopAgent(auth.user!.userId);
     if (mounted) {
-      _applySlidersFromSettings(context.read<LiveTradingProvider>().lastSettings);
+      _applyFromSettings(context.read<LiveTradingProvider>().lastSettings);
     }
   }
 
@@ -419,9 +370,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlgState) => AlertDialog(
           title: Text(
-            prefill != null
-                ? 'Register Position: ${prefill['symbol']}'
-                : 'Register Position',
+            prefill != null ? 'Register Position: ${prefill['symbol']}' : 'Register Position',
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           content: SingleChildScrollView(
@@ -434,19 +383,14 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 12),
-
-                // Action toggle
-                Row(
-                  children: [
-                    const Text('Direction: ', style: TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 8),
-                    _actionChip('BUY', action, Colors.green[700]!, () => setDlgState(() => action = 'BUY')),
-                    const SizedBox(width: 8),
-                    _actionChip('SELL', action, Colors.red[700]!, () => setDlgState(() => action = 'SELL')),
-                  ],
-                ),
+                Row(children: [
+                  const Text('Direction: ', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(width: 8),
+                  _actionChip('BUY', action, Colors.green[700]!, () => setDlgState(() => action = 'BUY')),
+                  const SizedBox(width: 8),
+                  _actionChip('SELL', action, Colors.red[700]!, () => setDlgState(() => action = 'SELL')),
+                ]),
                 const SizedBox(height: 12),
-
                 if (prefill == null) ...[
                   _dlgField('Symbol (e.g. RELIANCE)', symbolCtrl,
                       textCapitalization: TextCapitalization.characters),
@@ -465,10 +409,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo[700]),
               onPressed: () => Navigator.pop(ctx, true),
@@ -516,7 +457,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(ok
-            ? '✓ $sym registered — agent is now monitoring this position'
+            ? '✓ $sym registered — agent is monitoring this position'
             : context.read<LiveTradingProvider>().error ?? 'Failed to register position'),
         backgroundColor: ok ? Colors.green[700] : Colors.red[700],
       ));
@@ -534,14 +475,12 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: selected ? color : Colors.grey[400]!, width: 1.5),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? color : Colors.grey[600],
-            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-            fontSize: 13,
-          ),
-        ),
+        child: Text(label,
+            style: TextStyle(
+              color: selected ? color : Colors.grey[600],
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              fontSize: 13,
+            )),
       ),
     );
   }
@@ -597,67 +536,45 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ── Status card ───────────────────────────────────────────
+                // ── Agent status card ─────────────────────────────────
                 _buildStatusCard(status, live.isLoading, isRunning),
                 const SizedBox(height: 16),
 
-                // ── Error banner ──────────────────────────────────────────
+                // ── Error banner ──────────────────────────────────────
                 if (live.error != null)
                   _buildBanner(live.error!.replaceFirst('Exception: ', ''), Colors.red),
 
-                // ── Pending limit orders ──────────────────────────────────
-                if (status.pendingOrders.isNotEmpty) ...[
-                  _buildSectionHeader('Pending Limit Orders', Icons.pending_actions, Colors.orange[700]!),
-                  const SizedBox(height: 8),
-                  ...status.pendingOrders.map(_buildPendingOrderCard),
-                  const SizedBox(height: 16),
-                ],
-
-                // ── Open positions monitored ──────────────────────────────
-                if (status.openPositions.isNotEmpty) ...[
-                  _buildSectionHeader('Monitored Positions', Icons.track_changes, Colors.green[700]!),
-                  const SizedBox(height: 8),
-                  ...status.openPositions.map(_buildPositionCard),
-                  const SizedBox(height: 16),
-                ],
-
-                // ── Agent stopped: Step 1 — Analyze ──────────────────────
-                if (!isRunning) ...[
-                  _buildSectionHeader('Step 1 — Analyze Market', Icons.search, Colors.orange[700]!),
-                  const SizedBox(height: 8),
-                  _buildAnalyzeSection(live),
-                  if (live.analysisResults.isNotEmpty) ...[
-                  const SizedBox(height: 24),
-                  _buildSectionHeader('Step 2 — Start Monitor + Register Positions', Icons.play_circle_outline, Colors.indigo[600]!),
-                  const SizedBox(height: 8),
-                  _buildSettingsCard(),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.indigo[700],
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      icon: const Icon(Icons.monitor_heart_outlined, color: Colors.white),
-                      label: const Text(
-                        'Start Position Monitor',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                      ),
-                      onPressed: live.isLoading ? null : _startMonitoringAgent,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  ],
-                ],
-
-                // ── Agent running: add position button ────────────────────
+                // ── RUNNING STATE ─────────────────────────────────────
                 if (isRunning) ...[
+                  // Pending limit orders
+                  if (status.pendingOrders.isNotEmpty) ...[
+                    _buildSectionHeader(
+                        'Pending Orders (${status.pendingOrders.length})',
+                        Icons.pending_actions,
+                        Colors.orange[700]!),
+                    const SizedBox(height: 8),
+                    ...status.pendingOrders.map(_buildPendingOrderCard),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Monitored positions
+                  if (status.openPositions.isNotEmpty) ...[
+                    _buildSectionHeader(
+                        'Monitored Positions (${status.openPositions.length})',
+                        Icons.track_changes,
+                        Colors.green[700]!),
+                    const SizedBox(height: 8),
+                    ...status.openPositions.map(_buildPositionCard),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Active settings summary
                   _buildSectionHeader('Active Settings', Icons.tune, Colors.indigo[400]!),
                   const SizedBox(height: 8),
                   _buildActiveSettingsBadges(status.settings),
                   const SizedBox(height: 16),
+
+                  // Manual register button
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
@@ -665,10 +582,11 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                         foregroundColor: Colors.indigo[700],
                         side: BorderSide(color: Colors.indigo[300]!),
                         padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
                       ),
                       icon: const Icon(Icons.add_circle_outline),
-                      label: const Text('Register Another Position',
+                      label: const Text('Register Position Manually',
                           style: TextStyle(fontWeight: FontWeight.bold)),
                       onPressed: () => _showRegisterDialog(),
                     ),
@@ -676,7 +594,34 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                   const SizedBox(height: 16),
                 ],
 
-                // ── Activity log ──────────────────────────────────────────
+                // ── STOPPED STATE ─────────────────────────────────────
+                if (!isRunning) ...[
+                  _buildConfigCard(),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.indigo[700],
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.rocket_launch_rounded, color: Colors.white),
+                      label: const Text(
+                        'Execute & Monitor',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16),
+                      ),
+                      onPressed: live.isLoading ? null : _executeAndMonitor,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // ── Activity log (always) ─────────────────────────────
                 _buildSectionHeader('Activity Log', Icons.receipt_long, Colors.blueGrey),
                 const SizedBox(height: 8),
                 _buildLogList(status.recentLogs),
@@ -685,128 +630,179 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
           ),
         ),
 
-        // ── Full-screen loading overlay ───────────────────────────────────
-        if (_isInitializing) _buildLoadingOverlay('Starting monitor...'),
+        // ── Loading overlay ───────────────────────────────────────────
+        if (_isInitializing) _buildLoadingOverlay(_overlayMessage),
       ],
     );
   }
 
-  // ── Analyze section ────────────────────────────────────────────────────────
+  // ── Config card (stopped state) ───────────────────────────────────────────
 
-  Widget _buildAnalyzeSection(LiveTradingProvider live) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange[700],
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+  Widget _buildConfigCard() {
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Trading Configuration',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+
+            // Capital field
+            TextField(
+              controller: _capitalController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+              decoration: InputDecoration(
+                labelText: 'Capital to Deploy (₹)',
+                prefixIcon: const Icon(Icons.currency_rupee, size: 18),
+                helperText: 'Total rupees to use for this session',
+                helperStyle: const TextStyle(fontSize: 11),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
             ),
-            icon: live.isAnalyzing
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                  )
-                : const Icon(Icons.analytics_outlined, color: Colors.white),
-            label: Text(
-              live.isAnalyzing ? 'Analyzing...' : 'Analyze Market',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-            ),
-            onPressed: live.isAnalyzing ? null : _analyzeMarket,
-          ),
-        ),
-        if (live.analyzeError != null)
-          _buildBanner(live.analyzeError!, Colors.red),
-        if (live.analysisResults.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _buildBanner(
-            '✓ ${live.analysisResults.length} candidates found. '
-            'Tap “Execute Limit Order” on a card, then Start Monitoring.',
-            Colors.green,
-          ),
-          const SizedBox(height: 8),
-          ...live.analysisResults.map((c) => _LiveCandidateCard(
-            candidate: c,
-            live: live,
-            currency: _currency,
-            capitalToUse: _capitalToUse,
-            riskPercent: _riskPercent,
-            leverage: _leverage,
-            onExecute: _executeLimitOrder,
-          )),
-        ],
-      ],
-    );
-  }
+            const SizedBox(height: 20),
 
-  // ── Pending order card (shows limit orders awaiting fill) ────────────────
-
-  Widget _buildPendingOrderCard(PendingOrderModel order) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.orange[300]!),
-        boxShadow: [BoxShadow(color: Colors.orange.withValues(alpha: 0.1), blurRadius: 6)],
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 20, height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orange[700]),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(children: [
-                  Text(order.symbol,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.green[700]!.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(4),
+            // Order type toggle
+            Row(children: [
+              Text('Order Type:',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[800])),
+              const SizedBox(width: 12),
+              _typeChip('LIMIT'),
+              const SizedBox(width: 8),
+              _typeChip('MARKET'),
+            ]),
+            if (_orderType == 'MARKET') ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.orange[200]!),
+                ),
+                child: Row(children: [
+                  Icon(Icons.info_outline, size: 14, color: Colors.orange[700]),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Market orders execute immediately at the current market price.',
+                      style: TextStyle(fontSize: 11, color: Colors.orange[800]),
                     ),
-                    child: Text(order.action,
-                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold,
-                            color: Colors.green[700])),
                   ),
                 ]),
-                const SizedBox(height: 4),
-                Text(
-                  'Limit ₹${order.limitPrice.toStringAsFixed(2)} · '
-                  'SL ₹${order.stopLoss.toStringAsFixed(2)} · '
-                  'Tgt ₹${order.target.toStringAsFixed(2)} · qty ${order.quantity}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                ),
-              ],
+              ),
+            ],
+            const SizedBox(height: 20),
+
+            // Sliders
+            _buildSlider(
+              label: 'Max Stocks',
+              displayLabel: '$_maxPositions',
+              value: _maxPositions.toDouble(),
+              min: 1, max: 10, divisions: 9,
+              onChanged: (v) => setState(() => _maxPositions = v.round()),
             ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.orange[50],
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: Colors.orange[200]!),
+            _buildSlider(
+              label: 'Risk / Trade',
+              displayLabel: '${_riskPercent.toStringAsFixed(1)}%',
+              value: _riskPercent,
+              min: 0.5, max: 5.0, divisions: 9,
+              onChanged: (v) =>
+                  setState(() => _riskPercent = (v * 10).round() / 10),
             ),
-            child: Text('PENDING',
-                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold,
-                    color: Colors.orange[800], letterSpacing: 0.8)),
-          ),
-        ],
+            _buildSlider(
+              label: 'Daily Loss Cap',
+              displayLabel: '${_maxDailyLossPct.toStringAsFixed(1)}%',
+              value: _maxDailyLossPct,
+              min: 1.0, max: 10.0, divisions: 9,
+              onChanged: (v) =>
+                  setState(() => _maxDailyLossPct = (v * 10).round() / 10),
+            ),
+            _buildSlider(
+              label: 'Leverage',
+              displayLabel: '${_leverage}x',
+              value: _leverage.toDouble(),
+              min: 1, max: 5, divisions: 4,
+              onChanged: (v) => setState(() => _leverage = v.round()),
+            ),
+          ],
+        ),
       ),
     );
   }
 
+  Widget _typeChip(String type) {
+    final selected = _orderType == type;
+    return GestureDetector(
+      onTap: () => setState(() => _orderType = type),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? Colors.indigo[700] : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: selected ? Colors.indigo[700]! : Colors.grey[400]!),
+        ),
+        child: Text(
+          type,
+          style: TextStyle(
+            color: selected ? Colors.white : Colors.grey[700],
+            fontWeight: FontWeight.bold,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSlider({
+    required String label,
+    required String displayLabel,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(children: [
+        SizedBox(
+          width: 110,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+            Text(displayLabel,
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.indigo[700])),
+          ]),
+        ),
+        Expanded(
+          child: Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            divisions: divisions,
+            onChanged: onChanged,
+            activeColor: Colors.indigo[600],
+          ),
+        ),
+      ]),
+    );
+  }
 
   // ── Status card ────────────────────────────────────────────────────────────
 
@@ -832,104 +828,108 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: isRunning ? Colors.greenAccent : Colors.white38,
-                    shape: BoxShape.circle,
-                    boxShadow: isRunning
-                        ? [BoxShadow(color: Colors.greenAccent.withValues(alpha: 0.6), blurRadius: 6)]
-                        : [],
-                  ),
+            Row(children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: isRunning ? Colors.greenAccent : Colors.white38,
+                  shape: BoxShape.circle,
+                  boxShadow: isRunning
+                      ? [BoxShadow(
+                          color: Colors.greenAccent.withValues(alpha: 0.6),
+                          blurRadius: 6)]
+                      : [],
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  isRunning ? 'Agent Monitoring' : 'Agent Stopped',
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const Spacer(),
-                if (isRunning)
-                  GestureDetector(
-                    onTap: isLoading ? null : _stopAgent,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: Colors.red[400],
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: isLoading
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.stop_rounded, color: Colors.white, size: 16),
-                                SizedBox(width: 4),
-                                Text('Stop', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                              ],
-                            ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isRunning ? 'Agent Running' : 'Agent Stopped',
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const Spacer(),
+              if (isRunning)
+                GestureDetector(
+                  onTap: isLoading ? null : _stopAgent,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: Colors.red[400],
+                      borderRadius: BorderRadius.circular(20),
                     ),
+                    child: isLoading
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.stop_rounded, color: Colors.white, size: 16),
+                            SizedBox(width: 4),
+                            Text('Stop',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
+                          ]),
                   ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                _buildStatChip('Positions', '${status.openPositions.length}/${status.settings.maxPositions}', Icons.layers),
-                const SizedBox(width: 10),
-                _buildStatChip('Trades', '${status.tradeCountToday}', Icons.swap_horiz),
-                const SizedBox(width: 10),
-                _buildStatChip(
-                  'Day P&L',
-                  '${isProfit ? '+' : ''}${_currency.format(pnl)}',
-                  isProfit ? Icons.trending_up : Icons.trending_down,
-                  valueColor: isProfit ? Colors.greenAccent[100] : Colors.red[200],
                 ),
-              ],
-            ),
+            ]),
+            const SizedBox(height: 14),
+            Row(children: [
+              _buildStatChip(
+                  'Positions',
+                  '${status.openPositions.length}/${status.settings.maxPositions}',
+                  Icons.layers),
+              const SizedBox(width: 10),
+              _buildStatChip(
+                  'Trades', '${status.tradeCountToday}', Icons.swap_horiz),
+              const SizedBox(width: 10),
+              _buildStatChip(
+                'Day P&L',
+                '${isProfit ? '+' : ''}${_currency.format(pnl)}',
+                isProfit ? Icons.trending_up : Icons.trending_down,
+                valueColor: isProfit ? Colors.greenAccent[100] : Colors.red[200],
+              ),
+            ]),
             if (isRunning) ...[
               const SizedBox(height: 10),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.greenAccent, width: 0.8),
-                    ),
-                    child: Text(
-                      'Monitoring Only Mode',
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.greenAccent, width: 0.8),
+                  ),
+                  child: Text('Monitoring Active',
                       style: TextStyle(
-                          fontSize: 10, fontWeight: FontWeight.bold, color: Colors.greenAccent[100]),
-                    ),
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.greenAccent[100])),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: status.tickerConnected
+                        ? Colors.greenAccent
+                        : Colors.orange[300],
+                    shape: BoxShape.circle,
                   ),
-                  const SizedBox(width: 8),
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: status.tickerConnected ? Colors.greenAccent : Colors.orange[300],
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    status.tickerConnected ? 'Live feed' : 'Polling',
-                    style: TextStyle(
-                      color: status.tickerConnected ? Colors.greenAccent[100] : Colors.orange[200],
-                      fontSize: 10,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  status.tickerConnected ? 'Live feed' : 'Polling',
+                  style: TextStyle(
+                      color: status.tickerConnected
+                          ? Colors.greenAccent[100]
+                          : Colors.orange[200],
+                      fontSize: 10),
+                ),
+              ]),
             ],
             if (status.dailyLossLimitHit) ...[
               const SizedBox(height: 10),
@@ -940,15 +940,12 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.red[300]!),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.warning_amber_rounded, color: Colors.red[200], size: 16),
-                    const SizedBox(width: 6),
-                    Text('Daily loss limit hit — no new trades',
-                        style: TextStyle(color: Colors.red[200], fontSize: 12)),
-                  ],
-                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.red[200], size: 16),
+                  const SizedBox(width: 6),
+                  Text('Daily loss limit hit — no new trades',
+                      style: TextStyle(color: Colors.red[200], fontSize: 12)),
+                ]),
               ),
             ],
           ],
@@ -957,7 +954,8 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     );
   }
 
-  Widget _buildStatChip(String label, String value, IconData icon, {Color? valueColor}) {
+  Widget _buildStatChip(String label, String value, IconData icon,
+      {Color? valueColor}) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.all(10),
@@ -965,29 +963,123 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
           color: Colors.white.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, size: 12, color: Colors.white60),
-                const SizedBox(width: 4),
-                Text(label, style: const TextStyle(color: Colors.white60, fontSize: 10)),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              value,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(icon, size: 12, color: Colors.white60),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(color: Colors.white60, fontSize: 10)),
+          ]),
+          const SizedBox(height: 4),
+          Text(value,
               style: TextStyle(
                   color: valueColor ?? Colors.white,
                   fontWeight: FontWeight.bold,
                   fontSize: 13),
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
+              overflow: TextOverflow.ellipsis),
+        ]),
       ),
+    );
+  }
+
+  // ── Active settings badges (running state) ─────────────────────────────────
+
+  Widget _buildActiveSettingsBadges(AgentSettingsModel s) {
+    final badges = [
+      '${s.maxPositions} stocks',
+      '${s.riskPercent}% risk/trade',
+      '${s.maxDailyLossPct}% loss cap',
+      if (s.leverage > 1) '${s.leverage}x leverage',
+      if (s.capitalToUse > 0) '₹${(s.capitalToUse / 1000).toStringAsFixed(0)}k capital',
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: badges
+          .map((b) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.indigo[50],
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.indigo[200]!),
+                ),
+                child: Text(b,
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.indigo[700],
+                        fontWeight: FontWeight.w600)),
+              ))
+          .toList(),
+    );
+  }
+
+  // ── Pending order card ─────────────────────────────────────────────────────
+
+  Widget _buildPendingOrderCard(PendingOrderModel order) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.orange[300]!),
+        boxShadow: [
+          BoxShadow(color: Colors.orange.withValues(alpha: 0.1), blurRadius: 6)
+        ],
+      ),
+      child: Row(children: [
+        SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(
+              strokeWidth: 2, color: Colors.orange[700]),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Text(order.symbol,
+                  style:
+                      const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.green[700]!.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(order.action,
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green[700])),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Text(
+              'Limit ₹${order.limitPrice.toStringAsFixed(2)} · '
+              'SL ₹${order.stopLoss.toStringAsFixed(2)} · '
+              'Tgt ₹${order.target.toStringAsFixed(2)} · '
+              'qty ${order.quantity}',
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+          ]),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.orange[50],
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.orange[200]!),
+          ),
+          child: Text('PENDING',
+              style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange[800],
+                  letterSpacing: 0.8)),
+        ),
+      ]),
     );
   }
 
@@ -1003,163 +1095,75 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(14),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: isBuy ? Colors.green[50] : Colors.red[50],
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    pos.action,
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: isBuy ? Colors.green[700] : Colors.red[700]),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(pos.symbol,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                if (pos.trailActivated) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                        color: Colors.orange[50], borderRadius: BorderRadius.circular(6)),
-                    child: Text(
-                      pos.trailCount > 0 ? 'TRAIL ×${pos.trailCount}' : 'TRAIL',
-                      style: TextStyle(
-                          fontSize: 9, fontWeight: FontWeight.bold, color: Colors.orange[700]),
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                Text(
-                  '${isProfit ? '+' : ''}${_currency.format(pos.currentPnl)}',
+        child: Column(children: [
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: isBuy ? Colors.green[50] : Colors.red[50],
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(pos.action,
                   style: TextStyle(
+                      fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      color: isProfit ? Colors.green[700] : Colors.red[600]),
+                      color: isBuy ? Colors.green[700] : Colors.red[700])),
+            ),
+            const SizedBox(width: 8),
+            Text(pos.symbol,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+            if (pos.trailActivated) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                    color: Colors.orange[50],
+                    borderRadius: BorderRadius.circular(6)),
+                child: Text(
+                  pos.trailCount > 0 ? 'TRAIL ×${pos.trailCount}' : 'TRAIL',
+                  style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange[700]),
                 ),
-              ],
+              ),
+            ],
+            const Spacer(),
+            Text(
+              '${isProfit ? '+' : ''}${_currency.format(pos.currentPnl)}',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  color: isProfit ? Colors.green[700] : Colors.red[600]),
             ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildPriceLabel('Entry', pos.entryPrice),
-                _buildPriceLabel('SL', pos.stopLoss, color: Colors.red[600]),
-                _buildPriceLabel('Target', pos.target, color: Colors.green[700]),
-                _buildPriceLabel('Qty', pos.quantity.toDouble(), isQty: true),
-              ],
-            ),
-          ],
-        ),
+          ]),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildPriceLabel('Entry', pos.entryPrice),
+              _buildPriceLabel('SL', pos.stopLoss, color: Colors.red[600]),
+              _buildPriceLabel('Target', pos.target, color: Colors.green[700]),
+              _buildPriceLabel('Qty', pos.quantity.toDouble(), isQty: true),
+            ],
+          ),
+        ]),
       ),
     );
   }
 
   Widget _buildPriceLabel(String label, double value,
       {Color? color, bool isQty = false}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
-        Text(
-          isQty ? value.toInt().toString() : _currency.format(value),
-          style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: color ?? Colors.grey[800]),
-        ),
-      ],
-    );
-  }
-
-  // ── Settings card ──────────────────────────────────────────────────────────
-
-  Widget _buildSettingsCard() {
-    return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            _buildSlider2(label: 'Max Positions', value: _maxPositions.toDouble(), min: 1, max: 10, divisions: 9, onChanged: (v) => setState(() { _maxPositions = v.round(); _persistCurrentSliders(); }), displayLabel: _maxPositions.toString()),
-            _buildSlider2(label: 'Risk / Trade', value: _riskPercent, min: 0.5, max: 5.0, divisions: 9, onChanged: (v) => setState(() { _riskPercent = (v * 10).round() / 10; _persistCurrentSliders(); }), displayLabel: '${_riskPercent.toStringAsFixed(1)}%'),
-            _buildSlider2(label: 'Max Trades/Day', value: _maxTradesPerDay.toDouble(), min: 1, max: 20, divisions: 19, onChanged: (v) => setState(() { _maxTradesPerDay = v.round(); _persistCurrentSliders(); }), displayLabel: _maxTradesPerDay.toString()),
-            _buildSlider2(label: 'Daily Loss Cap', value: _maxDailyLossPct, min: 1.0, max: 10.0, divisions: 9, onChanged: (v) => setState(() { _maxDailyLossPct = (v * 10).round() / 10; _persistCurrentSliders(); }), displayLabel: '${_maxDailyLossPct.toStringAsFixed(1)}%'),
-          ],
-        ),
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+      Text(
+        isQty ? value.toInt().toString() : _currency.format(value),
+        style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: color ?? Colors.grey[800]),
       ),
-    );
-  }
-
-  Widget _buildSlider2({
-    required String label,
-    required double value,
-    required double min,
-    required double max,
-    required int divisions,
-    required ValueChanged<double> onChanged,
-    required String displayLabel,
-  }) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 110,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-              Text(displayLabel,
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.indigo[700])),
-            ],
-          ),
-        ),
-        Expanded(
-          child: Slider(
-            value: value.clamp(min, max),
-            min: min,
-            max: max,
-            divisions: divisions,
-            onChanged: onChanged,
-            activeColor: Colors.indigo[600],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildActiveSettingsBadges(AgentSettingsModel s) {
-    final badges = [
-      '${s.maxPositions} positions',
-      '${s.riskPercent}% risk',
-      '${s.maxTradesPerDay} trades/day',
-      '${s.leverage}x leverage',
-    ];
-    return Wrap(
-      spacing: 8,
-      runSpacing: 6,
-      children: badges
-          .map((b) => Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.indigo[50],
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.indigo[200]!),
-                ),
-                child: Text(b,
-                    style: TextStyle(
-                        fontSize: 12, color: Colors.indigo[700], fontWeight: FontWeight.w600)),
-              ))
-          .toList(),
-    );
+    ]);
   }
 
   // ── Log list ───────────────────────────────────────────────────────────────
@@ -1174,7 +1178,8 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: Colors.grey[200]!),
         ),
-        child: Text('No activity yet.', style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+        child: Text('No activity yet.',
+            style: TextStyle(color: Colors.grey[500], fontSize: 13)),
       );
     }
     return Container(
@@ -1197,26 +1202,30 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     final color = _eventColor(log.event);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(log.timestamp,
-              style: TextStyle(fontSize: 10, color: Colors.grey[500], fontFamily: 'monospace')),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration:
-                BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
-            child: Text(log.event,
-                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: color)),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(log.message,
-                style: const TextStyle(fontSize: 11), maxLines: 3, overflow: TextOverflow.ellipsis),
-          ),
-        ],
-      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(log.timestamp,
+            style: TextStyle(
+                fontSize: 10,
+                color: Colors.grey[500],
+                fontFamily: 'monospace')),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(4)),
+          child: Text(log.event,
+              style: TextStyle(
+                  fontSize: 9, fontWeight: FontWeight.bold, color: color)),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(log.message,
+              style: const TextStyle(fontSize: 11),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis),
+        ),
+      ]),
     );
   }
 
@@ -1246,14 +1255,13 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
   // ── Section header ─────────────────────────────────────────────────────────
 
   Widget _buildSectionHeader(String title, IconData icon, Color color) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: color),
-        const SizedBox(width: 6),
-        Text(title,
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
-      ],
-    );
+    return Row(children: [
+      Icon(icon, size: 16, color: color),
+      const SizedBox(width: 6),
+      Text(title,
+          style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+    ]);
   }
 
   Widget _buildBanner(String message, MaterialColor color) {
@@ -1265,20 +1273,17 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: color[200]!),
       ),
-      child: Row(
-        children: [
-          Icon(
-            color == Colors.red ? Icons.error_outline : Icons.info_outline,
-            color: color[700],
-            size: 16,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
+      child: Row(children: [
+        Icon(
+          color == Colors.red ? Icons.error_outline : Icons.info_outline,
+          color: color[700],
+          size: 16,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
             child: Text(message,
-                style: TextStyle(color: color[700], fontSize: 12)),
-          ),
-        ],
-      ),
+                style: TextStyle(color: color[700], fontSize: 12))),
+      ]),
     );
   }
 
@@ -1320,8 +1325,8 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                             blurRadius: 20),
                       ],
                     ),
-                    child: const Icon(Icons.monitor_heart_outlined,
-                        color: Colors.white, size: 36),
+                    child: const Icon(Icons.rocket_launch_rounded,
+                        color: Colors.white, size: 34),
                   ),
                 ],
               ),
@@ -1329,350 +1334,19 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             const SizedBox(height: 36),
             Text(message,
                 style: const TextStyle(
-                    color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             const SizedBox(
               width: 24,
               height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white54),
+              child: CircularProgressIndicator(
+                  strokeWidth: 2.5, color: Colors.white54),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-// ── Live candidate card (analysis results in live trading) ────────────────────
-
-class _LiveCandidateCard extends StatefulWidget {
-  final Map<String, dynamic> candidate;
-  final LiveTradingProvider live;
-  final NumberFormat currency;
-  final double capitalToUse;
-  final double riskPercent;
-  final int leverage;
-  final Future<void> Function(Map<String, dynamic>) onExecute;
-
-  const _LiveCandidateCard({
-    required this.candidate,
-    required this.live,
-    required this.currency,
-    required this.capitalToUse,
-    required this.riskPercent,
-    required this.leverage,
-    required this.onExecute,
-  });
-
-  @override
-  State<_LiveCandidateCard> createState() => _LiveCandidateCardState();
-}
-
-class _LiveCandidateCardState extends State<_LiveCandidateCard> {
-  @override
-  Widget build(BuildContext context) {
-    final c = widget.candidate;
-    final live = widget.live;
-
-    final symbol     = c['symbol']   as String? ?? '';
-    final isPlaced   = live.placedOrderSymbols.contains(symbol);
-    final signal     = c['signal']   as String? ?? 'NEUTRAL';
-    final strength   = c['strength'] as int?    ?? 0;
-    final isBuy      = signal == 'BUY';
-    final isSell     = signal == 'SELL';
-    final signalColor = isBuy
-        ? Colors.green[700]!
-        : isSell
-            ? Colors.red[700]!
-            : Colors.grey[600]!;
-
-    final ltp        = (c['ltp']            as num?)?.toDouble() ?? 0;
-    final entryPrice = (c['entry_price']    as num?)?.toDouble() ?? ltp;
-    final sl         = (c['stop_loss']      as num?)?.toDouble() ?? 0;
-    final tgt        = (c['target']         as num?)?.toDouble() ?? 0;
-    final t1         = (c['t1']             as num?)?.toDouble() ?? 0;
-    final rr         = (c['rr_ratio']       as num?)?.toDouble() ?? 0;
-    final rsi        = (c['rsi']            as num?)?.toDouble();
-    final macdHist   = (c['macd_histogram'] as num?)?.toDouble();
-    final reasons    = List<String>.from(c['reasons'] as List? ?? []);
-    final companyName = c['company_name'] as String?;
-
-    // Estimated quantity from capital/risk settings
-    final riskPerShare = (entryPrice - sl).abs();
-    final effectiveCap = widget.capitalToUse * widget.leverage;
-    final maxRisk      = effectiveCap * (widget.riskPercent / 100);
-    final estQty       = riskPerShare > 0
-        ? (maxRisk / riskPerShare).floor().clamp(1, 9999)
-        : 0;
-
-    // Potential P&L
-    final potentialProfit = isSell
-        ? estQty * (entryPrice - tgt).abs()
-        : estQty * (tgt - entryPrice).abs();
-    final potentialLoss = estQty * riskPerShare;
-    final invested      = estQty * entryPrice;
-
-    // Confidence from strength (0–3 dots → 0–100 %)
-    final confidencePct = (strength / 3 * 100).round();
-
-    return Card(
-      elevation: 2,
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: signalColor.withValues(alpha: 0.4), width: 1.2),
-      ),
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        childrenPadding: EdgeInsets.zero,
-        leading: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            color: signalColor.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(signal,
-                  style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.bold, color: signalColor)),
-              if (isSell)
-                Text('SHORT', style: TextStyle(fontSize: 9, color: signalColor)),
-            ],
-          ),
-        ),
-        title: Row(
-          children: [
-            Text(symbol,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(width: 8),
-            // Signal strength dots
-            Row(
-              children: List.generate(3, (i) => Container(
-                width: 7,
-                height: 7,
-                margin: const EdgeInsets.only(right: 3),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: i < strength ? signalColor : Colors.grey[300],
-                ),
-              )),
-            ),
-          ],
-        ),
-        subtitle: companyName != null
-            ? Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(companyName,
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-              )
-            : null,
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(widget.currency.format(ltp),
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-            Text(
-              estQty > 0 ? '~$estQty shares' : 'Set capital first',
-              style: TextStyle(
-                fontSize: 11,
-                color: estQty > 0 ? Colors.grey[600] : Colors.orange[700],
-              ),
-            ),
-          ],
-        ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Divider(height: 1),
-                const SizedBox(height: 12),
-
-                // ── Price details ──────────────────────────────────────────
-                _row('Entry Price', widget.currency.format(entryPrice)),
-                _row('Stop Loss', widget.currency.format(sl),
-                    valueColor: Colors.red[700]),
-                if (t1 > 0)
-                  _row('Target 1', widget.currency.format(t1),
-                      valueColor: Colors.orange[700]),
-                _row('Target', widget.currency.format(tgt),
-                    valueColor: Colors.green[700]),
-                _row('Est. Quantity',
-                    estQty > 0 ? '$estQty shares' : '— (set capital in settings)'),
-
-                const Divider(height: 20),
-
-                // ── P&L ───────────────────────────────────────────────────
-                _row(
-                  'Potential Profit',
-                  widget.currency.format(potentialProfit),
-                  valueColor: Colors.green,
-                  pct: invested > 0 ? potentialProfit / invested * 100 : null,
-                  pctColor: Colors.green[700],
-                ),
-                _row(
-                  'Potential Loss',
-                  widget.currency.format(potentialLoss),
-                  valueColor: Colors.red,
-                  pct: invested > 0 ? potentialLoss / invested * 100 : null,
-                  pctColor: Colors.red[700],
-                ),
-                _row('Risk:Reward', '1:${rr.toStringAsFixed(2)}'),
-                _row('Signal Strength', '$confidencePct%'),
-
-                // ── Technical indicators ───────────────────────────────────
-                if (rsi != null || macdHist != null) ...[
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      if (rsi != null)
-                        _chip('RSI ${rsi.toStringAsFixed(0)}',
-                            rsi > 60 ? Colors.orange : rsi < 40 ? Colors.blue : Colors.grey),
-                      if (macdHist != null)
-                        _chip(
-                          'MACD ${macdHist > 0 ? '+' : ''}${macdHist.toStringAsFixed(3)}',
-                          macdHist > 0 ? Colors.green : Colors.red,
-                        ),
-                    ],
-                  ),
-                ],
-
-                // ── Signal reasoning ───────────────────────────────────────
-                if (reasons.isNotEmpty) ...[
-                  const Divider(height: 20),
-                  const Text('Signal Reasoning:',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  ...reasons.map((r) => Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.check_circle_outline, size: 14, color: signalColor),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(r,
-                              style: TextStyle(fontSize: 13, color: Colors.grey[700])),
-                        ),
-                      ],
-                    ),
-                  )),
-                ],
-
-                const SizedBox(height: 12),
-
-                // ── Execute limit order button ─────────────────────────────
-                isPlaced
-                    ? Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.green[50],
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.green[300]!),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.check_circle_rounded,
-                                color: Colors.green[700], size: 16),
-                            const SizedBox(width: 6),
-                            Text(
-                              'ORDER PLACED ✓'
-                              '${live.placedOrderQty[symbol] != null ? '  ×${live.placedOrderQty[symbol]} shares' : ''}',
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green[700]),
-                            ),
-                          ],
-                        ),
-                      )
-                    : SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: signalColor,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8)),
-                          ),
-                          icon: const Icon(Icons.bolt_rounded,
-                              color: Colors.white, size: 16),
-                          label: Text(
-                            'Place ${isSell ? 'SELL' : 'BUY'} Limit Order',
-                            style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white),
-                          ),
-                          onPressed:
-                              live.isLoading ? null : () => widget.onExecute(c),
-                        ),
-                      ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _row(String label, String value,
-      {Color? valueColor, double? pct, Color? pctColor}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: TextStyle(fontSize: 14, color: Colors.grey[600])),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (pct != null) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: (pctColor ?? Colors.grey).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    '${pct.toStringAsFixed(1)}%',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: pctColor ?? Colors.grey[700]),
-                  ),
-                ),
-                const SizedBox(width: 6),
-              ],
-              Text(value,
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: valueColor ?? Colors.black87)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _chip(String label, MaterialColor color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color[50],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color[200]!),
-      ),
-      child: Text(label, style: TextStyle(fontSize: 10, color: color[800])),
     );
   }
 }

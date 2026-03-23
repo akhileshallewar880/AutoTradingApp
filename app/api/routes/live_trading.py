@@ -41,13 +41,14 @@ class PlaceLimitOrderRequest(BaseModel):
     access_token: str
     symbol: str
     action: str = "BUY"       # BUY or SELL
-    limit_price: float         # desired entry price
+    limit_price: float         # desired entry price (ignored for MARKET orders)
     stop_loss: float
     target: float
     atr: float = 0.0
     capital_to_use: float = 0.0    # 0 = use account balance
     risk_percent: float = 1.0      # % of capital to risk per trade
     leverage: int = 1
+    order_type: str = "LIMIT"      # "LIMIT" or "MARKET"
 
 
 @router.post("/live-trading/start")
@@ -218,20 +219,21 @@ async def place_limit_order(req: PlaceLimitOrderRequest):
             f"max_risk=₹{max_risk:.0f} qty={quantity}"
         )
 
-        # Step 3: place LIMIT order on Zerodha
-        order_id = str(await loop.run_in_executor(
-            None,
-            lambda: kite.place_order(
-                variety="regular",
-                exchange="NSE",
-                tradingsymbol=req.symbol.upper(),
-                transaction_type=req.action,
-                quantity=quantity,
-                product="MIS",
-                order_type="LIMIT",
-                price=req.limit_price,
-            ),
-        ))
+        # Step 3: place order on Zerodha (LIMIT or MARKET)
+        otype = req.order_type.upper() if req.order_type.upper() in ("LIMIT", "MARKET") else "LIMIT"
+        order_kwargs = dict(
+            variety="regular",
+            exchange="NSE",
+            tradingsymbol=req.symbol.upper(),
+            transaction_type=req.action,
+            quantity=quantity,
+            product="MIS",
+            order_type=otype,
+        )
+        if otype == "LIMIT":
+            order_kwargs["price"] = req.limit_price
+
+        order_id = str(await loop.run_in_executor(None, lambda: kite.place_order(**order_kwargs)))
 
         logger.info(f"[place_limit_order] Order placed: {order_id} for {req.symbol} qty={quantity}")
 

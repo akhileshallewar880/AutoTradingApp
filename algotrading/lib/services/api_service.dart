@@ -399,6 +399,7 @@ class ApiService {
     double capitalToUse = 0.0,
     double riskPercent = 1.0,
     int leverage = 1,
+    String orderType = 'LIMIT',
   }) async {
     final response = await http.post(
       Uri.parse(ApiConfig.liveAgentPlaceLimitOrderUrl),
@@ -416,6 +417,7 @@ class ApiService {
         'capital_to_use': capitalToUse,
         'risk_percent': riskPercent,
         'leverage': leverage,
+        'order_type': orderType,
       }),
     ).timeout(const Duration(seconds: 30));
 

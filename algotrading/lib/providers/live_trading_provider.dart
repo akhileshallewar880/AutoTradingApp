@@ -84,6 +84,7 @@ class LiveTradingProvider with ChangeNotifier {
     double capitalToUse = 0.0,
     double riskPercent = 1.0,
     int leverage = 1,
+    String orderType = 'LIMIT',
   }) async {
     _isLoading = true;
     _error = null;
@@ -102,6 +103,7 @@ class LiveTradingProvider with ChangeNotifier {
         capitalToUse: capitalToUse,
         riskPercent: riskPercent,
         leverage: leverage,
+        orderType: orderType,
       );
       final qty = result['quantity'] as int? ?? 0;
       placedOrderSymbols.add(symbol);
