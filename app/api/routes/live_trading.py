@@ -35,6 +35,21 @@ class RegisterPositionRequest(BaseModel):
     atr: float = 0.0                  # Optional — agent derives 1% fallback if not provided
 
 
+class PlaceLimitOrderRequest(BaseModel):
+    user_id: str
+    api_key: str
+    access_token: str
+    symbol: str
+    action: str = "BUY"       # BUY or SELL
+    limit_price: float         # desired entry price
+    stop_loss: float
+    target: float
+    atr: float = 0.0
+    capital_to_use: float = 0.0    # 0 = use account balance
+    risk_percent: float = 1.0      # % of capital to risk per trade
+    leverage: int = 1
+
+
 @router.post("/live-trading/start")
 async def start_agent(req: StartAgentRequest):
     """
@@ -82,8 +97,8 @@ async def stop_agent(user_id: str = Query(...)):
 @router.get("/live-trading/status")
 async def get_agent_status(user_id: str = Query(...)):
     """
-    Get current agent status: running state, open positions, trade count,
-    daily P&L, recent decision logs.
+    Get current agent status: running state, open positions, pending orders,
+    trade count, daily P&L, recent decision logs.
     """
     status = autonomous_agent_manager.get_agent_status(user_id)
     if status is None:
@@ -93,6 +108,7 @@ async def get_agent_status(user_id: str = Query(...)):
             "started_at": None,
             "last_scan_at": None,
             "open_positions": [],
+            "pending_orders": [],
             "trade_count_today": 0,
             "daily_pnl": 0.0,
             "daily_loss_limit_hit": False,
@@ -142,6 +158,116 @@ async def register_position(req: RegisterPositionRequest):
         raise
     except Exception as e:
         logger.error(f"Failed to register position for user {req.user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/live-trading/place-limit-order")
+async def place_limit_order(req: PlaceLimitOrderRequest):
+    """
+    Place a LIMIT order on Zerodha for a candidate found via /live-trading/analyze.
+
+    Flow:
+      1. Fetch available capital from Zerodha (or use capital_to_use if set).
+      2. Calculate quantity: floor(capital × leverage × risk_percent / |limit_price - stop_loss|).
+      3. Place a LIMIT BUY/SELL MIS order on Zerodha.
+      4. If the agent is already running, inject the order into its pending_orders
+         so fill-detection starts immediately.
+      5. Return order_id + computed quantity to the client.
+    """
+    from kiteconnect import KiteConnect
+    import math
+
+    if req.action not in ("BUY", "SELL"):
+        raise HTTPException(status_code=400, detail="action must be 'BUY' or 'SELL'")
+    if req.limit_price <= 0:
+        raise HTTPException(status_code=400, detail="limit_price must be > 0")
+    risk_per_share = abs(req.limit_price - req.stop_loss)
+    if risk_per_share <= 0:
+        raise HTTPException(status_code=400, detail="limit_price and stop_loss must not be equal")
+
+    try:
+        kite = KiteConnect(api_key=req.api_key, timeout=15)
+        kite.set_access_token(req.access_token)
+
+        # Step 1: fetch available capital
+        import asyncio
+        loop = asyncio.get_running_loop()
+        try:
+            margins = await loop.run_in_executor(None, kite.margins)
+            equity = margins.get("equity", {})
+            available = float(
+                equity.get("available", {}).get("live_balance")
+                or equity.get("net", 0)
+            )
+        except Exception:
+            available = req.capital_to_use  # fallback
+
+        capital = min(available, req.capital_to_use) if req.capital_to_use > 0 else available
+        effective_capital = capital * max(1, req.leverage)
+
+        # Step 2: compute quantity
+        max_risk = effective_capital * (req.risk_percent / 100)
+        quantity = max(1, math.floor(max_risk / risk_per_share))
+        # Cap at 10% of capital per trade
+        max_by_capital = max(1, math.floor((capital * 0.10) / req.limit_price)) if req.limit_price > 0 else 1
+        quantity = min(quantity, max_by_capital)
+
+        logger.info(
+            f"[place_limit_order] {req.symbol} {req.action} "
+            f"capital=₹{capital:.0f} risk_per_share=₹{risk_per_share:.2f} "
+            f"max_risk=₹{max_risk:.0f} qty={quantity}"
+        )
+
+        # Step 3: place LIMIT order on Zerodha
+        order_id = str(await loop.run_in_executor(
+            None,
+            lambda: kite.place_order(
+                variety="regular",
+                exchange="NSE",
+                tradingsymbol=req.symbol.upper(),
+                transaction_type=req.action,
+                quantity=quantity,
+                product="MIS",
+                order_type="LIMIT",
+                price=req.limit_price,
+            ),
+        ))
+
+        logger.info(f"[place_limit_order] Order placed: {order_id} for {req.symbol} qty={quantity}")
+
+        # Step 4: inject into running agent (if any) for fill monitoring
+        agent_status = "no_agent"
+        if autonomous_agent_manager.is_running(req.user_id):
+            autonomous_agent_manager.inject_pending_order(
+                user_id=req.user_id,
+                symbol=req.symbol.upper(),
+                order_id=order_id,
+                action=req.action,
+                quantity=quantity,
+                limit_price=req.limit_price,
+                stop_loss=req.stop_loss,
+                target=req.target,
+                atr=req.atr,
+            )
+            agent_status = "watching"
+
+        return {
+            "status": "placed",
+            "order_id": order_id,
+            "symbol": req.symbol.upper(),
+            "action": req.action,
+            "quantity": quantity,
+            "limit_price": req.limit_price,
+            "stop_loss": req.stop_loss,
+            "target": req.target,
+            "capital_used": round(quantity * req.limit_price, 2),
+            "agent_status": agent_status,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[place_limit_order] Failed for {req.user_id}/{req.symbol}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

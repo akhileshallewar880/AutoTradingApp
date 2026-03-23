@@ -382,5 +382,49 @@ class ApiService {
       throw Exception(body['detail'] ?? 'Failed to register position');
     }
   }
+
+  /// Place a LIMIT order on Zerodha. The backend computes quantity from
+  /// capital × risk% / |limitPrice - stopLoss|.
+  /// Returns the full response map: {order_id, quantity, symbol, limit_price, …}
+  static Future<Map<String, dynamic>> placeLimitOrder({
+    required String userId,
+    required String accessToken,
+    required String apiKey,
+    required String symbol,
+    required String action,
+    required double limitPrice,
+    required double stopLoss,
+    required double target,
+    double atr = 0.0,
+    double capitalToUse = 0.0,
+    double riskPercent = 1.0,
+    int leverage = 1,
+  }) async {
+    final response = await http.post(
+      Uri.parse(ApiConfig.liveAgentPlaceLimitOrderUrl),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'user_id': userId,
+        'api_key': apiKey,
+        'access_token': accessToken,
+        'symbol': symbol,
+        'action': action,
+        'limit_price': limitPrice,
+        'stop_loss': stopLoss,
+        'target': target,
+        'atr': atr,
+        'capital_to_use': capitalToUse,
+        'risk_percent': riskPercent,
+        'leverage': leverage,
+      }),
+    ).timeout(const Duration(seconds: 30));
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } else {
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(body['detail'] ?? 'Failed to place limit order');
+    }
+  }
 }
 

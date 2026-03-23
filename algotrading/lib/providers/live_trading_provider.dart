@@ -27,6 +27,12 @@ class LiveTradingProvider with ChangeNotifier {
   bool get isAnalyzing => _isAnalyzing;
   List<Map<String, dynamic>> get analysisResults => _analysisResults;
   String? get analyzeError => _analyzeError;
+  List<PendingOrderModel> get pendingOrders => _status.pendingOrders;
+
+  /// Tracks which candidate symbols already have a limit order placed this session.
+  final Set<String> placedOrderSymbols = {};
+  // order_id → computed qty (returned from backend)
+  final Map<String, int> placedOrderQty = {};
 
   /// Run intraday analysis — populates analysisResults for the UI to display.
   Future<void> analyzeMarket({
@@ -61,6 +67,53 @@ class LiveTradingProvider with ChangeNotifier {
     _analysisResults = [];
     _analyzeError = null;
     notifyListeners();
+  }
+
+  /// Place a LIMIT order on Zerodha via backend (qty computed by agent).
+  /// Returns the computed quantity on success, 0 on failure.
+  Future<int> placeLimitOrder({
+    required String userId,
+    required String accessToken,
+    required String apiKey,
+    required String symbol,
+    required String action,
+    required double limitPrice,
+    required double stopLoss,
+    required double target,
+    double atr = 0.0,
+    double capitalToUse = 0.0,
+    double riskPercent = 1.0,
+    int leverage = 1,
+  }) async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final result = await ApiService.placeLimitOrder(
+        userId: userId,
+        accessToken: accessToken,
+        apiKey: apiKey,
+        symbol: symbol,
+        action: action,
+        limitPrice: limitPrice,
+        stopLoss: stopLoss,
+        target: target,
+        atr: atr,
+        capitalToUse: capitalToUse,
+        riskPercent: riskPercent,
+        leverage: leverage,
+      );
+      final qty = result['quantity'] as int? ?? 0;
+      placedOrderSymbols.add(symbol);
+      placedOrderQty[symbol] = qty;
+      return qty;
+    } catch (e) {
+      _error = e.toString().replaceFirst('Exception: ', '');
+      return 0;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
   /// Register a manually-executed position with the running monitoring agent.

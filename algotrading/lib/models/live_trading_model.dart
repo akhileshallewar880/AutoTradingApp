@@ -91,6 +91,44 @@ class AgentPositionModel {
   }
 }
 
+class PendingOrderModel {
+  final String symbol;
+  final String orderId;
+  final String action;
+  final int quantity;
+  final double limitPrice;
+  final double stopLoss;
+  final double target;
+  final String placedAt;
+  final String status; // OPEN | COMPLETE | CANCELLED | REJECTED
+
+  const PendingOrderModel({
+    required this.symbol,
+    required this.orderId,
+    required this.action,
+    required this.quantity,
+    required this.limitPrice,
+    required this.stopLoss,
+    required this.target,
+    required this.placedAt,
+    required this.status,
+  });
+
+  factory PendingOrderModel.fromJson(Map<String, dynamic> json) {
+    return PendingOrderModel(
+      symbol:     json['symbol']     as String? ?? '',
+      orderId:    json['order_id']   as String? ?? '',
+      action:     json['action']     as String? ?? 'BUY',
+      quantity:   json['quantity']   as int?    ?? 0,
+      limitPrice: (json['limit_price'] as num?)?.toDouble() ?? 0.0,
+      stopLoss:   (json['stop_loss']   as num?)?.toDouble() ?? 0.0,
+      target:     (json['target']      as num?)?.toDouble() ?? 0.0,
+      placedAt:   json['placed_at']  as String? ?? '',
+      status:     json['status']     as String? ?? 'OPEN',
+    );
+  }
+}
+
 class AgentLogModel {
   final String event;
   final String message;
@@ -122,6 +160,7 @@ class AgentStatusModel {
   final bool tickerConnected;
   final bool scanningDone;
   final List<AgentPositionModel> openPositions;
+  final List<PendingOrderModel> pendingOrders;
   final int tradeCountToday;
   final double dailyPnl;
   final bool dailyLossLimitHit;
@@ -136,6 +175,7 @@ class AgentStatusModel {
     this.tickerConnected = false,
     this.scanningDone = false,
     required this.openPositions,
+    this.pendingOrders = const [],
     required this.tradeCountToday,
     required this.dailyPnl,
     required this.dailyLossLimitHit,
@@ -155,6 +195,10 @@ class AgentStatusModel {
               ?.map((e) => AgentPositionModel.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
+      pendingOrders: (json['pending_orders'] as List<dynamic>?)
+              ?.map((e) => PendingOrderModel.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
       tradeCountToday: json['trade_count_today'] as int? ?? 0,
       dailyPnl: (json['daily_pnl'] as num?)?.toDouble() ?? 0.0,
       dailyLossLimitHit: json['daily_loss_limit_hit'] as bool? ?? false,
@@ -168,16 +212,20 @@ class AgentStatusModel {
     );
   }
 
-  static AgentStatusModel stopped() => AgentStatusModel(
+  static AgentStatusModel stopped() => const AgentStatusModel(
         isRunning: false,
         status: 'STOPPED',
         tickerConnected: false,
         scanningDone: false,
-        openPositions: const [],
+        openPositions: [],
+        pendingOrders: [],
         tradeCountToday: 0,
         dailyPnl: 0.0,
         dailyLossLimitHit: false,
-        settings: AgentSettingsModel.defaults(),
-        recentLogs: const [],
+        settings: AgentSettingsModel(
+          maxPositions: 2, riskPercent: 1.0, scanIntervalMinutes: 5,
+          maxTradesPerDay: 6, maxDailyLossPct: 2.0, capitalToUse: 0.0,
+        ),
+        recentLogs: [],
       );
 }

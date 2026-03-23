@@ -271,6 +271,51 @@ class PositionState:
         }
 
 
+# ── Pending order state (limit order waiting for fill) ───────────────────────
+
+class PendingOrderState:
+    """
+    Represents a limit BUY/SELL order that has been placed on Zerodha but
+    has not yet filled. The agent polls every 30s and promotes it to a full
+    PositionState once the order status becomes COMPLETE.
+    """
+    def __init__(
+        self,
+        symbol: str,
+        order_id: str,
+        action: str,
+        quantity: int,
+        limit_price: float,
+        stop_loss: float,
+        target: float,
+        atr: float = 0.0,
+    ):
+        self.symbol = symbol
+        self.order_id = order_id
+        self.action = action
+        self.quantity = quantity
+        self.limit_price = limit_price
+        self.stop_loss = stop_loss
+        self.target = target
+        self.atr = atr
+        self.placed_at = _ist_now().isoformat()
+        self.status = "OPEN"   # OPEN | COMPLETE | CANCELLED | REJECTED
+
+    def to_dict(self) -> Dict:
+        return {
+            "symbol":      self.symbol,
+            "order_id":    self.order_id,
+            "action":      self.action,
+            "quantity":    self.quantity,
+            "limit_price": round(self.limit_price, 2),
+            "stop_loss":   round(self.stop_loss, 2),
+            "target":      round(self.target, 2),
+            "atr":         round(self.atr, 2),
+            "placed_at":   self.placed_at,
+            "status":      self.status,
+        }
+
+
 class AgentLog:
     def __init__(self, event: str, message: str, symbol: str = None):
         self.event = event
@@ -319,6 +364,7 @@ class UserTradingAgent:
         self.is_running = False
         self.status = "STOPPED"
         self.positions: Dict[str, PositionState] = {}
+        self.pending_orders: Dict[str, PendingOrderState] = {}  # order_id → pending
         self.trade_count_today = 0
         self.daily_pnl = 0.0
         self.starting_capital = 0.0
@@ -1151,6 +1197,132 @@ class UserTradingAgent:
         except Exception as e:
             self._log("WARN", f"{symbol}: Ticker subscription failed (will use API): {e}", symbol=symbol)
 
+    # ── Pending order fill detection ──────────────────────────────────────────
+
+    async def _check_pending_order_fills(self):
+        """
+        Poll Zerodha for the status of each pending limit order.
+        When an order fills (COMPLETE), promote it to a full PositionState
+        and begin active monitoring.
+        """
+        if not self.pending_orders:
+            return
+
+        kite = self._get_kite()
+        loop = asyncio.get_running_loop()
+
+        try:
+            orders_list = await loop.run_in_executor(None, kite.orders)
+            # Build a fast lookup: order_id → order dict
+            orders_map: Dict[str, Dict] = {str(o["order_id"]): o for o in (orders_list or [])}
+        except Exception as e:
+            logger.warning(f"[Agent:{self.user_id}] Pending fill check: kite.orders() failed: {e}")
+            return
+
+        filled_ids = []
+        for oid, pending in list(self.pending_orders.items()):
+            order_info = orders_map.get(oid)
+            if not order_info:
+                logger.debug(f"[Agent:{self.user_id}] Order {oid} not found in order book yet")
+                continue
+
+            zerodha_status = (order_info.get("status") or "").upper()
+            pending.status = zerodha_status
+
+            if zerodha_status == "COMPLETE":
+                avg_price = float(order_info.get("average_price") or pending.limit_price)
+                symbol = pending.symbol
+                qty = pending.quantity
+
+                self._log(
+                    "ORDER_FILLED",
+                    f"{symbol}: Limit order {oid} filled @ ₹{avg_price:.2f} "
+                    f"(limit was ₹{pending.limit_price:.2f}) — qty={qty}",
+                    symbol=symbol,
+                )
+
+                # Build multi-target scaling plan
+                t1_qty = max(1, qty // 2)
+                t2_qty = max(1, (qty - t1_qty) // 2) if (qty - t1_qty) >= 2 else 0
+
+                if pending.action == "BUY":
+                    t1_price = round(avg_price + (pending.target - avg_price) / 2, 2)
+                else:
+                    t1_price = round(avg_price - (avg_price - pending.target) / 2, 2)
+
+                pos = PositionState(
+                    symbol=symbol,
+                    action=pending.action,
+                    quantity=qty,
+                    entry_price=avg_price,
+                    stop_loss=pending.stop_loss,
+                    target=pending.target,
+                    gtt_id=None,
+                    entry_order_id=oid,
+                    analysis_id="limit_order",
+                    atr=pending.atr,
+                )
+                pos.remaining_quantity = qty
+                if pending.action == "BUY":
+                    pos.targets = [
+                        {"label": "T1", "price": t1_price, "qty": t1_qty, "hit": False, "new_sl": avg_price},
+                        *([{"label": "T2", "price": pending.target, "qty": t2_qty, "hit": False, "new_sl": t1_price}] if t2_qty > 0 else []),
+                    ]
+                else:
+                    pos.targets = [
+                        {"label": "T1", "price": t1_price, "qty": t1_qty, "hit": False, "new_sl": avg_price},
+                        *([{"label": "T2", "price": pending.target, "qty": t2_qty, "hit": False, "new_sl": t1_price}] if t2_qty > 0 else []),
+                    ]
+
+                self.positions[symbol] = pos
+                self.trade_count_today += 1
+                filled_ids.append(oid)
+
+                # Subscribe to real-time ticker for this symbol
+                await self._subscribe_ticker(symbol)
+
+            elif zerodha_status in ("CANCELLED", "REJECTED"):
+                self._log(
+                    "ORDER_CANCELLED",
+                    f"{pending.symbol}: Order {oid} {zerodha_status} — removed from pending",
+                    symbol=pending.symbol,
+                )
+                filled_ids.append(oid)
+
+        for oid in filled_ids:
+            self.pending_orders.pop(oid, None)
+
+    def register_pending_order(
+        self,
+        symbol: str,
+        order_id: str,
+        action: str,
+        quantity: int,
+        limit_price: float,
+        stop_loss: float,
+        target: float,
+        atr: float = 0.0,
+    ) -> Dict:
+        """Inject a just-placed limit order so the agent watches for its fill."""
+        pending = PendingOrderState(
+            symbol=symbol,
+            order_id=order_id,
+            action=action,
+            quantity=quantity,
+            limit_price=limit_price,
+            stop_loss=stop_loss,
+            target=target,
+            atr=atr,
+        )
+        self.pending_orders[order_id] = pending
+        self._log(
+            "ORDER_PLACED",
+            f"{symbol}: Limit {action} order {order_id} @ ₹{limit_price:.2f} — "
+            f"SL=₹{stop_loss:.2f} TGT=₹{target:.2f} qty={quantity} | Watching for fill",
+            symbol=symbol,
+        )
+        return {"status": "watching", "order_id": order_id, "symbol": symbol}
+
     # ── Monitor loop ──────────────────────────────────────────────────────────
 
     async def _monitor_loop(self):
@@ -1183,7 +1355,17 @@ class UserTradingAgent:
                     except Exception as e:
                         logger.warning(f"[Agent:{self.user_id}] KiteTicker lazy-start failed: {e}")
 
-                if not self.positions or not _is_market_open():
+                if not _is_market_open():
+                    continue
+
+                # ── Pending order fill detection (every 30s) ──────────────
+                gtt_check_counter += 1
+                check_gtts = (gtt_check_counter % 6 == 0)  # every ~30 seconds
+
+                if self.pending_orders and check_gtts:
+                    await self._check_pending_order_fills()
+
+                if not self.positions:
                     continue
 
                 mins = _minutes_until_squareoff()
@@ -1196,8 +1378,6 @@ class UserTradingAgent:
                     await self._force_squareoff()
                     continue
 
-                gtt_check_counter += 1
-                check_gtts = (gtt_check_counter % 6 == 0)  # every ~30 seconds
                 await self._monitor_positions(check_gtts=check_gtts)
 
             except asyncio.CancelledError:
@@ -1729,6 +1909,7 @@ class UserTradingAgent:
             "scanning_done": self._scanning_done,
             "ticker_connected": self._ticker_manager.is_connected if self._ticker_manager else False,
             "open_positions": [p.to_dict() for p in self.positions.values()],
+            "pending_orders": [p.to_dict() for p in self.pending_orders.values()],
             "trade_count_today": self.trade_count_today,
             "daily_pnl": round(self.daily_pnl, 2),
             "daily_loss_limit_hit": self.daily_loss_limit_hit,
@@ -1830,6 +2011,32 @@ class AutonomousAgentManager:
 
     def is_running(self, user_id: str) -> bool:
         return user_id in self._agents and self._agents[user_id].is_running
+
+    def inject_pending_order(
+        self,
+        user_id: str,
+        symbol: str,
+        order_id: str,
+        action: str,
+        quantity: int,
+        limit_price: float,
+        stop_loss: float,
+        target: float,
+        atr: float = 0.0,
+    ) -> Dict:
+        """Register a just-placed limit order with the user's running agent."""
+        if user_id not in self._agents or not self._agents[user_id].is_running:
+            return {"status": "error", "detail": "No active agent — start monitoring first"}
+        return self._agents[user_id].register_pending_order(
+            symbol=symbol,
+            order_id=order_id,
+            action=action,
+            quantity=quantity,
+            limit_price=limit_price,
+            stop_loss=stop_loss,
+            target=target,
+            atr=atr,
+        )
 
     async def stop_all(self):
         for agent in self._agents.values():
