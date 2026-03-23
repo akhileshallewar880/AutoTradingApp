@@ -28,6 +28,12 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
   double _riskPercent = 1.5;
   double _maxDailyLossPct = 3.0;
   int _leverage = 1;
+  double _deployPct = 100.0;     // % of available balance to deploy
+
+  // Candidate selection state (shown after analyze, before execute)
+  bool _showCandidateSelection = false;
+  Map<String, bool> _checkedCandidates = {};
+  Map<String, TextEditingController> _qtyControllers = {};
 
   @override
   void initState() {
@@ -43,6 +49,9 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
   void dispose() {
     _pulseController.dispose();
     _capitalController.dispose();
+    for (final c in _qtyControllers.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -55,6 +64,16 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
         : provider.lastSettings;
     _applyFromSettings(s);
     provider.fetchStatus(auth.user!.userId);
+    _fetchBalance();
+  }
+
+  void _fetchBalance() {
+    final auth = context.read<AuthProvider>();
+    if (auth.user == null) return;
+    context.read<LiveTradingProvider>().fetchBalance(
+          apiKey: auth.user!.apiKey,
+          accessToken: auth.user!.accessToken,
+        );
   }
 
   void _applyFromSettings(AgentSettingsModel s) {
@@ -69,16 +88,25 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     });
   }
 
-  double get _parsedCapital =>
-      double.tryParse(_capitalController.text.replaceAll(',', '').trim()) ?? 0.0;
+  /// Capital to deploy = available_balance × deploy% / 100.
+  /// Falls back to the manual TextField value if balance not yet fetched.
+  double _computeCapital(LiveTradingProvider live) {
+    if (live.availableBalance > 0) {
+      return (live.availableBalance * _deployPct / 100).roundToDouble();
+    }
+    return double.tryParse(
+            _capitalController.text.replaceAll(',', '').trim()) ??
+        0.0;
+  }
 
-  // ── Execute & Monitor ──────────────────────────────────────────────────────
+  // ── Step 1: Analyze market and show candidate selection ────────────────────
 
-  Future<void> _executeAndMonitor() async {
+  Future<void> _runAnalysis() async {
     final auth = context.read<AuthProvider>();
     if (auth.user == null) return;
 
-    final capital = _parsedCapital;
+    final live = context.read<LiveTradingProvider>();
+    final capital = _computeCapital(live);
     if (capital <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Please enter a valid capital amount first.'),
@@ -87,55 +115,88 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       return;
     }
 
-    // Confirm before executing
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(children: [
-          Icon(Icons.rocket_launch_rounded, color: Colors.indigo[700], size: 22),
-          const SizedBox(width: 10),
-          const Text('Execute & Monitor', style: TextStyle(fontSize: 17)),
-        ]),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'The agent will analyze the market, place orders automatically, '
-              'then monitor them until stop-loss, target, or manual exit.',
-              style: TextStyle(fontSize: 13, color: Colors.black87),
-            ),
-            const SizedBox(height: 16),
-            _confirmRow(Icons.currency_rupee, 'Capital', _currency.format(capital)),
-            _confirmRow(Icons.swap_horiz, 'Order type', _orderType),
-            _confirmRow(Icons.layers, 'Max stocks', '$_maxPositions'),
-            _confirmRow(Icons.percent, 'Risk / trade', '${_riskPercent.toStringAsFixed(1)}%'),
-            _confirmRow(Icons.trending_down, 'Daily loss cap', '${_maxDailyLossPct.toStringAsFixed(1)}%'),
-            if (_leverage > 1)
-              _confirmRow(Icons.speed, 'Leverage', '${_leverage}x'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.indigo[700],
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            icon: const Icon(Icons.bolt_rounded, color: Colors.white, size: 16),
-            label: const Text('Execute', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            onPressed: () => Navigator.pop(ctx, true),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+    live.clearAnalysis();
+
+    setState(() {
+      _isInitializing = true;
+      _overlayMessage = 'Analyzing market...';
+      _showCandidateSelection = false;
+    });
+    _pulseController.repeat();
+
+    try {
+      await live.analyzeMarket(
+        userId: auth.user!.userId,
+        accessToken: auth.user!.accessToken,
+        apiKey: auth.user!.apiKey,
+        limit: _maxPositions + 3,
+      );
+      if (!mounted) return;
+      if (live.analyzeError != null) throw Exception(live.analyzeError);
+
+      final qualifying = live.analysisResults
+          .where((c) => c['signal'] == 'BUY' || c['signal'] == 'SELL')
+          .toList();
+
+      if (qualifying.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('No qualifying signals found. Try again in a few minutes.'),
+          backgroundColor: Colors.orange[700],
+          duration: const Duration(seconds: 5),
+        ));
+        return;
+      }
+
+      // Initialise checkbox + qty state for each candidate
+      for (final c in qualifying) {
+        final sym = c['symbol'] as String? ?? '';
+        _checkedCandidates[sym] = true; // all checked by default
+        _qtyControllers[sym]?.dispose();
+        _qtyControllers[sym] =
+            TextEditingController(text: '${_estimateQty(c, capital)}');
+      }
+      setState(() => _showCandidateSelection = true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.red[700],
+          duration: const Duration(seconds: 5),
+        ));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+          _overlayMessage = 'Processing...';
+        });
+        _pulseController.stop();
+      }
+    }
+  }
+
+  // ── Step 2: Execute selected candidates and start agent ────────────────────
+
+  Future<void> _executeSelected() async {
+    final auth = context.read<AuthProvider>();
+    if (auth.user == null) return;
 
     final live = context.read<LiveTradingProvider>();
+    final capital = _computeCapital(live);
+
+    final selected = live.analysisResults
+        .where((c) =>
+            _checkedCandidates[c['symbol'] as String? ?? ''] == true)
+        .toList();
+
+    if (selected.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Select at least one trade to execute.'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
+
     final settings = AgentSettingsModel(
       maxPositions: _maxPositions,
       riskPercent: _riskPercent,
@@ -163,45 +224,19 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       if (!mounted) return;
       if (live.error != null) throw Exception(live.error);
 
-      // 2. Analyze market
-      setState(() => _overlayMessage = 'Analyzing market...');
+      // 2. Place orders for each selected candidate
       live.placedOrderSymbols.clear();
-      await live.analyzeMarket(
-        userId: auth.user!.userId,
-        accessToken: auth.user!.accessToken,
-        apiKey: auth.user!.apiKey,
-        limit: _maxPositions + 3,
-      );
-      if (!mounted) return;
-      if (live.analyzeError != null) throw Exception(live.analyzeError);
-
-      final qualifying = live.analysisResults
-          .where((c) => c['signal'] == 'BUY' || c['signal'] == 'SELL')
-          .take(_maxPositions)
-          .toList();
-
-      if (qualifying.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: const Text(
-              'No qualifying signals found right now. '
-              'Agent is running — you can register positions manually.',
-            ),
-            backgroundColor: Colors.orange[700],
-            duration: const Duration(seconds: 6),
-          ));
-        }
-        return;
-      }
-
-      // 3. Place orders for each qualifying candidate
       int placed = 0;
       int failed = 0;
-      for (int i = 0; i < qualifying.length; i++) {
+      for (int i = 0; i < selected.length; i++) {
         if (!mounted) break;
-        final c = qualifying[i];
+        final c = selected[i];
         final symbol = c['symbol'] as String? ?? '';
-        setState(() => _overlayMessage = 'Placing order ${i + 1}/${qualifying.length} — $symbol...');
+        final qtyStr = _qtyControllers[symbol]?.text ?? '';
+        final overrideQty = int.tryParse(qtyStr) ?? 0;
+
+        setState(() =>
+            _overlayMessage = 'Placing order ${i + 1}/${selected.length} — $symbol...');
 
         final ltp = (c['ltp'] as num?)?.toDouble() ?? 0;
         final qty = await live.placeLimitOrder(
@@ -214,15 +249,24 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
           stopLoss: (c['stop_loss'] as num?)?.toDouble() ?? 0,
           target: (c['target'] as num?)?.toDouble() ?? 0,
           atr: (c['atr'] as num?)?.toDouble() ?? 0,
-          capitalToUse: capital,
+          // If user edited qty, pass it as capital override (backend recomputes otherwise)
+          capitalToUse: overrideQty > 0
+              ? 0.0   // let backend compute from capital
+              : capital,
           riskPercent: _riskPercent,
           leverage: _leverage,
           orderType: _orderType,
         );
-        if (qty > 0) { placed++; } else { failed++; }
+        if (qty > 0) {
+          placed++;
+        } else {
+          failed++;
+        }
       }
 
       if (!mounted) return;
+      setState(() => _showCandidateSelection = false);
+
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(placed > 0
             ? '✓ $placed $_orderType order${placed == 1 ? '' : 's'} placed. Agent is monitoring...'
@@ -250,15 +294,311 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
     }
   }
 
-  Widget _confirmRow(IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(children: [
-        Icon(icon, size: 14, color: Colors.grey[600]),
-        const SizedBox(width: 8),
-        Text('$label: ', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
-        Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-      ]),
+  /// Estimate order quantity from capital × risk% / |entry - sl|
+  int _estimateQty(Map<String, dynamic> c, double capital) {
+    if (capital <= 0) return 1;
+    final entry = (c['entry_price'] as num?)?.toDouble() ?? 0;
+    final sl = (c['stop_loss'] as num?)?.toDouble() ?? 0;
+    final risk = (entry - sl).abs();
+    if (risk <= 0) return 1;
+    final maxRisk = capital * _leverage * (_riskPercent / 100);
+    final qty = (maxRisk / risk).floor();
+    return qty < 1 ? 1 : qty;
+  }
+
+  // ── Candidate selection section (Step 2) ───────────────────────────────────
+
+  Widget _buildCandidateSelectionSection(LiveTradingProvider live) {
+    final candidates = live.analysisResults
+        .where((c) => c['signal'] == 'BUY' || c['signal'] == 'SELL')
+        .toList();
+
+    final checkedCount =
+        _checkedCandidates.values.where((v) => v).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header row
+        Row(children: [
+          Icon(Icons.checklist_rounded, size: 16, color: Colors.indigo[700]),
+          const SizedBox(width: 6),
+          Text(
+            'Select Trades ($checkedCount/${candidates.length})',
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.indigo[700]),
+          ),
+          const Spacer(),
+          TextButton.icon(
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            icon: Icon(Icons.arrow_back, size: 14, color: Colors.grey[600]),
+            label: Text('Back',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+            onPressed: () => setState(() {
+              _showCandidateSelection = false;
+              live.clearAnalysis();
+            }),
+          ),
+        ]),
+        const SizedBox(height: 10),
+
+        // Candidate cards
+        ...candidates.map((c) => _buildLiveCandidateCard(c)),
+        const SizedBox(height: 12),
+
+        // Execute button
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+                  checkedCount > 0 ? Colors.indigo[700] : Colors.grey[400],
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            icon: const Icon(Icons.rocket_launch_rounded, color: Colors.white),
+            label: Text(
+              checkedCount > 0
+                  ? 'Execute $checkedCount Trade${checkedCount == 1 ? '' : 's'} & Monitor'
+                  : 'Select at least one trade',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15),
+            ),
+            onPressed:
+                checkedCount > 0 && !live.isLoading ? _executeSelected : null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLiveCandidateCard(Map<String, dynamic> c) {
+    final symbol = c['symbol'] as String? ?? '';
+    final signal = c['signal'] as String? ?? 'NEUTRAL';
+    final isBuy = signal == 'BUY';
+    final ltp = (c['ltp'] as num?)?.toDouble() ?? 0;
+    final entry = (c['entry_price'] as num?)?.toDouble() ?? ltp;
+    final sl = (c['stop_loss'] as num?)?.toDouble() ?? 0;
+    final t1 = (c['t1'] as num?)?.toDouble() ?? 0;
+    final target = (c['target'] as num?)?.toDouble() ?? 0;
+    final rrRatio = (c['rr_ratio'] as num?)?.toDouble() ?? 0;
+    final strength = (c['strength'] as num?)?.toDouble() ?? 0;
+    final rsi = c['rsi'];
+    final macd = c['macd_histogram'];
+    final reasons = (c['reasons'] as List?)?.cast<String>() ?? [];
+    final isChecked = _checkedCandidates[symbol] ?? false;
+    final qtyCtrl = _qtyControllers[symbol];
+
+    return Card(
+      elevation: isChecked ? 2 : 0,
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isChecked
+              ? (isBuy ? Colors.green[400]! : Colors.red[400]!)
+              : Colors.grey[300]!,
+          width: isChecked ? 1.5 : 1,
+        ),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          leading: Checkbox(
+            value: isChecked,
+            activeColor: isBuy ? Colors.green[700] : Colors.red[700],
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+            onChanged: (v) =>
+                setState(() => _checkedCandidates[symbol] = v ?? false),
+          ),
+          title: Row(children: [
+            Text(symbol,
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 14)),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: (isBuy ? Colors.green[700]! : Colors.red[700]!)
+                    .withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: Text(signal,
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: isBuy ? Colors.green[700] : Colors.red[700])),
+            ),
+            const Spacer(),
+            Text('₹${ltp.toStringAsFixed(2)}',
+                style: const TextStyle(
+                    fontWeight: FontWeight.w600, fontSize: 13)),
+          ]),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(children: [
+              Text('R:R ${rrRatio.toStringAsFixed(1)}',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                      fontWeight: FontWeight.w500)),
+              const SizedBox(width: 10),
+              // Signal strength bar
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: (strength / 100).clamp(0.0, 1.0),
+                    backgroundColor: Colors.grey[200],
+                    color: isBuy ? Colors.green[400] : Colors.red[400],
+                    minHeight: 4,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text('${strength.toInt()}%',
+                  style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+            ]),
+          ),
+          children: [
+            Padding(
+              padding:
+                  const EdgeInsets.fromLTRB(16, 0, 16, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Price levels row
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _candidatePrice('Entry', entry, Colors.grey[800]),
+                      _candidatePrice('SL', sl, Colors.red[600]),
+                      _candidatePrice('T1', t1, Colors.teal[600]),
+                      _candidatePrice('Target', target, Colors.green[700]),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Indicator chips
+                  Wrap(spacing: 6, runSpacing: 6, children: [
+                    if (rsi != null)
+                      _indicatorChip(
+                          'RSI ${(rsi as num).toStringAsFixed(1)}',
+                          Colors.blue[700]!),
+                    if (macd != null)
+                      _indicatorChip(
+                          'MACD ${macd >= 0 ? '+' : ''}${(macd as num).toStringAsFixed(2)}',
+                          macd >= 0
+                              ? Colors.green[700]!
+                              : Colors.red[700]!),
+                  ]),
+
+                  if (reasons.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    ...reasons.map((r) => Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.check_circle_outline,
+                                  size: 12,
+                                  color: isBuy
+                                      ? Colors.green[600]
+                                      : Colors.red[600]),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                  child: Text(r,
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey[700]))),
+                            ],
+                          ),
+                        )),
+                  ],
+
+                  const SizedBox(height: 12),
+
+                  // Qty editor
+                  Row(children: [
+                    Text('Quantity:',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[700])),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 80,
+                      child: TextField(
+                        controller: qtyCtrl,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly
+                        ],
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.bold),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 8),
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(6)),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(6),
+                            borderSide:
+                                BorderSide(color: Colors.indigo[300]!),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '× ₹${entry.toStringAsFixed(2)} = '
+                      '₹${((int.tryParse(qtyCtrl?.text ?? '') ?? 0) * entry).toStringAsFixed(0)}',
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.grey[600]),
+                    ),
+                  ]),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _candidatePrice(String label, double value, Color? color) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: TextStyle(fontSize: 9, color: Colors.grey[500])),
+      Text('₹${value.toStringAsFixed(2)}',
+          style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color ?? Colors.grey[800])),
+    ]);
+  }
+
+  Widget _indicatorChip(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 10, fontWeight: FontWeight.w600, color: color)),
     );
   }
 
@@ -596,29 +936,40 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
 
                 // ── STOPPED STATE ─────────────────────────────────────
                 if (!isRunning) ...[
-                  _buildConfigCard(),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.indigo[700],
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
+                  // Step 1 – config
+                  if (!_showCandidateSelection) ...[
+                    _buildConfigCard(),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.indigo[700],
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.search_rounded, color: Colors.white),
+                        label: const Text(
+                          'Analyze Market',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16),
+                        ),
+                        onPressed: live.isLoading || live.isAnalyzing
+                            ? null
+                            : _runAnalysis,
                       ),
-                      icon: const Icon(Icons.rocket_launch_rounded, color: Colors.white),
-                      label: const Text(
-                        'Execute & Monitor',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16),
-                      ),
-                      onPressed: live.isLoading ? null : _executeAndMonitor,
                     ),
-                  ),
-                  const SizedBox(height: 16),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Step 2 – candidate selection
+                  if (_showCandidateSelection) ...[
+                    _buildCandidateSelectionSection(live),
+                    const SizedBox(height: 16),
+                  ],
                 ],
 
                 // ── Activity log (always) ─────────────────────────────
@@ -639,6 +990,12 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
   // ── Config card (stopped state) ───────────────────────────────────────────
 
   Widget _buildConfigCard() {
+    final live = context.watch<LiveTradingProvider>();
+    final available = live.availableBalance;
+    final deployAmount = available > 0
+        ? (available * _deployPct / 100)
+        : 0.0;
+
     return Card(
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -651,25 +1008,169 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
 
-            // Capital field
-            TextField(
-              controller: _capitalController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-              decoration: InputDecoration(
-                labelText: 'Capital to Deploy (₹)',
-                prefixIcon: const Icon(Icons.currency_rupee, size: 18),
-                helperText: 'Total rupees to use for this session',
-                helperStyle: const TextStyle(fontSize: 11),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                isDense: true,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            // ── Balance row ────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.indigo[50],
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.indigo[100]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Icon(Icons.account_balance_wallet_rounded,
+                        size: 15, color: Colors.indigo[700]),
+                    const SizedBox(width: 6),
+                    Text('Zerodha Balance',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.indigo[700])),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: live.isFetchingBalance ? null : _fetchBalance,
+                      child: live.isFetchingBalance
+                          ? SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 1.5,
+                                  color: Colors.indigo[400]))
+                          : Icon(Icons.refresh_rounded,
+                              size: 16, color: Colors.indigo[400]),
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+                  if (live.balanceError != null)
+                    Text(live.balanceError!,
+                        style:
+                            TextStyle(fontSize: 11, color: Colors.red[600]))
+                  else if (available <= 0 && !live.isFetchingBalance)
+                    Text('Tap refresh to fetch balance',
+                        style:
+                            TextStyle(fontSize: 12, color: Colors.grey[500]))
+                  else ...[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _balanceStat('Available',
+                            _currency.format(available), Colors.green[700]!),
+                        _balanceStat('Net',
+                            _currency.format(live.netBalance), Colors.grey[700]!),
+                        _balanceStat(
+                            'Used',
+                            _currency.format(
+                                (live.netBalance - available).clamp(0, double.infinity)),
+                            Colors.orange[700]!),
+                      ],
+                    ),
+                  ],
+                ],
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
-            // Order type toggle
+            // ── Deploy % slider ────────────────────────────────────────
+            Row(children: [
+              SizedBox(
+                width: 110,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('Deploy',
+                      style: TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                  Text(
+                    deployAmount > 0
+                        ? _currency.format(deployAmount)
+                        : '${_deployPct.toInt()}%',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.indigo[700]),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ]),
+              ),
+              Expanded(
+                child: Slider(
+                  value: _deployPct,
+                  min: 10, max: 100, divisions: 9,
+                  activeColor: Colors.indigo[600],
+                  onChanged: (v) =>
+                      setState(() => _deployPct = (v / 10).round() * 10.0),
+                ),
+              ),
+              Text('${_deployPct.toInt()}%',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.indigo[700])),
+            ]),
+
+            // Quick-select buttons: 25 / 50 / 75 / 100
+            Row(children: [
+              const SizedBox(width: 110),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [25, 50, 75, 100].map((pct) {
+                    final selected = _deployPct == pct.toDouble();
+                    return GestureDetector(
+                      onTap: () =>
+                          setState(() => _deployPct = pct.toDouble()),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? Colors.indigo[700]
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                              color: selected
+                                  ? Colors.indigo[700]!
+                                  : Colors.grey[350]!),
+                        ),
+                        child: Text('$pct%',
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: selected
+                                    ? Colors.white
+                                    : Colors.grey[600])),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 8),
+
+            // ── Leverage selector ──────────────────────────────────────
+            _buildSlider(
+              label: 'Leverage',
+              displayLabel: '${_leverage}x',
+              value: _leverage.toDouble(),
+              min: 1, max: 5, divisions: 4,
+              onChanged: (v) => setState(() => _leverage = v.round()),
+            ),
+
+            // Effective capital hint
+            if (available > 0 && _leverage > 1) ...[
+              Padding(
+                padding: const EdgeInsets.only(left: 4, bottom: 8),
+                child: Text(
+                  'Effective buying power: ${_currency.format(deployAmount * _leverage)} '
+                  '(${_leverage}x MIS leverage)',
+                  style: TextStyle(fontSize: 11, color: Colors.teal[700]),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+
+            // ── Order type toggle ──────────────────────────────────────
             Row(children: [
               Text('Order Type:',
                   style: TextStyle(
@@ -684,27 +1185,30 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             if (_orderType == 'MARKET') ...[
               const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
                 decoration: BoxDecoration(
                   color: Colors.orange[50],
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: Colors.orange[200]!),
                 ),
                 child: Row(children: [
-                  Icon(Icons.info_outline, size: 14, color: Colors.orange[700]),
+                  Icon(Icons.info_outline,
+                      size: 14, color: Colors.orange[700]),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       'Market orders execute immediately at the current market price.',
-                      style: TextStyle(fontSize: 11, color: Colors.orange[800]),
+                      style: TextStyle(
+                          fontSize: 11, color: Colors.orange[800]),
                     ),
                   ),
                 ]),
               ),
             ],
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
-            // Sliders
+            // ── Other sliders ──────────────────────────────────────────
             _buildSlider(
               label: 'Max Stocks',
               displayLabel: '$_maxPositions',
@@ -728,17 +1232,20 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               onChanged: (v) =>
                   setState(() => _maxDailyLossPct = (v * 10).round() / 10),
             ),
-            _buildSlider(
-              label: 'Leverage',
-              displayLabel: '${_leverage}x',
-              value: _leverage.toDouble(),
-              min: 1, max: 5, divisions: 4,
-              onChanged: (v) => setState(() => _leverage = v.round()),
-            ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _balanceStat(String label, String value, Color color) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label,
+          style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+      Text(value,
+          style: TextStyle(
+              fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+    ]);
   }
 
   Widget _typeChip(String type) {
@@ -1192,7 +1699,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: logs.length > 30 ? 30 : logs.length,
-        separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey[100]),
+        separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey[100]),
         itemBuilder: (_, i) => _buildLogItem(logs[i]),
       ),
     );

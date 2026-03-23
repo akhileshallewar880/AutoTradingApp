@@ -383,6 +383,32 @@ class ApiService {
     }
   }
 
+  /// Fetch available equity balance from Zerodha margins.
+  /// Returns {available, net, used}.
+  static Future<Map<String, double>> getBalance({
+    required String apiKey,
+    required String accessToken,
+  }) async {
+    final uri = Uri.parse(ApiConfig.liveAgentBalanceUrl).replace(
+      queryParameters: {
+        'api_key': apiKey,
+        'access_token': accessToken,
+      },
+    );
+    final response = await http.get(uri).timeout(const Duration(seconds: 15));
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return {
+        'available': (data['available'] as num?)?.toDouble() ?? 0,
+        'net': (data['net'] as num?)?.toDouble() ?? 0,
+        'used': (data['used'] as num?)?.toDouble() ?? 0,
+      };
+    } else {
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(body['detail'] ?? 'Failed to fetch balance');
+    }
+  }
+
   /// Place a LIMIT order on Zerodha. The backend computes quantity from
   /// capital × risk% / |limitPrice - stopLoss|.
   /// Returns the full response map: {order_id, quantity, symbol, limit_price, …}

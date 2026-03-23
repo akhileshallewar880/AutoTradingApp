@@ -368,3 +368,41 @@ async def analyze_intraday(
     except Exception as e:
         logger.error(f"[analyze_intraday] Failed for user {user_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/live-trading/balance")
+async def get_balance(
+    api_key: str = Query(...),
+    access_token: str = Query(...),
+):
+    """
+    Fetch available equity balance from Zerodha margins API.
+    Returns available cash (live_balance) and total net equity.
+    """
+    try:
+        from kiteconnect import KiteConnect
+        import asyncio
+
+        kite = KiteConnect(api_key=api_key, timeout=15)
+        kite.set_access_token(access_token)
+
+        loop = asyncio.get_running_loop()
+        margins = await loop.run_in_executor(None, kite.margins)
+
+        equity = margins.get("equity", {})
+        available = float(
+            equity.get("available", {}).get("live_balance")
+            or equity.get("net", 0)
+        )
+        net = float(equity.get("net", available))
+        used = float(equity.get("utilised", {}).get("debits", 0))
+
+        return {
+            "available": round(available, 2),
+            "net": round(net, 2),
+            "used": round(used, 2),
+        }
+
+    except Exception as e:
+        logger.error(f"[get_balance] Failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

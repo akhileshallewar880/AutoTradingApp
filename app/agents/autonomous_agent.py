@@ -1278,6 +1278,49 @@ class UserTradingAgent:
                 self.trade_count_today += 1
                 filled_ids.append(oid)
 
+                # ── Place SL GTT immediately after fill ──────────────────────
+                # Use a single-leg GTT triggered at the stop-loss price.
+                # The agent will update/replace this GTT as trailing SL kicks in.
+                try:
+                    is_short = pending.action == "SELL"
+                    # Snapshot all values before the lambda to avoid late-binding issues
+                    _sl = pending.stop_loss
+                    _sym = symbol
+                    _avg = avg_price
+                    sl_orders = [
+                        {
+                            "transaction_type": "BUY" if is_short else "SELL",
+                            "quantity": qty,
+                            "order_type": "LIMIT",
+                            "product": "MIS",
+                            "price": _sl,
+                        }
+                    ]
+                    gtt_id = await loop.run_in_executor(
+                        None,
+                        lambda: kite.place_gtt(
+                            trigger_type="single",
+                            tradingsymbol=_sym,
+                            exchange="NSE",
+                            trigger_values=[_sl],
+                            last_price=_avg,
+                            orders=sl_orders,
+                        ),
+                    )
+                    pos.gtt_id = gtt_id
+                    self._log(
+                        "GTT_PLACED",
+                        f"{symbol}: SL GTT {gtt_id} placed @ ₹{pending.stop_loss:.2f} "
+                        f"for {qty} shares (entry=₹{avg_price:.2f})",
+                        symbol=symbol,
+                    )
+                except Exception as _gtt_err:
+                    self._log(
+                        "WARN",
+                        f"{symbol}: Could not place SL GTT after fill: {_gtt_err}",
+                        symbol=symbol,
+                    )
+
                 # Subscribe to real-time ticker for this symbol
                 await self._subscribe_ticker(symbol)
 
@@ -1329,6 +1372,7 @@ class UserTradingAgent:
         """
         Runs every 5 seconds.
         - Price updates: reads from KiteTicker cache (no API call), falls back to kite.quote() on cache miss
+        - Fill detection for pending limit orders: every 5 seconds (every iteration)
         - GTT fill detection + trailing SL: API call every 30 seconds (every 6th iteration)
         """
         gtt_check_counter = 0
@@ -1358,12 +1402,15 @@ class UserTradingAgent:
                 if not _is_market_open():
                     continue
 
-                # ── Pending order fill detection (every 30s) ──────────────
+                # ── Pending order fill detection (every iteration = every 5s) ──
+                # Runs independently so GTT is placed as soon as the limit order fills,
+                # not delayed by the 30-second GTT check cadence.
+                if self.pending_orders:
+                    await self._check_pending_order_fills()
+
+                # ── GTT / trailing SL checks (every ~30s) ─────────────────
                 gtt_check_counter += 1
                 check_gtts = (gtt_check_counter % 6 == 0)  # every ~30 seconds
-
-                if self.pending_orders and check_gtts:
-                    await self._check_pending_order_fills()
 
                 if not self.positions:
                     continue

@@ -14,6 +14,12 @@ class LiveTradingProvider with ChangeNotifier {
   List<Map<String, dynamic>> _analysisResults = [];
   String? _analyzeError;
 
+  // Balance state
+  double _availableBalance = 0;
+  double _netBalance = 0;
+  bool _isFetchingBalance = false;
+  String? _balanceError;
+
   /// Last settings the user started the agent with.
   /// Persists across navigation so sliders restore correctly.
   AgentSettingsModel _lastSettings = AgentSettingsModel.defaults();
@@ -28,6 +34,11 @@ class LiveTradingProvider with ChangeNotifier {
   List<Map<String, dynamic>> get analysisResults => _analysisResults;
   String? get analyzeError => _analyzeError;
   List<PendingOrderModel> get pendingOrders => _status.pendingOrders;
+
+  double get availableBalance => _availableBalance;
+  double get netBalance => _netBalance;
+  bool get isFetchingBalance => _isFetchingBalance;
+  String? get balanceError => _balanceError;
 
   /// Tracks which candidate symbols already have a limit order placed this session.
   final Set<String> placedOrderSymbols = {};
@@ -67,6 +78,29 @@ class LiveTradingProvider with ChangeNotifier {
     _analysisResults = [];
     _analyzeError = null;
     notifyListeners();
+  }
+
+  /// Fetch available equity balance from Zerodha.
+  Future<void> fetchBalance({
+    required String apiKey,
+    required String accessToken,
+  }) async {
+    _isFetchingBalance = true;
+    _balanceError = null;
+    notifyListeners();
+    try {
+      final data = await ApiService.getBalance(
+        apiKey: apiKey,
+        accessToken: accessToken,
+      );
+      _availableBalance = data['available'] ?? 0;
+      _netBalance = data['net'] ?? 0;
+    } catch (e) {
+      _balanceError = e.toString().replaceFirst('Exception: ', '');
+    } finally {
+      _isFetchingBalance = false;
+      notifyListeners();
+    }
   }
 
   /// Place a LIMIT order on Zerodha via backend (qty computed by agent).
