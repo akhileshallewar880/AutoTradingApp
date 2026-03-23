@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from app.agents.autonomous_agent import autonomous_agent_manager
 from app.core.logging import logger
 
@@ -20,12 +20,29 @@ class StartAgentRequest(BaseModel):
     leverage: int = 1             # 1–5x MIS leverage
 
 
+class RegisterPositionRequest(BaseModel):
+    user_id: str
+    api_key: str
+    access_token: str
+    symbol: str
+    action: str           # "BUY" or "SELL"
+    quantity: int
+    entry_price: float
+    stop_loss: float
+    target: float
+    gtt_id: Optional[str] = None      # GTT already placed by user (optional)
+    entry_order_id: str = ""
+    atr: float = 0.0                  # Optional — agent derives 1% fallback if not provided
+
+
 @router.post("/live-trading/start")
 async def start_agent(req: StartAgentRequest):
     """
-    Start the autonomous trading agent for a user.
-    Agent will scan markets every N minutes, enter trades when signal strength ≥ 2,
-    trail stop losses, and auto-squareoff MIS positions at 3:10 PM.
+    Start the autonomous trading agent for a user in MONITORING-ONLY mode.
+    The agent will NOT scan or place entry orders automatically.
+    After starting, use POST /live-trading/register-position to tell the agent
+    about positions you have already placed manually on Zerodha.
+    The agent will then monitor those positions: trailing SL, target hits, auto-squareoff at 3:10 PM.
     """
     try:
         result = await autonomous_agent_manager.start_agent(
@@ -83,3 +100,143 @@ async def get_agent_status(user_id: str = Query(...)):
             "recent_logs": [],
         }
     return status
+
+
+@router.post("/live-trading/register-position")
+async def register_position(req: RegisterPositionRequest):
+    """
+    Register a manually-executed trade with the monitoring agent.
+
+    Flow:
+      1. User placed a trade manually on Zerodha.
+      2. User calls this endpoint with the trade details.
+      3. Agent adds it to its monitoring list and connects KiteTicker.
+      4. From now on the agent monitors SL, target, trailing stop, and P&L for this position.
+
+    The agent must already be running (POST /live-trading/start) before calling this.
+    """
+    if req.action not in ("BUY", "SELL"):
+        raise HTTPException(status_code=400, detail="action must be 'BUY' or 'SELL'")
+    if req.quantity <= 0:
+        raise HTTPException(status_code=400, detail="quantity must be > 0")
+    if req.entry_price <= 0:
+        raise HTTPException(status_code=400, detail="entry_price must be > 0")
+
+    try:
+        result = await autonomous_agent_manager.register_position(
+            user_id=req.user_id,
+            symbol=req.symbol.upper(),
+            action=req.action,
+            quantity=req.quantity,
+            entry_price=req.entry_price,
+            stop_loss=req.stop_loss,
+            target=req.target,
+            gtt_id=req.gtt_id,
+            entry_order_id=req.entry_order_id,
+            atr=req.atr,
+        )
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("detail", "Unknown error"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to register position for user {req.user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/live-trading/analyze")
+async def analyze_intraday(
+    user_id: str = Query(...),
+    api_key: str = Query(...),
+    access_token: str = Query(...),
+    limit: int = Query(default=5, ge=1, le=20),
+):
+    """
+    Run intraday market analysis — same screener as normal analysis.
+    Returns top candidate stocks with entry price, stop-loss, target, and signal details.
+    No agent is started. No trades are placed.
+
+    Use this BEFORE starting an agent to decide which stocks to trade.
+    After placing trades manually, use POST /live-trading/register-position.
+    """
+    try:
+        from app.services.analysis_service import AnalysisService
+        from app.engines.strategy_engine import strategy_engine
+
+        svc = AnalysisService()
+        logger.info(f"[analyze_intraday] Running intraday screen for user {user_id[:8]}...")
+
+        candidates = await svc.screen_and_enrich_intraday(
+            limit=limit,
+            user_api_key=api_key,
+            user_access_token=access_token,
+        )
+
+        if not candidates:
+            return {"candidates": [], "message": "No qualifying candidates found this cycle. Try again in a few minutes."}
+
+        results: List[dict] = []
+        for c in candidates:
+            indicators = c.get("indicators", {})
+            ltp = float(c.get("last_price", 0))
+            sig = strategy_engine.generate_intraday_signal(indicators)
+            signal = sig.get("signal", "NEUTRAL")
+            strength = sig.get("strength", 0)
+            reasons = sig.get("reasons", [])
+            atr = float(indicators.get("atr", ltp * 0.01) or ltp * 0.01)
+
+            # Calculate suggested entry / SL / target (ATR-based)
+            if signal == "BUY":
+                stop_loss = round(ltp - 1.5 * atr, 2)
+                target    = round(ltp + 3.0 * atr, 2)
+                t1        = round(ltp + 1.5 * atr, 2)
+                # fallback if ATR-derived levels are illogical
+                if not (stop_loss < ltp < t1 < target):
+                    stop_loss = round(ltp * 0.985, 2)
+                    t1        = round(ltp * 1.015, 2)
+                    target    = round(ltp * 1.03, 2)
+            elif signal == "SELL":
+                stop_loss = round(ltp + 1.5 * atr, 2)
+                target    = round(ltp - 3.0 * atr, 2)
+                t1        = round(ltp - 1.5 * atr, 2)
+                if not (target < t1 < ltp < stop_loss):
+                    stop_loss = round(ltp * 1.015, 2)
+                    t1        = round(ltp * 0.985, 2)
+                    target    = round(ltp * 0.97, 2)
+            else:
+                # NEUTRAL — still return it but mark as such
+                stop_loss = round(ltp * 0.985, 2)
+                t1        = round(ltp * 1.015, 2)
+                target    = round(ltp * 1.03, 2)
+
+            risk = abs(ltp - stop_loss)
+            reward = abs(target - ltp)
+            rr_ratio = round(reward / risk, 2) if risk > 0 else 0.0
+
+            results.append({
+                "symbol":          c.get("symbol", ""),
+                "signal":          signal,
+                "strength":        strength,
+                "reasons":         reasons,
+                "ltp":             round(ltp, 2),
+                "entry_price":     round(ltp, 2),
+                "stop_loss":       stop_loss,
+                "t1":              t1,
+                "target":          target,
+                "rr_ratio":        rr_ratio,
+                "atr":             round(atr, 2),
+                "volume":          c.get("volume", 0),
+                "volume_ratio":    c.get("volume_ratio", 0.0),
+                "day_change_pct":  c.get("day_change_pct", 0.0),
+                "vwap":            indicators.get("vwap"),
+                "rsi":             indicators.get("rsi"),
+                "macd_histogram":  indicators.get("macd_histogram"),
+            })
+
+        logger.info(f"[analyze_intraday] Returning {len(results)} candidates for user {user_id[:8]}")
+        return {"candidates": results, "count": len(results)}
+
+    except Exception as e:
+        logger.error(f"[analyze_intraday] Failed for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

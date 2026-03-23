@@ -1,12 +1,18 @@
 """
-Autonomous Live Trading Agent
-------------------------------
-Phase 1 - SCANNING:  Scan market once → find all qualifying stocks → execute all positions
-Phase 2 - MONITORING: Stop scanning. Monitor open positions only.
-  - Continuous trailing stop-loss adjustment (every 30 s)
-  - GTT fill detection (every 30 s)
-  - P&L updates (every 5 s)
-  - Auto squareoff at 3:10 PM IST
+Autonomous Live Trading Agent (Monitoring-Only Mode)
+-----------------------------------------------------
+New flow (v2):
+  1. User taps "Analyze Market" → GET /live-trading/analyze returns intraday recommendations
+  2. User places trades manually on Zerodha/broker app
+  3. User taps "Start Monitoring" → POST /live-trading/start starts agent (monitoring-only)
+  4. User confirms each position → POST /live-trading/register-position injects it
+  5. Agent monitors positions:
+       - P&L updates every 5 s via KiteTicker (falls back to REST API polling)
+       - GTT fill detection every 30 s
+       - Trailing stop-loss adjustment every 30 s
+       - Auto squareoff of MIS positions at 3:10 PM IST
+
+NO auto-scanning. NO auto-execution. The agent never places entry orders on its own.
 
 Stop behaviour:
   - If market is open → squareoff all open positions (MARKET order) + cancel GTTs
@@ -435,20 +441,22 @@ class UserTradingAgent:
             logger.warning(f"[Agent:{self.user_id}] start() called but agent is already running")
             return
         self.is_running = True
-        self.status = "SCANNING"
+        # v2: Agent starts directly in monitoring-only mode.
+        # No auto-scan, no auto-execution. Positions are injected via register_position().
+        self.status = "MONITORING"
         self.started_at = _ist_now().isoformat()
         self.trade_count_today = 0
         self.daily_pnl = 0.0
         self.daily_loss_limit_hit = False
-        self._scanning_done = False  # fresh start — enable scanning
+        self._scanning_done = True  # skip scan phase entirely
 
         self._init_trade_log()
 
         self._log(
             "STARTED",
-            f"Agent started — max_positions={self.max_positions}, "
-            f"risk={self.risk_percent}%, max_trades={self.max_trades_per_day}, "
-            f"leverage={self.leverage}x, scan_interval={self.scan_interval_minutes}min",
+            f"Agent started in monitoring-only mode — max_positions={self.max_positions}, "
+            f"max_trades={self.max_trades_per_day}, leverage={self.leverage}x. "
+            f"Register positions via the app after placing trades manually.",
         )
 
         # Fetch starting capital
@@ -474,23 +482,20 @@ class UserTradingAgent:
             logger.exception(f"[Agent:{self.user_id}] Capital fetch failed")
             self._log("WARN", f"Could not fetch starting capital: {e}")
 
-        # Prepare KiteTicker — only connect when market is actually open to
-        # avoid Zerodha 403 Forbidden errors that spam the log outside hours.
+        # Prepare KiteTicker manager — do NOT connect yet.
+        # The WebSocket will be started lazily when the first position is registered
+        # (or by the monitor loop when market opens and positions exist).
         self._ticker_manager = _TickerManager(
             self.api_key, self.access_token, self._price_cache
         )
-        if _is_market_open():
-            try:
-                self._ticker_manager.start()
-                self._log("TICKER", "KiteTicker WebSocket started — real-time prices active")
-            except Exception as e:
-                logger.exception(f"[Agent:{self.user_id}] KiteTicker start failed")
-                self._log("WARN", f"KiteTicker failed to start (will fall back to API polling): {e}")
-        else:
-            self._log("TICKER", "Market closed — KiteTicker will connect when market opens")
+        self._log(
+            "TICKER",
+            "KiteTicker ready — will connect when a position is registered",
+        )
 
-        logger.info(f"[Agent:{self.user_id}] Launching scan_task and monitor_task")
-        self._scan_task = asyncio.create_task(self._scan_loop())
+        logger.info(f"[Agent:{self.user_id}] Launching monitor_task (monitoring-only mode — no scan)")
+        # No scan_task — scanning is disabled in monitoring-only mode
+        self._scan_task = None
         self._monitor_task = asyncio.create_task(self._monitor_loop())
 
     async def stop(self):
@@ -808,12 +813,7 @@ class UserTradingAgent:
                         target = round(ltp * 0.97, 2)
                         logger.debug(f"[Agent:{self.user_id}] {symbol}: ATR SL/target invalid, using % fallback")
 
-                # ── Multi-target quantity split (scaling-out) ──────────────
-                # T1 (1:1 R:R): exit 50% → move SL to breakeven
-                # T2 (2:1 R:R): exit 25% → move SL to T1
-                # Runner: remaining 25% trails with SL until squareoff
-                t1_qty = max(1, quantity // 2)
-                t2_qty = max(1, (quantity - t1_qty) // 2) if (quantity - t1_qty) >= 2 else 0
+                # quantity split is calculated AFTER position sizing below
 
                 # ── Principle: Follow the trend ───────────────────────────
                 # Skip trade if it goes against the Nifty 50 direction.
@@ -855,6 +855,12 @@ class UserTradingAgent:
                 max_by_capital = int((capital * 0.10) / ltp) if ltp > 0 else 1
                 quantity = min(quantity, max(1, max_by_capital))
 
+                # ── Multi-target quantity split (scaling-out) ──────────────
+                # T1 (1:1 R:R): exit 50% → move SL to breakeven
+                # T2 (2:1 R:R): exit 25% → move SL to T1
+                # Runner: remaining 25% trails with SL until squareoff
+                t1_qty = max(1, quantity // 2)
+                t2_qty = max(1, (quantity - t1_qty) // 2) if (quantity - t1_qty) >= 2 else 0
                 runner_qty = quantity - t1_qty - t2_qty
                 self._log(
                     "SIGNAL",
@@ -1616,6 +1622,101 @@ class UserTradingAgent:
 
         self.status = "MONITORING"
 
+    # ── Manual position registration ──────────────────────────────────────────
+
+    async def register_position(
+        self,
+        symbol: str,
+        action: str,
+        quantity: int,
+        entry_price: float,
+        stop_loss: float,
+        target: float,
+        gtt_id: Optional[str] = None,
+        entry_order_id: str = "",
+        atr: float = 0.0,
+    ) -> Dict:
+        """
+        Register a manually-executed trade into the agent's monitoring list.
+        The agent will immediately subscribe to real-time price feed and start
+        monitoring SL/target/trailing-stop from this point forward.
+
+        Returns: {"status": "registered"} or {"status": "error", "detail": ...}
+        """
+        if not self.is_running:
+            return {"status": "error", "detail": "Agent is not running. Start the agent first."}
+
+        if symbol in self.positions:
+            return {"status": "error", "detail": f"{symbol} already being monitored."}
+
+        if len(self.positions) >= self.max_positions:
+            return {
+                "status": "error",
+                "detail": f"Max positions ({self.max_positions}) reached — stop monitoring another position first.",
+            }
+
+        # Derive ATR from entry_price if not supplied (1% fallback)
+        if atr <= 0:
+            atr = round(entry_price * 0.01, 2)
+
+        # Build multi-target plan (same as auto-scan would have done)
+        t1_qty = max(1, quantity // 2)
+        t2_qty = max(1, (quantity - t1_qty) // 2) if (quantity - t1_qty) >= 2 else 0
+
+        # T1 = midpoint between entry and target; T2 = target itself
+        if action == "BUY":
+            t1_price = round(entry_price + (target - entry_price) / 2, 2)
+        else:
+            t1_price = round(entry_price - (entry_price - target) / 2, 2)
+
+        pos = PositionState(
+            symbol=symbol,
+            action=action,
+            quantity=quantity,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            target=target,
+            gtt_id=gtt_id,
+            entry_order_id=entry_order_id,
+            analysis_id="manual",
+            atr=atr,
+        )
+        pos.remaining_quantity = quantity
+        if action == "BUY":
+            pos.targets = [
+                {"label": "T1", "price": t1_price, "qty": t1_qty, "hit": False, "new_sl": entry_price},
+                *([{"label": "T2", "price": target, "qty": t2_qty, "hit": False, "new_sl": t1_price}] if t2_qty > 0 else []),
+            ]
+        else:  # SELL short
+            pos.targets = [
+                {"label": "T1", "price": t1_price, "qty": t1_qty, "hit": False, "new_sl": entry_price},
+                *([{"label": "T2", "price": target, "qty": t2_qty, "hit": False, "new_sl": t1_price}] if t2_qty > 0 else []),
+            ]
+
+        self.positions[symbol] = pos
+        self.trade_count_today += 1
+
+        self._log(
+            "POSITION_REGISTERED",
+            f"{symbol}: Manually registered — {action} {quantity} shares @ ₹{entry_price:.2f} | "
+            f"SL=₹{stop_loss:.2f} T1=₹{t1_price:.2f}({t1_qty}sh) T2=₹{target:.2f}({t2_qty}sh) | "
+            f"GTT={gtt_id or 'none'}",
+            symbol=symbol,
+        )
+
+        # Connect KiteTicker now that we have a position to monitor
+        if self._ticker_manager and not self._ticker_manager._started and _is_market_open():
+            try:
+                self._ticker_manager.start()
+                self._log("TICKER", "KiteTicker WebSocket connected — real-time prices active")
+            except Exception as e:
+                self._log("WARN", f"KiteTicker failed to start: {e} (will use API polling)")
+
+        # Subscribe to price stream for this symbol
+        await self._subscribe_ticker(symbol)
+
+        return {"status": "registered", "symbol": symbol}
+
     # ── Status ────────────────────────────────────────────────────────────────
 
     def get_status(self) -> Dict:
@@ -1693,6 +1794,34 @@ class AutonomousAgentManager:
         # Remove from memory — clean slate for next start, no stale state on refresh
         del self._agents[user_id]
         return {"status": "stopped", "message": "Agent stopped. Open positions have been squared off and GTTs cancelled."}
+
+    async def register_position(
+        self,
+        user_id: str,
+        symbol: str,
+        action: str,
+        quantity: int,
+        entry_price: float,
+        stop_loss: float,
+        target: float,
+        gtt_id: Optional[str] = None,
+        entry_order_id: str = "",
+        atr: float = 0.0,
+    ) -> Dict:
+        """Inject a manually-executed position into a running agent."""
+        if user_id not in self._agents or not self._agents[user_id].is_running:
+            return {"status": "error", "detail": "No active agent for this user. Start the agent first."}
+        return await self._agents[user_id].register_position(
+            symbol=symbol,
+            action=action,
+            quantity=quantity,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            target=target,
+            gtt_id=gtt_id,
+            entry_order_id=entry_order_id,
+            atr=atr,
+        )
 
     def get_agent_status(self, user_id: str) -> Optional[Dict]:
         if user_id not in self._agents:

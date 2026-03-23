@@ -292,9 +292,6 @@ class ApiService {
     }
   }
 
-  /// Validate user-provided Zerodha API credentials
-  /// Makes a test call to the backend with the credentials
-  /// Returns true if valid, false otherwise
   static Future<bool> validateZerodhaCredentials(
       String apiKey, String apiSecret) async {
     try {
@@ -317,4 +314,73 @@ class ApiService {
       return false;
     }
   }
+
+  /// Run intraday market analysis — same screener as the normal analysis feature.
+  /// Returns a list of candidate stocks with entry, SL, and target price.
+  /// No agent is started, no trades are placed.
+  static Future<List<Map<String, dynamic>>> analyzeIntraday({
+    required String userId,
+    required String apiKey,
+    required String accessToken,
+    int limit = 5,
+  }) async {
+    final uri = Uri.parse(ApiConfig.liveAgentAnalyzeUrl).replace(
+      queryParameters: {
+        'user_id': userId,
+        'api_key': apiKey,
+        'access_token': accessToken,
+        'limit': '$limit',
+      },
+    );
+    // Analysis can be slow (screener + indicator calc) — use 2-minute timeout
+    final response = await http.get(uri).timeout(const Duration(seconds: 120));
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(
+          data['candidates'] as List<dynamic>? ?? []);
+    } else {
+      throw Exception('Analyze failed: ${response.body}');
+    }
+  }
+
+  /// Register a manually-executed position with the monitoring agent.
+  static Future<void> registerPosition({
+    required String userId,
+    required String apiKey,
+    required String accessToken,
+    required String symbol,
+    required String action,
+    required int quantity,
+    required double entryPrice,
+    required double stopLoss,
+    required double target,
+    String? gttId,
+    String entryOrderId = '',
+    double atr = 0.0,
+  }) async {
+    final response = await http.post(
+      Uri.parse(ApiConfig.liveAgentRegisterPositionUrl),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'user_id': userId,
+        'api_key': apiKey,
+        'access_token': accessToken,
+        'symbol': symbol,
+        'action': action,
+        'quantity': quantity,
+        'entry_price': entryPrice,
+        'stop_loss': stopLoss,
+        'target': target,
+        if (gttId != null) 'gtt_id': gttId,
+        'entry_order_id': entryOrderId,
+        'atr': atr,
+      }),
+    ).timeout(const Duration(seconds: 30));
+
+    if (response.statusCode != 200) {
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(body['detail'] ?? 'Failed to register position');
+    }
+  }
 }
+

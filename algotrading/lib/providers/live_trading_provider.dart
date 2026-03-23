@@ -9,6 +9,11 @@ class LiveTradingProvider with ChangeNotifier {
   String? _error;
   Timer? _pollTimer;
 
+  // Analysis state
+  bool _isAnalyzing = false;
+  List<Map<String, dynamic>> _analysisResults = [];
+  String? _analyzeError;
+
   /// Last settings the user started the agent with.
   /// Persists across navigation so sliders restore correctly.
   AgentSettingsModel _lastSettings = AgentSettingsModel.defaults();
@@ -19,7 +24,85 @@ class LiveTradingProvider with ChangeNotifier {
   bool get isRunning => _status.isRunning;
   AgentSettingsModel get lastSettings => _lastSettings;
 
-  /// Start the autonomous agent on the backend.
+  bool get isAnalyzing => _isAnalyzing;
+  List<Map<String, dynamic>> get analysisResults => _analysisResults;
+  String? get analyzeError => _analyzeError;
+
+  /// Run intraday analysis — populates analysisResults for the UI to display.
+  Future<void> analyzeMarket({
+    required String userId,
+    required String accessToken,
+    required String apiKey,
+    int limit = 5,
+  }) async {
+    _isAnalyzing = true;
+    _analyzeError = null;
+    _analysisResults = [];
+    notifyListeners();
+
+    try {
+      final results = await ApiService.analyzeIntraday(
+        userId: userId,
+        apiKey: apiKey,
+        accessToken: accessToken,
+        limit: limit,
+      );
+      _analysisResults = results;
+    } catch (e) {
+      _analyzeError = e.toString().replaceFirst('Exception: ', '');
+    } finally {
+      _isAnalyzing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Clear previous analysis results.
+  void clearAnalysis() {
+    _analysisResults = [];
+    _analyzeError = null;
+    notifyListeners();
+  }
+
+  /// Register a manually-executed position with the running monitoring agent.
+  Future<bool> registerPosition({
+    required String userId,
+    required String accessToken,
+    required String apiKey,
+    required String symbol,
+    required String action,
+    required int quantity,
+    required double entryPrice,
+    required double stopLoss,
+    required double target,
+    String? gttId,
+    double atr = 0.0,
+  }) async {
+    try {
+      await ApiService.registerPosition(
+        userId: userId,
+        apiKey: apiKey,
+        accessToken: accessToken,
+        symbol: symbol,
+        action: action,
+        quantity: quantity,
+        entryPrice: entryPrice,
+        stopLoss: stopLoss,
+        target: target,
+        gttId: gttId,
+        atr: atr,
+      );
+      // Refresh status to show the new position immediately
+      await _fetchStatusSilent(userId);
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _error = e.toString().replaceFirst('Exception: ', '');
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Start the autonomous agent on the backend (monitoring-only mode).
   /// Saves settings locally, calls API, then immediately fetches status so
   /// the UI transitions to "running" without waiting for the first poll.
   Future<void> startAgent({
