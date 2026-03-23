@@ -249,6 +249,9 @@ class PositionState:
         # Multi-target (scaling-out) strategy
         self.targets: List[Dict] = []     # [{label, price, qty, hit, new_sl}]
         self.remaining_quantity: int = quantity  # decrements on each partial exit
+        # GTT cooldown: skip GTT-fill detection for this many check cycles after
+        # a GTT is placed or updated (Zerodha API may not reflect it immediately).
+        self.gtt_skip_checks: int = 0
 
     def to_dict(self) -> Dict:
         return {
@@ -1119,6 +1122,7 @@ class UserTradingAgent:
                 ),
             )
             pos.gtt_id = new_gtt_id
+            pos.gtt_skip_checks = 2
             self._log(
                 "GTT_UPDATED",
                 f"{symbol}: SL moved to ₹{new_sl:.2f} "
@@ -1308,6 +1312,7 @@ class UserTradingAgent:
                         ),
                     )
                     pos.gtt_id = gtt_id
+                    pos.gtt_skip_checks = 2  # skip next 2 GTT check cycles (~60s) for API to settle
                     self._log(
                         "GTT_PLACED",
                         f"{symbol}: SL GTT {gtt_id} placed @ ₹{pending.stop_loss:.2f} "
@@ -1645,7 +1650,17 @@ class UserTradingAgent:
                                 )
 
                 # ── GTT fill detection (only when we fetched GTTs this iteration) ──
-                if check_gtts and pos.gtt_id and str(pos.gtt_id) not in active_gtt_ids:
+                # Skip for gtt_skip_checks cycles after a GTT is placed/updated so
+                # the Zerodha API has time to show the new GTT as "active".
+                if check_gtts and pos.gtt_id:
+                    if pos.gtt_skip_checks > 0:
+                        pos.gtt_skip_checks -= 1
+                        logger.debug(
+                            f"[Agent:{self.user_id}] {symbol}: GTT settle cooldown "
+                            f"({pos.gtt_skip_checks} cycles left)"
+                        )
+                if check_gtts and pos.gtt_id and pos.gtt_skip_checks == 0 \
+                        and str(pos.gtt_id) not in active_gtt_ids:
                     self._log(
                         "POSITION_CLOSED",
                         f"{symbol}: GTT {pos.gtt_id} triggered — position closed | "
@@ -1767,6 +1782,7 @@ class UserTradingAgent:
                 )
 
             pos.gtt_id = new_gtt_id
+            pos.gtt_skip_checks = 2  # allow Zerodha API to reflect new GTT before checking fill
 
         except Exception as e:
             self._log("ERROR", f"{pos.symbol}: GTT update failed: {e}", symbol=pos.symbol)
