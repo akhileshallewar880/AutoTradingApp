@@ -19,7 +19,6 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
   final _capitalController = TextEditingController();
   DateTime _selectedDate = DateTime.now();
   int _numStocks = 5;
-  double _riskPercent = 1.0;
   int _holdDurationDays = 0; // 0 = Intraday
   int _leverage = 1; // 1–5x MIS leverage (intraday only)
   Set<String> _selectedSectors = {'ALL'};
@@ -102,8 +101,6 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                             _buildDatePicker(),
                             const SizedBox(height: 20),
                             _buildNumStocksSlider(),
-                            const SizedBox(height: 20),
-                            _buildRiskPercentSlider(),
                           ],
                         ),
                       ),
@@ -333,60 +330,6 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
     );
   }
 
-  Widget _buildRiskPercentSlider() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('Risk Per Trade',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.grey[700])),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: _riskPercent > 3.0
-                    ? Colors.orange[700]
-                    : Colors.green[700],
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                '${_riskPercent.toStringAsFixed(1)}%',
-                style: const TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-        Slider(
-          value: _riskPercent,
-          min: 0.5,
-          max: 5.0,
-          divisions: 45,
-          label: '${_riskPercent.toStringAsFixed(1)}%',
-          activeColor:
-              _riskPercent > 3.0 ? Colors.orange[700] : Colors.green[700],
-          inactiveColor: Colors.green[100],
-          onChanged: (value) {
-            setState(() => _riskPercent = value);
-          },
-        ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('0.5% (Low)',
-                style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-            Text('5.0% (High)',
-                style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-          ],
-        ),
-      ],
-    );
-  }
 
   Widget _buildSectorSelector() {
     return Wrap(
@@ -677,7 +620,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
         await analysisProvider.generateAnalysis(
           analysisDate: DateFormat('yyyy-MM-dd').format(_selectedDate),
           numStocks: _numStocks,
-          riskPercent: _riskPercent,
+          riskPercent: 1.0,
           accessToken: authProvider.user!.accessToken,
           apiKey: authProvider.user!.apiKey,
           userId: userId,

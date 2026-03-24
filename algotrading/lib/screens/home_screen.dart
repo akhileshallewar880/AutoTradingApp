@@ -7,14 +7,12 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/auth_provider.dart';
 import '../providers/dashboard_provider.dart';
-import '../providers/live_trading_provider.dart';
 import '../models/dashboard_model.dart';
 import '../widgets/info_card.dart';
 import '../utils/api_config.dart';
 import 'analysis_input_screen.dart';
 import 'gtt_analysis_screen.dart';
 import 'gtt_portfolio_analysis_screen.dart';
-import 'live_trading_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -1108,10 +1106,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Fixed bottom bar ──────────────────────────────────────────────────
   Widget _buildFixedBottomBar(BuildContext context) {
     final dash = context.watch<DashboardProvider>();
-    final live = context.watch<LiveTradingProvider>();
     final gtts = dash.dashboard?.gtts ?? [];
     final hasGtts = gtts.isNotEmpty;
-    final agentRunning = live.isRunning;
 
     return SafeArea(
       child: Container(
@@ -1152,64 +1148,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           'Analysis',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Live Trade button
-            Expanded(
-              child: Material(
-                color: agentRunning ? Colors.indigo[700] : Colors.indigo[50],
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const LiveTradingScreen(),
-                    ),
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        if (agentRunning)
-                          Container(
-                            width: 7,
-                            height: 7,
-                            margin: const EdgeInsets.only(right: 5),
-                            decoration: BoxDecoration(
-                              color: Colors.greenAccent,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.greenAccent.withValues(alpha: 0.7),
-                                  blurRadius: 5,
-                                ),
-                              ],
-                            ),
-                          )
-                        else
-                          Icon(
-                            Icons.smart_toy_outlined,
-                            color: Colors.indigo[700],
-                            size: 16,
-                          ),
-                        const SizedBox(width: 4),
-                        Text(
-                          agentRunning ? 'Live Agent' : 'Live Trade',
-                          style: TextStyle(
-                            color: agentRunning ? Colors.white : Colors.indigo[700],
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
                           ),

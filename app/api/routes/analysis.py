@@ -132,8 +132,15 @@ async def generate_analysis(request: AnalysisRequest):
         # ── Stage 4: Position sizing + validation ──────────────────────────
         preliminary_stocks = []
         total_investment = 0.0
+        seen_symbols: set = set()
 
         for stock_rec in llm_response.get("stocks", []):
+            sym = stock_rec.get("stock_symbol", "").upper()
+            if sym in seen_symbols:
+                logger.warning(f"Duplicate stock symbol {sym} from LLM — skipping")
+                continue
+            if sym:
+                seen_symbols.add(sym)
             entry = float(stock_rec.get("entry_price", 0))
             sl = float(stock_rec.get("stop_loss", 0))
             target = float(stock_rec.get("target_price", 0))

@@ -86,6 +86,16 @@ class AnalysisProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  void setStockSelected(int index, bool selected) {
+    if (selected) {
+      _selectedStockIndices.add(index);
+    } else {
+      _selectedStockIndices.remove(index);
+    }
+    _recalculatePortfolioMetrics();
+    notifyListeners();
+  }
+
   void selectAllStocks() {
     if (_currentAnalysis == null) return;
     _selectedStockIndices = Set<int>.from(

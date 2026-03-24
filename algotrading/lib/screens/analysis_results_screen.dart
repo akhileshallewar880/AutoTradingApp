@@ -328,8 +328,8 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                   stockIndex: index,
                   isSelected: analysisProvider.isStockSelected(index),
                   initiallyExpanded: _allExpanded,
-                  onSelectionChanged: (_) {
-                    analysisProvider.toggleStockSelection(index);
+                  onSelectionChanged: (val) {
+                    analysisProvider.setStockSelected(index, val);
                   },
                 );
               },
