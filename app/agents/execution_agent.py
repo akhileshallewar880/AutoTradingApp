@@ -4,7 +4,7 @@ from app.core.logging import logger
 from app.services.zerodha_service import zerodha_service
 from app.services.order_service import order_service, MarketClosedException
 from app.models.analysis_models import ExecutionUpdate
-from typing import List, Dict, Callable
+from typing import List, Dict, Callable, Tuple
 from datetime import datetime
 
 
@@ -14,10 +14,11 @@ class ExecutionAgent:
 
     Workflow:
       1. Place entry order  (BUY for long / SELL for short-sell) via MIS or CNC
-      2. Wait for order fill
-      3. Place GTT (Good Till Triggered) with stop-loss + target for both MIS and CNC
-         - Long  (BUY entry) : GTT SELL orders — stop-loss leg + target leg
-         - Short (SELL entry): GTT BUY  orders — target leg (cover profit) + SL leg
+      2. Wait for order fill — captures actual fill price
+      3. Recalculate SL/target if fill price deviates from expected entry price
+      4. Fetch live LTP for accurate GTT last_price
+      5. Validate GTT trigger prices make sense vs current market price
+      6. Place GTT with adjusted prices
     """
 
     def __init__(self):
@@ -44,16 +45,6 @@ class ExecutionAgent:
                          where T1/T2 exits are managed by the agent, not GTT).
         sl_only=False → place two-leg GTT with SL + target (legacy/single-target mode).
         """
-        """
-        Execute a complete trade workflow:
-          1. Place entry order  (BUY or SELL/short)
-          2. Monitor until filled
-          3. Place GTT with stop-loss + target (works for both MIS and CNC)
-
-        Args:
-            action           : "BUY" (long) or "SELL" (intraday short sell)
-            hold_duration_days: 0 → MIS (intraday); >0 → CNC (delivery)
-        """
         is_intraday = hold_duration_days == 0
         product = "MIS" if is_intraday else "CNC"
         is_short = action == "SELL"
@@ -68,7 +59,6 @@ class ExecutionAgent:
         }
 
         # Reinitialize kite with this user's api_key + access_token.
-        # Critical for multi-user: api_key and access_token must be from the same account.
         self.zs.set_credentials(api_key, access_token)
 
         try:
@@ -113,63 +103,172 @@ class ExecutionAgent:
                 order_id=entry_order_id,
             )
 
-            is_filled = await self._wait_for_order_fill(entry_order_id, timeout=300)
+            is_filled, fill_info = await self._wait_for_order_fill(entry_order_id, timeout=300)
 
             if not is_filled:
+                final_status = fill_info.get("status", "TIMEOUT").upper()
+                reason = fill_info.get("status_message", "")
+
+                if final_status in ("CANCELLED", "REJECTED"):
+                    update_type = "ORDER_REJECTED"
+                    msg = (
+                        f"Order {final_status}"
+                        + (f": {reason}" if reason else "")
+                        + ". No position opened — GTT not placed."
+                    )
+                    log_status = "REJECTED"
+                else:
+                    update_type = "ORDER_TIMEOUT"
+                    msg = "Order not filled within timeout — GTT not placed."
+                    log_status = "TIMEOUT"
+
+                await self._send_update(
+                    analysis_id, stock_symbol, update_type, msg, update_callback,
+                    order_id=entry_order_id,
+                )
+                execution_log["status"] = log_status
+                execution_log["error"] = msg
+                return execution_log
+
+            # ── Step 3: Reconcile fill price ───────────────────────────────
+            actual_fill = fill_info.get("average_price", 0.0)
+            gtt_stop_loss = stop_loss
+            gtt_target = target
+
+            if actual_fill > 0:
+                deviation_pct = abs(actual_fill - entry_price) / entry_price * 100
+                sl_distance = abs(stop_loss - entry_price)
+                target_distance = abs(target - entry_price)
+
+                if deviation_pct > 0.2:  # >0.2% deviation — recalculate GTT prices
+                    if is_short:
+                        gtt_stop_loss = round(actual_fill + sl_distance, 2)
+                        gtt_target = round(actual_fill - target_distance, 2)
+                    else:
+                        gtt_stop_loss = round(actual_fill - sl_distance, 2)
+                        gtt_target = round(actual_fill + target_distance, 2)
+
+                    await self._send_update(
+                        analysis_id,
+                        stock_symbol,
+                        "ORDER_FILLED",
+                        (
+                            f"{entry_label} filled @ ₹{actual_fill:.2f} "
+                            f"(expected ₹{entry_price:.2f}, deviation {deviation_pct:.2f}%). "
+                            f"GTT recalculated — SL: ₹{gtt_stop_loss:.2f}, "
+                            f"Target: ₹{gtt_target:.2f}"
+                        ),
+                        update_callback,
+                        order_id=entry_order_id,
+                    )
+                    logger.info(
+                        f"{stock_symbol} fill deviation {deviation_pct:.2f}%: "
+                        f"expected ₹{entry_price:.2f}, filled ₹{actual_fill:.2f}. "
+                        f"GTT SL ₹{gtt_stop_loss:.2f}, Target ₹{gtt_target:.2f}"
+                    )
+                else:
+                    await self._send_update(
+                        analysis_id,
+                        stock_symbol,
+                        "ORDER_FILLED",
+                        f"{entry_label} order filled @ ₹{actual_fill:.2f}",
+                        update_callback,
+                        order_id=entry_order_id,
+                    )
+            else:
+                actual_fill = entry_price
                 await self._send_update(
                     analysis_id,
                     stock_symbol,
-                    "ORDER_TIMEOUT",
-                    "Order not filled within timeout — GTT not placed.",
+                    "ORDER_FILLED",
+                    f"{entry_label} order filled @ ₹{entry_price:.2f}",
                     update_callback,
                     order_id=entry_order_id,
                 )
-                execution_log["status"] = "TIMEOUT"
-                return execution_log
 
-            await self._send_update(
-                analysis_id,
-                stock_symbol,
-                "ORDER_FILLED",
-                f"{entry_label} order filled at ₹{entry_price:.2f}",
-                update_callback,
-                order_id=entry_order_id,
+            # ── Step 4: Fetch live LTP for accurate GTT last_price ─────────
+            gtt_last_price = actual_fill  # fallback
+            try:
+                ltp_data = await self.zs.get_ltp([stock_symbol])
+                ltp_key = f"NSE:{stock_symbol}"
+                live_ltp = ltp_data.get(ltp_key, {}).get("last_price", 0.0)
+                if live_ltp > 0:
+                    gtt_last_price = live_ltp
+                    logger.info(
+                        f"{stock_symbol}: using live LTP ₹{live_ltp:.2f} as GTT last_price "
+                        f"(fill was ₹{actual_fill:.2f})"
+                    )
+            except Exception as ltp_err:
+                logger.warning(
+                    f"{stock_symbol}: LTP fetch failed, using fill price ₹{actual_fill:.2f} "
+                    f"as GTT last_price. Error: {ltp_err}"
+                )
+
+            # ── Step 5: Validate GTT trigger prices vs live market ─────────
+            gtt_stop_loss, gtt_target, price_warn = self._validate_and_fix_gtt_prices(
+                stock_symbol=stock_symbol,
+                is_short=is_short,
+                stop_loss=gtt_stop_loss,
+                target=gtt_target,
+                last_price=gtt_last_price,
             )
 
-            # ── Step 3: Place GTT (for both MIS and CNC) ──────────────────
+            if price_warn:
+                await self._send_update(
+                    analysis_id, stock_symbol, "GTT_PRICE_ADJUSTED",
+                    price_warn, update_callback,
+                )
+
+            # ── Step 6: Place GTT ──────────────────────────────────────────
             if is_short:
                 gtt_desc = (
                     f"Placing GTT (SHORT cover): "
-                    f"target ₹{target:.2f} (profit), SL ₹{stop_loss:.2f} (loss cap)"
+                    f"target ₹{gtt_target:.2f} (profit), SL ₹{gtt_stop_loss:.2f} (loss cap)"
                 )
             else:
                 gtt_desc = (
-                    f"Placing GTT: SL ₹{stop_loss:.2f}, Target ₹{target:.2f}"
+                    f"Placing GTT: SL ₹{gtt_stop_loss:.2f}, Target ₹{gtt_target:.2f}"
                 )
 
             await self._send_update(
                 analysis_id, stock_symbol, "GTT_PLACING", gtt_desc, update_callback
             )
 
-            if sl_only:
-                gtt_id = await self._place_sl_gtt(
-                    symbol=stock_symbol,
-                    quantity=quantity,
-                    entry_price=entry_price,
-                    stop_loss=stop_loss,
-                    product=product,
-                    is_short=is_short,
+            try:
+                if sl_only:
+                    gtt_id = await self._place_sl_gtt(
+                        symbol=stock_symbol,
+                        quantity=quantity,
+                        last_price=gtt_last_price,
+                        stop_loss=gtt_stop_loss,
+                        product=product,
+                        is_short=is_short,
+                    )
+                else:
+                    gtt_id = await self._place_gtt_order(
+                        symbol=stock_symbol,
+                        quantity=quantity,
+                        last_price=gtt_last_price,
+                        stop_loss=gtt_stop_loss,
+                        target=gtt_target,
+                        product=product,
+                        is_short=is_short,
+                    )
+            except Exception as gtt_err:
+                # GTT placement failed but entry order IS filled — position is open
+                err_msg = (
+                    f"⚠ Entry order filled but GTT placement failed: {gtt_err}. "
+                    f"Position is OPEN ({entry_label} {quantity} shares). "
+                    f"Manual exit required — SL ₹{gtt_stop_loss:.2f}, Target ₹{gtt_target:.2f}."
                 )
-            else:
-                gtt_id = await self._place_gtt_order(
-                    symbol=stock_symbol,
-                    quantity=quantity,
-                    entry_price=entry_price,
-                    stop_loss=stop_loss,
-                    target=target,
-                    product=product,
-                    is_short=is_short,
+                logger.error(f"{stock_symbol} GTT failed after fill: {gtt_err}")
+                await self._send_update(
+                    analysis_id, stock_symbol, "GTT_FAILED", err_msg, update_callback,
                 )
+                execution_log["status"] = "GTT_FAILED"
+                execution_log["error"] = str(gtt_err)
+                execution_log["gtt_order_id"] = None
+                return execution_log
 
             execution_log["gtt_order_id"] = gtt_id
 
@@ -223,13 +322,70 @@ class ExecutionAgent:
             execution_log["error"] = str(e)
             return execution_log
 
+    # ── GTT price validation ───────────────────────────────────────────────────
+
+    def _validate_and_fix_gtt_prices(
+        self,
+        stock_symbol: str,
+        is_short: bool,
+        stop_loss: float,
+        target: float,
+        last_price: float,
+    ) -> Tuple[float, float, str]:
+        """
+        Validate GTT trigger prices against the current market price.
+        Zerodha requires: for LONG → sl < last_price < target
+                          for SHORT → target < last_price < sl
+
+        Returns (adjusted_sl, adjusted_target, warning_message).
+        warning_message is empty string if no adjustment was needed.
+        """
+        if last_price <= 0:
+            return stop_loss, target, ""
+
+        warn = ""
+
+        if is_short:
+            # SHORT: target < last_price < stop_loss
+            valid = target < last_price < stop_loss
+            if not valid:
+                old_sl, old_tgt = stop_loss, target
+                # Recalculate symmetrically around last_price
+                avg_distance = (abs(stop_loss - target)) / 2
+                stop_loss = round(last_price + avg_distance * 0.4, 2)
+                target = round(last_price - avg_distance * 0.6, 2)
+                warn = (
+                    f"GTT prices invalid for current market ₹{last_price:.2f} "
+                    f"(SHORT needs target < price < SL). "
+                    f"Adjusted: SL ₹{old_sl:.2f}→₹{stop_loss:.2f}, "
+                    f"Target ₹{old_tgt:.2f}→₹{target:.2f}."
+                )
+                logger.warning(f"{stock_symbol}: {warn}")
+        else:
+            # LONG: stop_loss < last_price < target
+            valid = stop_loss < last_price < target
+            if not valid:
+                old_sl, old_tgt = stop_loss, target
+                avg_distance = abs(target - stop_loss) / 2
+                stop_loss = round(last_price - avg_distance * 0.4, 2)
+                target = round(last_price + avg_distance * 0.6, 2)
+                warn = (
+                    f"GTT prices invalid for current market ₹{last_price:.2f} "
+                    f"(LONG needs SL < price < target). "
+                    f"Adjusted: SL ₹{old_sl:.2f}→₹{stop_loss:.2f}, "
+                    f"Target ₹{old_tgt:.2f}→₹{target:.2f}."
+                )
+                logger.warning(f"{stock_symbol}: {warn}")
+
+        return stop_loss, target, warn
+
     # ── GTT placement ─────────────────────────────────────────────────────────
 
     async def _place_gtt_order(
         self,
         symbol: str,
         quantity: int,
-        entry_price: float,
+        last_price: float,
         stop_loss: float,
         target: float,
         product: str,
@@ -247,7 +403,7 @@ class ExecutionAgent:
           GTT orders: BUY at target (cover profit) + BUY at stop_loss (cover loss)
         """
         if is_short:
-            # Short: target < entry < stop_loss
+            # Short: target < last_price < stop_loss
             trigger_values = sorted([target, stop_loss])
             orders = [
                 {
@@ -266,7 +422,7 @@ class ExecutionAgent:
                 },
             ]
         else:
-            # Long: stop_loss < entry < target
+            # Long: stop_loss < last_price < target
             trigger_values = sorted([stop_loss, target])
             orders = [
                 {
@@ -289,7 +445,7 @@ class ExecutionAgent:
             tradingsymbol=symbol,
             exchange="NSE",
             trigger_values=trigger_values,
-            last_price=entry_price,
+            last_price=last_price,
             orders=orders,
             gtt_type="two-leg",
         )
@@ -299,7 +455,7 @@ class ExecutionAgent:
         self,
         symbol: str,
         quantity: int,
-        entry_price: float,
+        last_price: float,
         stop_loss: float,
         product: str,
         is_short: bool = False,
@@ -323,7 +479,7 @@ class ExecutionAgent:
             tradingsymbol=symbol,
             exchange="NSE",
             trigger_values=[stop_loss],
-            last_price=entry_price,
+            last_price=last_price,
             orders=orders,
             gtt_type="single",
         )
@@ -331,21 +487,35 @@ class ExecutionAgent:
 
     # ── Order monitoring ──────────────────────────────────────────────────────
 
-    async def _wait_for_order_fill(self, order_id: str, timeout: int = 300) -> bool:
+    async def _wait_for_order_fill(
+        self, order_id: str, timeout: int = 300
+    ) -> Tuple[bool, dict]:
+        """
+        Poll until order is COMPLETE, CANCELLED, or REJECTED, or timeout.
+
+        Returns:
+            (True,  {"average_price": float, "status": "COMPLETE", ...})  on fill
+            (False, {"status": "CANCELLED"/"REJECTED"/"TIMEOUT", "status_message": str})  otherwise
+        """
         start_time = asyncio.get_event_loop().time()
         poll_interval = 2
+        last_order_detail: dict = {}
 
         while asyncio.get_event_loop().time() - start_time < timeout:
             try:
-                order_status = await self.zs.get_order_status(order_id)
-                status = order_status.get("status", "").upper()
+                order_detail = await self.zs.get_order_status(order_id)
+                last_order_detail = order_detail
+                status = order_detail.get("status", "").upper()
                 logger.info(f"Order {order_id} status: {status}")
 
                 if status == "COMPLETE":
-                    return True
-                elif status in ["CANCELLED", "REJECTED"]:
-                    logger.warning(f"Order {order_id} was {status}")
-                    return False
+                    return True, order_detail
+                elif status in ("CANCELLED", "REJECTED"):
+                    logger.warning(
+                        f"Order {order_id} {status}: "
+                        f"{order_detail.get('status_message', '')}"
+                    )
+                    return False, order_detail
 
                 await asyncio.sleep(poll_interval)
 
@@ -353,7 +523,8 @@ class ExecutionAgent:
                 logger.error(f"Error checking order status: {e}")
                 await asyncio.sleep(poll_interval)
 
-        return False
+        last_order_detail["status"] = "TIMEOUT"
+        return False, last_order_detail
 
     # ── Update helper ─────────────────────────────────────────────────────────
 
