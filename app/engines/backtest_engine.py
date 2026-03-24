@@ -45,7 +45,7 @@ class BacktestRequest:
     symbols: List[str] = field(default_factory=list)        # empty → NIFTY_UNIVERSE
     start_date: str = "2024-01-01"                           # YYYY-MM-DD
     end_date: str = ""                                       # empty → yesterday
-    sl_atr_multiplier: float = 2.0                          # SL = entry ± ATR * multiplier (wider SL gives trades room)
+    sl_atr_multiplier: float = 2.5                          # SL = entry ± ATR * multiplier (2.5 reduces premature stop-outs)
     target_rr: float = 1.5                                  # target = SL_distance * rr (easier to hit → better win rate)
     min_signal_strength: int = 3                            # min combos agreeing (3+ filters out most noise)
     max_hold_bars: int = 10                                 # exit at close after N days (10 days for daily candles)
@@ -494,9 +494,17 @@ class BacktestEngine:
         avg_loss = round(float(np.mean([t.pnl_pct for t in losses])), 3) if losses else 0.0
         avg_timeout = round(float(np.mean([t.pnl_pct for t in timeouts])), 3) if timeouts else 0.0
 
+        # Profit factor (all trades): gross positive P&L / gross negative P&L.
+        # Including timeouts gives a realistic picture — win/loss-only PF is misleading
+        # when 50%+ of trades are timeouts (as is normal for a trend-following strategy).
+        all_positive = sum(t.pnl_pct for t in trades if t.pnl_pct > 0)
+        all_negative = abs(sum(t.pnl_pct for t in trades if t.pnl_pct < 0))
+        profit_factor = round(all_positive / all_negative, 3) if all_negative > 0 else float("inf")
+
+        # Also keep the classic win/loss-only profit factor for reference
         gross_profit = sum(t.pnl_pct for t in wins)
         gross_loss = abs(sum(t.pnl_pct for t in losses))
-        profit_factor = round(gross_profit / gross_loss, 3) if gross_loss > 0 else float("inf")
+        win_loss_pf = round(gross_profit / gross_loss, 3) if gross_loss > 0 else float("inf")
 
         total_pnl = round(sum(t.pnl_pct for t in trades), 3)
         avg_pnl = round(total_pnl / total, 3)
@@ -575,7 +583,11 @@ class BacktestEngine:
                 "avg_win_pct": avg_win,
                 "avg_loss_pct": avg_loss,
                 "avg_timeout_pct": avg_timeout,
-                "profit_factor": profit_factor,
+                "profit_factor": profit_factor,           # all trades (wins+losses+timeouts)
+                "win_loss_profit_factor": win_loss_pf,    # classic: only WIN vs LOSS trades
+                "timeout_profitable_pct": round(          # % of timeout trades that were profitable
+                    len([t for t in timeouts if t.pnl_pct > 0]) / len(timeouts) * 100, 2
+                ) if timeouts else 0.0,
                 "expected_value_pct": ev,
                 "total_pnl_pct": total_pnl,
                 "avg_pnl_per_trade_pct": avg_pnl,
