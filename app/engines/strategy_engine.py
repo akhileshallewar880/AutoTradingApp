@@ -208,6 +208,124 @@ class StrategyEngine:
             "score": score,
         }
 
+    # ── Daily swing signal (used by backtest_engine on daily OHLCV data) ────────
+
+    def generate_daily_signal(self, indicators: Dict) -> Dict:
+        """
+        Daily swing trading signal — designed for daily OHLCV candles.
+
+        generate_intraday_signal() was built for 5-minute candles (intraday VWAP,
+        tight RSI bands, etc.) and produces garbage on daily data. This method uses
+        indicator relationships that are meaningful on a daily timeframe.
+
+        Combos (need ≥3 to generate a signal):
+
+        Combo 1 — EMA Trend Alignment (primary filter)
+          BUY : EMA20 > EMA50  (medium-term uptrend confirmed)
+          SELL: EMA20 < EMA50  (medium-term downtrend confirmed)
+
+        Combo 2 — Price vs EMA20 (trend participation)
+          BUY : close > EMA20  (price respecting trend, not extended below)
+          SELL: close < EMA20
+
+        Combo 3 — RSI Momentum Zone (not overbought/oversold entry)
+          BUY : RSI 45–68  (momentum building, not yet overbought)
+          SELL: RSI 32–55  (momentum declining, not yet oversold)
+
+        Combo 4 — MACD Direction / Crossover (momentum confirmation)
+          BUY : histogram > 0 or bullish crossover just fired
+          SELL: histogram < 0 or bearish crossover just fired
+
+        Combo 5 — ADX Trend Strength (trend quality filter)
+          BUY : ADX > 20 AND DI+ > DI-  (trending up, not ranging)
+          SELL: ADX > 20 AND DI- > DI+  (trending down, not ranging)
+
+        Returns:
+            signal   : "BUY" | "SELL" | "NEUTRAL"
+            strength : number of combos agreeing (0–5)
+            reasons  : list of explanation strings
+        """
+        close     = indicators.get("last_close", 0.0)
+        ema20     = indicators.get("ema_20", 0.0)
+        ema50     = indicators.get("ema_50", 0.0)
+        rsi       = indicators.get("rsi", 50.0)
+        macd_hist = indicators.get("macd_histogram", 0.0)
+        macd_bx   = indicators.get("macd_bullish_crossover", False)
+        macd_brx  = indicators.get("macd_bearish_crossover", False)
+        adx       = indicators.get("adx", 0.0)
+        di_plus   = indicators.get("di_plus", 0.0)
+        di_minus  = indicators.get("di_minus", 0.0)
+
+        buy_votes: list = []
+        sell_votes: list = []
+
+        # ── Combo 1: EMA trend alignment ──────────────────────────────────
+        if ema20 > 0 and ema50 > 0:
+            if ema20 > ema50:
+                buy_votes.append(
+                    f"EMA20({ema20:.2f}) > EMA50({ema50:.2f}) — uptrend aligned"
+                )
+            else:
+                sell_votes.append(
+                    f"EMA20({ema20:.2f}) < EMA50({ema50:.2f}) — downtrend aligned"
+                )
+
+        # ── Combo 2: Price vs EMA20 ────────────────────────────────────────
+        if ema20 > 0:
+            if close > ema20:
+                buy_votes.append(
+                    f"Price({close:.2f}) > EMA20({ema20:.2f}) — above trend"
+                )
+            else:
+                sell_votes.append(
+                    f"Price({close:.2f}) < EMA20({ema20:.2f}) — below trend"
+                )
+
+        # ── Combo 3: RSI momentum zone ─────────────────────────────────────
+        if 45 <= rsi <= 68:
+            buy_votes.append(f"RSI={rsi:.1f} — bullish momentum zone (45–68)")
+        elif 32 <= rsi <= 55:
+            sell_votes.append(f"RSI={rsi:.1f} — bearish momentum zone (32–55)")
+
+        # ── Combo 4: MACD direction / crossover ───────────────────────────
+        if macd_bx:
+            buy_votes.append(
+                f"MACD bullish crossover (hist={macd_hist:.4f}) — momentum turning up"
+            )
+        elif macd_hist > 0:
+            buy_votes.append(f"MACD histogram={macd_hist:.4f} — positive momentum")
+
+        if macd_brx:
+            sell_votes.append(
+                f"MACD bearish crossover (hist={macd_hist:.4f}) — momentum turning down"
+            )
+        elif macd_hist < 0:
+            sell_votes.append(f"MACD histogram={macd_hist:.4f} — negative momentum")
+
+        # ── Combo 5: ADX trend strength ────────────────────────────────────
+        if adx > 20:
+            if di_plus > di_minus:
+                buy_votes.append(
+                    f"ADX={adx:.1f} (>20) DI+({di_plus:.1f}) > DI-({di_minus:.1f}) — trending up"
+                )
+            elif di_minus > di_plus:
+                sell_votes.append(
+                    f"ADX={adx:.1f} (>20) DI-({di_minus:.1f}) > DI+({di_plus:.1f}) — trending down"
+                )
+
+        # ── Resolve: require ≥3 agreeing combos ───────────────────────────
+        n_buy  = len(buy_votes)
+        n_sell = len(sell_votes)
+
+        if n_buy >= 3 and n_buy > n_sell:
+            score = n_buy * 10 + (5 if adx > 25 else 0) + (5 if macd_bx else 0)
+            return {"signal": "BUY",  "strength": n_buy,  "reasons": buy_votes,  "score": score}
+        elif n_sell >= 3 and n_sell > n_buy:
+            score = n_sell * 10 + (5 if adx > 25 else 0) + (5 if macd_brx else 0)
+            return {"signal": "SELL", "strength": n_sell, "reasons": sell_votes, "score": score}
+        else:
+            return {"signal": "NEUTRAL", "strength": 0, "reasons": [], "score": 0}
+
     # ── Legacy methods (used by trading_agent.py) ─────────────────────────────
 
     def filter_high_volume(self, instruments: List[Dict], limit: int = 50) -> List[Dict]:

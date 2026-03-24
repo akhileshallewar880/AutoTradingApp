@@ -45,10 +45,10 @@ class BacktestRequest:
     symbols: List[str] = field(default_factory=list)        # empty → NIFTY_UNIVERSE
     start_date: str = "2024-01-01"                           # YYYY-MM-DD
     end_date: str = ""                                       # empty → yesterday
-    sl_atr_multiplier: float = 2.5                          # SL = entry ± ATR * multiplier (2.5 reduces premature stop-outs)
-    target_rr: float = 1.5                                  # target = SL_distance * rr (easier to hit → better win rate)
-    min_signal_strength: int = 3                            # min combos agreeing (3+ filters out most noise)
-    max_hold_bars: int = 10                                 # exit at close after N days (10 days for daily candles)
+    sl_atr_multiplier: float = 1.0                          # floor multiplier (structural SL overrides this; kept for edge cases)
+    target_rr: float = 2.0                                  # target = SL_distance × RR  (2:1 is standard for swing)
+    min_signal_strength: int = 3                            # daily signal needs ≥3 combos (EMA+Price+RSI+MACD+ADX)
+    max_hold_bars: int = 15                                 # 15 days for daily candles gives trades room to develop
     include_short: bool = True                              # backtest SELL signals too
     include_trades_detail: bool = True                      # include per-trade rows in report
 
@@ -74,8 +74,8 @@ class TradeResult:
 
 class BacktestEngine:
 
-    # Warmup: need at least 26 bars for MACD before indicators are stable
-    _WARMUP_BARS = 40
+    # Warmup: EMA50 needs ~100 bars to stabilise; ADX needs 28 bars
+    _WARMUP_BARS = 60
 
     # ── Public entry point ────────────────────────────────────────────────────
 
@@ -167,15 +167,29 @@ class BacktestEngine:
         low = df["Low"]
         volume = df["Volume"]
 
-        # VWAP proxy: 5-day rolling volume-weighted typical price.
-        # A shorter window better approximates intraday VWAP direction vs
-        # a 20-day rolling window which is essentially a trend indicator.
-        typical = (high + low + close) / 3
-        vol_safe = volume.replace(0, float("nan"))
-        vwap_5 = (typical * vol_safe).rolling(5).sum() / vol_safe.rolling(5).sum()
-
-        # EMA 50: trend filter — BUY only above EMA50, SELL only below EMA50
+        # EMA 20 / 50 — primary trend indicators for daily swing strategy
+        ema20 = close.ewm(span=20, adjust=False).mean()
         ema50 = close.ewm(span=50, adjust=False).mean()
+
+        # ADX 14 (Wilder smoothing via rolling sum approximation)
+        high_diff = high.diff()
+        low_diff  = low.diff()
+        dm_plus  = pd.Series(
+            np.where((high_diff > 0) & (high_diff > -low_diff), high_diff, 0.0),
+            index=df.index,
+        )
+        dm_minus = pd.Series(
+            np.where((-low_diff > 0) & (-low_diff > high_diff), -low_diff, 0.0),
+            index=df.index,
+        )
+        tr_sum14    = tr.rolling(14).sum().replace(0, float("nan"))
+        di_plus_s   = 100 * dm_plus.rolling(14).sum()  / tr_sum14
+        di_minus_s  = 100 * dm_minus.rolling(14).sum() / tr_sum14
+        dx_series   = (
+            100 * (di_plus_s - di_minus_s).abs()
+            / (di_plus_s + di_minus_s).replace(0, float("nan"))
+        )
+        adx_series  = dx_series.rolling(14).mean()
 
         # ATR 14
         hl = high - low
@@ -219,77 +233,46 @@ class BacktestEngine:
         ema21 = close.ewm(span=21, adjust=False).mean()
 
         return pd.DataFrame({
-            "open":          df["Open"],
-            "high":          high,
-            "low":           low,
-            "close":         close,
-            "volume":        volume,
-            "vwap_5":        vwap_5,
-            "ema50":         ema50,
-            "atr_14":        atr_14,
-            "rsi_14":        rsi_14,
-            "macd_hist":     macd_hist,
-            "macd_bx":       macd_bullish_xover,
-            "macd_brx":      macd_bearish_xover,
-            "bb_upper":      bb_upper,
-            "bb_middle":     bb_mid,
-            "bb_lower":      bb_lower,
-            "stoch_k":       stoch_k,
-            "stoch_d":       stoch_d,
-            "ema9":          ema9,
-            "ema21":         ema21,
+            "open":      df["Open"],
+            "high":      high,
+            "low":       low,
+            "close":     close,
+            "volume":    volume,
+            "ema20":     ema20,
+            "ema50":     ema50,
+            "atr_14":    atr_14,
+            "rsi_14":    rsi_14,
+            "macd_hist": macd_hist,
+            "macd_bx":   macd_bullish_xover,
+            "macd_brx":  macd_bearish_xover,
+            "di_plus":   di_plus_s,
+            "di_minus":  di_minus_s,
+            "adx":       adx_series,
         }, index=df.index)
 
     # ── Indicator dict builder ────────────────────────────────────────────────
 
     def _row_to_indicator_dict(self, row: pd.Series) -> Optional[Dict]:
-        """Convert a computed indicator row to the dict format strategy_engine expects."""
-        if row.isna().any():
+        """
+        Convert a computed indicator row to the dict format
+        strategy_engine.generate_daily_signal() expects.
+        """
+        required = ["close", "ema20", "ema50", "rsi_14", "macd_hist",
+                    "macd_bx", "macd_brx", "di_plus", "di_minus", "adx"]
+        if any(pd.isna(row[c]) for c in required):
             return None
 
-        close = float(row["close"])
-        vwap = float(row["vwap_5"])
-        bb_upper = float(row["bb_upper"])
-        bb_lower = float(row["bb_lower"])
-        bb_mid = float(row["bb_middle"])
-        stoch_k = float(row["stoch_k"])
-        stoch_d = float(row["stoch_d"])
-        ema9 = float(row["ema9"])
-        ema21 = float(row["ema21"])
-        macd_hist = float(row["macd_hist"])
-
-        # BB position
-        if close >= bb_upper * 0.985:
-            bb_position = "NEAR_UPPER"
-        elif close <= bb_lower * 1.015:
-            bb_position = "NEAR_LOWER"
-        else:
-            bb_position = "MIDDLE"
-
-        # Stochastic signal
-        if stoch_k > 80 and stoch_d > 80:
-            stoch_signal = "OVERBOUGHT"
-        elif stoch_k < 20 and stoch_d < 20:
-            stoch_signal = "OVERSOLD"
-        elif stoch_k > stoch_d:
-            stoch_signal = "BULLISH"
-        else:
-            stoch_signal = "BEARISH"
-
         return {
-            "last_close": close,
-            "price_vs_vwap": "ABOVE" if close > vwap else "BELOW",
-            "rsi": float(row["rsi_14"]),
-            "macd_histogram": macd_hist,
+            "last_close":             float(row["close"]),
+            "ema_20":                 float(row["ema20"]),
+            "ema_50":                 float(row["ema50"]),
+            "rsi":                    float(row["rsi_14"]),
+            "macd_histogram":         float(row["macd_hist"]),
             "macd_bullish_crossover": bool(row["macd_bx"]),
             "macd_bearish_crossover": bool(row["macd_brx"]),
-            "bb_position": bb_position,
-            "bb_middle": bb_mid,
-            "stoch_k": stoch_k,
-            "stoch_d": stoch_d,
-            "stoch_signal": stoch_signal,
-            "ema_9": ema9,
-            "ema_21": ema21,
+            "di_plus":                float(row["di_plus"]),
+            "di_minus":               float(row["di_minus"]),
+            "adx":                    float(row["adx"]),
         }
 
     # ── Per-symbol simulation ─────────────────────────────────────────────────
@@ -321,7 +304,8 @@ class BacktestEngine:
             if ind_dict is None:
                 continue
 
-            sig = strategy_engine.generate_intraday_signal(ind_dict)
+            # Use the daily swing signal (NOT the intraday 5-combo signal)
+            sig = strategy_engine.generate_daily_signal(ind_dict)
             signal = sig["signal"]
             strength = sig["strength"]
             reasons = sig["reasons"]
@@ -331,23 +315,6 @@ class BacktestEngine:
             if strength < req.min_signal_strength:
                 continue
             if signal == "SELL" and not req.include_short:
-                continue
-
-            # ── Trend filter: skip counter-trend signals ─────────────────
-            # Only BUY when price is above 50-day EMA (uptrend confirmed).
-            # Only SELL when price is below 50-day EMA (downtrend confirmed).
-            ema50 = float(row["ema50"]) if not pd.isna(row["ema50"]) else 0.0
-            close_price = float(row["close"])
-            if ema50 > 0:
-                if signal == "BUY" and close_price < ema50:
-                    continue   # skip BUY in downtrend
-                if signal == "SELL" and close_price > ema50:
-                    continue   # skip SELL in uptrend
-
-            # ── Suppress MACD-only (strength-1) signals ───────────────────
-            # strategy_engine fires strength-1 signals from MACD alone when
-            # zero indicator combos agree. These are too weak for daily bars.
-            if strength == 1 and len(reasons) == 1 and "MACD" in reasons[0] and "weak" in reasons[0]:
                 continue
 
             # Entry: next bar's open
@@ -361,20 +328,30 @@ class BacktestEngine:
                 continue
 
             atr = float(row["atr_14"])
-            if atr <= 0 or math.isnan(atr):
+            ema50_val = float(row["ema50"])
+            if atr <= 0 or math.isnan(atr) or ema50_val <= 0:
                 continue
 
-            sl_distance = atr * req.sl_atr_multiplier
-            target_distance = sl_distance * req.target_rr
-
+            # ── Structural SL: use EMA50 as the stop level ────────────────
+            # EMA50 break = trend invalidation = exit. This is more meaningful
+            # than an arbitrary ATR×N stop on daily candles.
+            # Floor: SL must be at least 0.5×ATR from entry (avoid zero-width stops).
             is_short = signal == "SELL"
+            atr_floor = atr * 0.5
+
             if is_short:
+                structural_sl = ema50_val           # cover above EMA50 for shorts
+                sl_distance = max(structural_sl - entry_price, atr_floor)
                 stop_loss = round(entry_price + sl_distance, 2)
+                target_distance = sl_distance * req.target_rr
                 target = round(entry_price - target_distance, 2)
                 if target <= 0:
                     continue
             else:
+                structural_sl = ema50_val           # exit below EMA50 for longs
+                sl_distance = max(entry_price - structural_sl, atr_floor)
                 stop_loss = round(entry_price - sl_distance, 2)
+                target_distance = sl_distance * req.target_rr
                 target = round(entry_price + target_distance, 2)
                 if stop_loss <= 0:
                     continue
