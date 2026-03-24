@@ -167,11 +167,37 @@ class BacktestEngine:
         low = df["Low"]
         volume = df["Volume"]
 
-        # EMA 20 / 50 — primary trend indicators for daily swing strategy
+        # ── True Range (needed by both ATR and ADX) ───────────────────────
+        hl = high - low
+        hc = (high - close.shift(1)).abs()
+        lc = (low - close.shift(1)).abs()
+        tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
+
+        # ── ATR 14 ────────────────────────────────────────────────────────
+        atr_14 = tr.rolling(14).mean()
+
+        # ── EMA 20 / 50 — primary trend indicators ────────────────────────
         ema20 = close.ewm(span=20, adjust=False).mean()
         ema50 = close.ewm(span=50, adjust=False).mean()
 
-        # ADX 14 (Wilder smoothing via rolling sum approximation)
+        # ── RSI 14 ────────────────────────────────────────────────────────
+        delta = close.diff()
+        gain  = delta.clip(lower=0).rolling(14).mean()
+        loss  = (-delta.clip(upper=0)).rolling(14).mean()
+        rs    = gain / loss.replace(0, float("nan"))
+        rsi_14 = 100 - (100 / (1 + rs))
+
+        # ── MACD 12/26/9 ──────────────────────────────────────────────────
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        macd_sig  = macd_line.ewm(span=9, adjust=False).mean()
+        macd_hist = macd_line - macd_sig
+        macd_hist_prev     = macd_hist.shift(1)
+        macd_bullish_xover = (macd_hist_prev < 0) & (macd_hist > 0)
+        macd_bearish_xover = (macd_hist_prev > 0) & (macd_hist < 0)
+
+        # ── ADX 14 (rolling-sum approximation of Wilder smoothing) ────────
         high_diff = high.diff()
         low_diff  = low.diff()
         dm_plus  = pd.Series(
@@ -182,55 +208,14 @@ class BacktestEngine:
             np.where((-low_diff > 0) & (-low_diff > high_diff), -low_diff, 0.0),
             index=df.index,
         )
-        tr_sum14    = tr.rolling(14).sum().replace(0, float("nan"))
-        di_plus_s   = 100 * dm_plus.rolling(14).sum()  / tr_sum14
-        di_minus_s  = 100 * dm_minus.rolling(14).sum() / tr_sum14
-        dx_series   = (
+        tr_sum14   = tr.rolling(14).sum().replace(0, float("nan"))
+        di_plus_s  = 100 * dm_plus.rolling(14).sum()  / tr_sum14
+        di_minus_s = 100 * dm_minus.rolling(14).sum() / tr_sum14
+        dx_series  = (
             100 * (di_plus_s - di_minus_s).abs()
             / (di_plus_s + di_minus_s).replace(0, float("nan"))
         )
-        adx_series  = dx_series.rolling(14).mean()
-
-        # ATR 14
-        hl = high - low
-        hc = (high - close.shift(1)).abs()
-        lc = (low - close.shift(1)).abs()
-        tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
-        atr_14 = tr.rolling(14).mean()
-
-        # RSI 14
-        delta = close.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = (-delta.clip(upper=0)).rolling(14).mean()
-        rs = gain / loss.replace(0, float("nan"))
-        rsi_14 = 100 - (100 / (1 + rs))
-
-        # MACD 12/26/9
-        ema12 = close.ewm(span=12, adjust=False).mean()
-        ema26 = close.ewm(span=26, adjust=False).mean()
-        macd_line = ema12 - ema26
-        macd_sig = macd_line.ewm(span=9, adjust=False).mean()
-        macd_hist = macd_line - macd_sig
-        macd_hist_prev = macd_hist.shift(1)
-        macd_bullish_xover = (macd_hist_prev < 0) & (macd_hist > 0)
-        macd_bearish_xover = (macd_hist_prev > 0) & (macd_hist < 0)
-
-        # Bollinger Bands 20
-        bb_mid = close.rolling(20).mean()
-        bb_std = close.rolling(20).std()
-        bb_upper = bb_mid + 2 * bb_std
-        bb_lower = bb_mid - 2 * bb_std
-
-        # Stochastic 14/3
-        low14 = low.rolling(14).min()
-        high14 = high.rolling(14).max()
-        hl_range = (high14 - low14).replace(0, float("nan"))
-        stoch_k = 100 * (close - low14) / hl_range
-        stoch_d = stoch_k.rolling(3).mean()
-
-        # EMA 9/21
-        ema9 = close.ewm(span=9, adjust=False).mean()
-        ema21 = close.ewm(span=21, adjust=False).mean()
+        adx_series = dx_series.rolling(14).mean()
 
         return pd.DataFrame({
             "open":      df["Open"],
