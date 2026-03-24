@@ -45,10 +45,10 @@ class BacktestRequest:
     symbols: List[str] = field(default_factory=list)        # empty → NIFTY_UNIVERSE
     start_date: str = "2024-01-01"                           # YYYY-MM-DD
     end_date: str = ""                                       # empty → yesterday
-    sl_atr_multiplier: float = 1.5                          # SL = entry ± ATR * multiplier
-    target_rr: float = 2.0                                  # target = SL_distance * rr
-    min_signal_strength: int = 2                            # min combos agreeing (1-5)
-    max_hold_bars: int = 5                                  # exit at close after N days
+    sl_atr_multiplier: float = 2.0                          # SL = entry ± ATR * multiplier (wider SL gives trades room)
+    target_rr: float = 1.5                                  # target = SL_distance * rr (easier to hit → better win rate)
+    min_signal_strength: int = 3                            # min combos agreeing (3+ filters out most noise)
+    max_hold_bars: int = 10                                 # exit at close after N days (10 days for daily candles)
     include_short: bool = True                              # backtest SELL signals too
     include_trades_detail: bool = True                      # include per-trade rows in report
 
@@ -167,10 +167,15 @@ class BacktestEngine:
         low = df["Low"]
         volume = df["Volume"]
 
-        # VWAP proxy: 20-day rolling volume-weighted typical price
+        # VWAP proxy: 5-day rolling volume-weighted typical price.
+        # A shorter window better approximates intraday VWAP direction vs
+        # a 20-day rolling window which is essentially a trend indicator.
         typical = (high + low + close) / 3
         vol_safe = volume.replace(0, float("nan"))
-        vwap_20 = (typical * vol_safe).rolling(20).sum() / vol_safe.rolling(20).sum()
+        vwap_5 = (typical * vol_safe).rolling(5).sum() / vol_safe.rolling(5).sum()
+
+        # EMA 50: trend filter — BUY only above EMA50, SELL only below EMA50
+        ema50 = close.ewm(span=50, adjust=False).mean()
 
         # ATR 14
         hl = high - low
@@ -219,7 +224,8 @@ class BacktestEngine:
             "low":           low,
             "close":         close,
             "volume":        volume,
-            "vwap_20":       vwap_20,
+            "vwap_5":        vwap_5,
+            "ema50":         ema50,
             "atr_14":        atr_14,
             "rsi_14":        rsi_14,
             "macd_hist":     macd_hist,
@@ -242,7 +248,7 @@ class BacktestEngine:
             return None
 
         close = float(row["close"])
-        vwap = float(row["vwap_20"])
+        vwap = float(row["vwap_5"])
         bb_upper = float(row["bb_upper"])
         bb_lower = float(row["bb_lower"])
         bb_mid = float(row["bb_middle"])
@@ -298,7 +304,7 @@ class BacktestEngine:
         ind = self._compute_indicators(df)
         trades: List[TradeResult] = []
         n = len(ind)
-        in_trade = False  # only one position at a time per symbol
+        last_trade_bar = -999  # cooldown: no new trade within 3 bars of last trade
 
         for i in range(self._WARMUP_BARS, n - 1):
             # Only process bars within the requested backtest window
@@ -306,8 +312,9 @@ class BacktestEngine:
             if str(bar_date.date()) < backtest_start:
                 continue
 
-            if in_trade:
-                continue  # skip new signals while in a trade
+            # 3-bar cooldown after last trade exit
+            if i - last_trade_bar < 3:
+                continue
 
             row = ind.iloc[i]
             ind_dict = self._row_to_indicator_dict(row)
@@ -324,6 +331,23 @@ class BacktestEngine:
             if strength < req.min_signal_strength:
                 continue
             if signal == "SELL" and not req.include_short:
+                continue
+
+            # ── Trend filter: skip counter-trend signals ─────────────────
+            # Only BUY when price is above 50-day EMA (uptrend confirmed).
+            # Only SELL when price is below 50-day EMA (downtrend confirmed).
+            ema50 = float(row["ema50"]) if not pd.isna(row["ema50"]) else 0.0
+            close_price = float(row["close"])
+            if ema50 > 0:
+                if signal == "BUY" and close_price < ema50:
+                    continue   # skip BUY in downtrend
+                if signal == "SELL" and close_price > ema50:
+                    continue   # skip SELL in uptrend
+
+            # ── Suppress MACD-only (strength-1) signals ───────────────────
+            # strategy_engine fires strength-1 signals from MACD alone when
+            # zero indicator combos agree. These are too weak for daily bars.
+            if strength == 1 and len(reasons) == 1 and "MACD" in reasons[0] and "weak" in reasons[0]:
                 continue
 
             # Entry: next bar's open
@@ -389,11 +413,7 @@ class BacktestEngine:
                 hold_bars=hold_bars,
             ))
 
-            in_trade = True
-            # Allow re-entry after exit bar
-            # We reset in_trade after the exit bar is passed
-            # Simple approach: just allow one trade per scan of each signal bar
-            in_trade = False  # re-enable for this simplified vectorized backtest
+            last_trade_bar = exit_bar_idx  # enforce 3-bar cooldown after exit
 
         return trades
 
