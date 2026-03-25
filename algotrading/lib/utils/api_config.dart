@@ -35,6 +35,13 @@ class ApiConfig {
   static const String liveAgentPlaceLimitOrderUrl = '$baseUrl/live-trading/place-limit-order';
   static const String liveAgentBalanceUrl = '$baseUrl/live-trading/balance';
 
+  // Backtest endpoints
+  static const String backtestRunUrl = '$baseUrl/backtest/run';
+  static const String backtestUniverseUrl = '$baseUrl/backtest/universe';
+
   // Timeout duration - 2 minutes for analysis (yfinance + AI can be slow)
   static const Duration timeout = Duration(seconds: 150);
+
+  // Backtest can take up to 5 minutes (50 symbols × yfinance + simulation)
+  static const Duration backtestTimeout = Duration(seconds: 300);
 }

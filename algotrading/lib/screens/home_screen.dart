@@ -11,6 +11,7 @@ import '../models/dashboard_model.dart';
 import '../widgets/info_card.dart';
 import '../utils/api_config.dart';
 import 'analysis_input_screen.dart';
+import 'backtest_screen.dart';
 import 'gtt_analysis_screen.dart';
 import 'gtt_portfolio_analysis_screen.dart';
 
@@ -168,10 +169,42 @@ class _HomeScreenState extends State<HomeScreen> {
                 tooltip: 'Refresh',
                 onPressed: _refresh,
               ),
-            IconButton(
-              icon: const Icon(Icons.logout),
-              tooltip: 'Logout',
-              onPressed: () => _handleLogout(context),
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'More',
+              onSelected: (value) {
+                if (value == 'backtest') {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const BacktestScreen()),
+                  );
+                } else if (value == 'logout') {
+                  _handleLogout(context);
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'backtest',
+                  child: Row(
+                    children: [
+                      Icon(Icons.science_outlined, size: 20),
+                      SizedBox(width: 10),
+                      Text('Strategy Backtest'),
+                    ],
+                  ),
+                ),
+                const PopupMenuDivider(),
+                const PopupMenuItem(
+                  value: 'logout',
+                  child: Row(
+                    children: [
+                      Icon(Icons.logout, size: 20),
+                      SizedBox(width: 10),
+                      Text('Logout'),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),

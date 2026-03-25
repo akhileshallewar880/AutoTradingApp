@@ -208,123 +208,326 @@ class StrategyEngine:
             "score": score,
         }
 
-    # ── Daily swing signal (used by backtest_engine on daily OHLCV data) ────────
+    # ── Daily swing signal v2 (backtest_engine — daily OHLCV) ───────────────────
 
     def generate_daily_signal(self, indicators: Dict) -> Dict:
         """
-        Daily swing trading signal — designed for daily OHLCV candles.
+        Daily swing trading signal v2 — designed for daily OHLCV candles.
 
-        generate_intraday_signal() was built for 5-minute candles (intraday VWAP,
-        tight RSI bands, etc.) and produces garbage on daily data. This method uses
-        indicator relationships that are meaningful on a daily timeframe.
+        Hard gates (any failing → NEUTRAL immediately):
+          - market_structure must not be SIDEWAYS  (range = no edge)
+          - volume_ratio must be >= 0.8            (avoid thin days)
+          - adx must be > 15                       (minimum trend strength)
 
-        Combos (need ≥3 to generate a signal):
+        Combos (need ≥3 agreeing for non-NEUTRAL):
 
-        Combo 1 — EMA Trend Alignment (primary filter)
-          BUY : EMA20 > EMA50  (medium-term uptrend confirmed)
-          SELL: EMA20 < EMA50  (medium-term downtrend confirmed)
+        Combo 1 — EMA Trend Alignment + slope
+          BUY : EMA20 > EMA50  AND  ema20_slope > 0
+          SELL: EMA20 < EMA50  AND  ema20_slope < 0
 
         Combo 2 — Price vs EMA20 (trend participation)
-          BUY : close > EMA20  (price respecting trend, not extended below)
+          BUY : close > EMA20
           SELL: close < EMA20
 
-        Combo 3 — RSI Momentum Zone (not overbought/oversold entry)
-          BUY : RSI 45–68  (momentum building, not yet overbought)
-          SELL: RSI 32–55  (momentum declining, not yet oversold)
+        Combo 3 — RSI Momentum Zone
+          BUY : RSI 45–70  (building, not overbought)
+          SELL: RSI 30–55  (declining, not oversold)
 
-        Combo 4 — MACD Direction / Crossover (momentum confirmation)
-          BUY : histogram > 0 or bullish crossover just fired
-          SELL: histogram < 0 or bearish crossover just fired
+        Combo 4 — MACD Direction / Crossover
+          BUY : histogram > 0  OR  bullish crossover
+          SELL: histogram < 0  OR  bearish crossover
 
-        Combo 5 — ADX Trend Strength (trend quality filter)
-          BUY : ADX > 20 AND DI+ > DI-  (trending up, not ranging)
-          SELL: ADX > 20 AND DI- > DI+  (trending down, not ranging)
+        Combo 5 — ADX Trend Strength + DI direction
+          BUY : ADX > 20  AND  DI+ > DI-
+          SELL: ADX > 20  AND  DI- > DI+
+
+        Bonus (no extra combo required — adds to strength + score):
+          +1 — candle pattern confirms direction (HAMMER/BULL_ENGULF for BUY)
+          +1 — pullback_to_ema20 (quality entry, not chasing)
+          +1 — volume_ratio > 1.5 (institutional activity)
 
         Returns:
-            signal   : "BUY" | "SELL" | "NEUTRAL"
-            strength : number of combos agreeing (0–5)
-            reasons  : list of explanation strings
+            signal        : "BUY" | "SELL" | "NEUTRAL"
+            strength      : combos + bonus points
+            reasons       : explanation list
+            score         : numeric rank
+            reject_reason : present when NEUTRAL
         """
-        close     = indicators.get("last_close", 0.0)
-        ema20     = indicators.get("ema_20", 0.0)
-        ema50     = indicators.get("ema_50", 0.0)
-        rsi       = indicators.get("rsi", 50.0)
-        macd_hist = indicators.get("macd_histogram", 0.0)
-        macd_bx   = indicators.get("macd_bullish_crossover", False)
-        macd_brx  = indicators.get("macd_bearish_crossover", False)
-        adx       = indicators.get("adx", 0.0)
-        di_plus   = indicators.get("di_plus", 0.0)
-        di_minus  = indicators.get("di_minus", 0.0)
+        close            = indicators.get("last_close", 0.0)
+        ema20            = indicators.get("ema_20", 0.0)
+        ema50            = indicators.get("ema_50", 0.0)
+        ema20_slope      = indicators.get("ema20_slope", 0.0)
+        rsi              = indicators.get("rsi", 50.0)
+        macd_hist        = indicators.get("macd_histogram", 0.0)
+        macd_bx          = indicators.get("macd_bullish_crossover", False)
+        macd_brx         = indicators.get("macd_bearish_crossover", False)
+        adx              = indicators.get("adx", 0.0)
+        di_plus          = indicators.get("di_plus", 0.0)
+        di_minus         = indicators.get("di_minus", 0.0)
+        market_structure = indicators.get("market_structure", "UNKNOWN")
+        volume_ratio     = indicators.get("volume_ratio", 1.0)
+        candle_pattern   = indicators.get("candle_pattern", "NONE")
+        pullback         = indicators.get("pullback_to_ema20", False)
 
-        buy_votes: list = []
+        def _neutral(reason: str) -> Dict:
+            return {"signal": "NEUTRAL", "strength": 0, "reasons": [],
+                    "score": 0, "reject_reason": reason}
+
+        # ── Hard gates ────────────────────────────────────────────────────
+        if market_structure == "SIDEWAYS":
+            return _neutral(f"SIDEWAYS market — no directional edge")
+        if volume_ratio < 0.8:
+            return _neutral(f"Low volume: ratio={volume_ratio:.2f} (need ≥0.8)")
+        if adx < 15:
+            return _neutral(f"Weak trend: ADX={adx:.1f} < 15 (choppy market)")
+
+        buy_votes:  list = []
         sell_votes: list = []
 
-        # ── Combo 1: EMA trend alignment ──────────────────────────────────
+        # ── Combo 1: EMA alignment + slope ────────────────────────────────
         if ema20 > 0 and ema50 > 0:
-            if ema20 > ema50:
-                buy_votes.append(
-                    f"EMA20({ema20:.2f}) > EMA50({ema50:.2f}) — uptrend aligned"
-                )
-            else:
-                sell_votes.append(
-                    f"EMA20({ema20:.2f}) < EMA50({ema50:.2f}) — downtrend aligned"
-                )
+            if ema20 > ema50 and ema20_slope > 0:
+                buy_votes.append(f"EMA20({ema20:.2f}) > EMA50({ema50:.2f}), rising slope — uptrend")
+            elif ema20 < ema50 and ema20_slope < 0:
+                sell_votes.append(f"EMA20({ema20:.2f}) < EMA50({ema50:.2f}), falling slope — downtrend")
 
         # ── Combo 2: Price vs EMA20 ────────────────────────────────────────
         if ema20 > 0:
             if close > ema20:
-                buy_votes.append(
-                    f"Price({close:.2f}) > EMA20({ema20:.2f}) — above trend"
-                )
+                buy_votes.append(f"Price({close:.2f}) > EMA20({ema20:.2f}) — above trend")
             else:
-                sell_votes.append(
-                    f"Price({close:.2f}) < EMA20({ema20:.2f}) — below trend"
-                )
+                sell_votes.append(f"Price({close:.2f}) < EMA20({ema20:.2f}) — below trend")
 
         # ── Combo 3: RSI momentum zone ─────────────────────────────────────
-        if 45 <= rsi <= 68:
-            buy_votes.append(f"RSI={rsi:.1f} — bullish momentum zone (45–68)")
-        elif 32 <= rsi <= 55:
-            sell_votes.append(f"RSI={rsi:.1f} — bearish momentum zone (32–55)")
+        if 45 <= rsi <= 70:
+            buy_votes.append(f"RSI={rsi:.1f} — bullish zone (45–70)")
+        elif 30 <= rsi <= 55:
+            sell_votes.append(f"RSI={rsi:.1f} — bearish zone (30–55)")
 
         # ── Combo 4: MACD direction / crossover ───────────────────────────
         if macd_bx:
-            buy_votes.append(
-                f"MACD bullish crossover (hist={macd_hist:.4f}) — momentum turning up"
-            )
+            buy_votes.append(f"MACD bullish crossover (hist={macd_hist:.4f})")
         elif macd_hist > 0:
-            buy_votes.append(f"MACD histogram={macd_hist:.4f} — positive momentum")
-
+            buy_votes.append(f"MACD histogram={macd_hist:.4f} — positive")
         if macd_brx:
-            sell_votes.append(
-                f"MACD bearish crossover (hist={macd_hist:.4f}) — momentum turning down"
-            )
+            sell_votes.append(f"MACD bearish crossover (hist={macd_hist:.4f})")
         elif macd_hist < 0:
-            sell_votes.append(f"MACD histogram={macd_hist:.4f} — negative momentum")
+            sell_votes.append(f"MACD histogram={macd_hist:.4f} — negative")
 
-        # ── Combo 5: ADX trend strength ────────────────────────────────────
+        # ── Combo 5: ADX + DI direction ───────────────────────────────────
         if adx > 20:
             if di_plus > di_minus:
-                buy_votes.append(
-                    f"ADX={adx:.1f} (>20) DI+({di_plus:.1f}) > DI-({di_minus:.1f}) — trending up"
-                )
+                buy_votes.append(f"ADX={adx:.1f} DI+({di_plus:.1f})>DI-({di_minus:.1f}) — trending up")
             elif di_minus > di_plus:
-                sell_votes.append(
-                    f"ADX={adx:.1f} (>20) DI-({di_minus:.1f}) > DI+({di_plus:.1f}) — trending down"
-                )
+                sell_votes.append(f"ADX={adx:.1f} DI-({di_minus:.1f})>DI+({di_plus:.1f}) — trending down")
 
-        # ── Resolve: require ≥3 agreeing combos ───────────────────────────
         n_buy  = len(buy_votes)
         n_sell = len(sell_votes)
 
         if n_buy >= 3 and n_buy > n_sell:
-            score = n_buy * 10 + (5 if adx > 25 else 0) + (5 if macd_bx else 0)
-            return {"signal": "BUY",  "strength": n_buy,  "reasons": buy_votes,  "score": score}
+            direction, votes, base = "BUY",  buy_votes,  n_buy
         elif n_sell >= 3 and n_sell > n_buy:
-            score = n_sell * 10 + (5 if adx > 25 else 0) + (5 if macd_brx else 0)
-            return {"signal": "SELL", "strength": n_sell, "reasons": sell_votes, "score": score}
+            direction, votes, base = "SELL", sell_votes, n_sell
         else:
-            return {"signal": "NEUTRAL", "strength": 0, "reasons": [], "score": 0}
+            return _neutral(f"Insufficient combo agreement — BUY={n_buy} SELL={n_sell}")
+
+        # ── Bonus filters ─────────────────────────────────────────────────
+        bonus = 0
+        bonus_r: list = []
+        if direction == "BUY" and candle_pattern in ("HAMMER", "BULL_ENGULF"):
+            bonus += 1
+            bonus_r.append(f"Candle: {candle_pattern} — bullish rejection")
+        elif direction == "SELL" and candle_pattern in ("BEAR_ENGULF",):
+            bonus += 1
+            bonus_r.append(f"Candle: {candle_pattern} — bearish rejection")
+        if pullback:
+            bonus += 1
+            bonus_r.append("Pullback to EMA20 — quality entry at support")
+        if volume_ratio > 1.5:
+            bonus += 1
+            bonus_r.append(f"Volume spike {volume_ratio:.2f}x avg — institutional")
+
+        score = (
+            base * 10
+            + bonus * 5
+            + (5 if adx > 25 else 0)
+            + (5 if (macd_bx and direction == "BUY") or (macd_brx and direction == "SELL") else 0)
+        )
+        return {
+            "signal":   direction,
+            "strength": base + bonus,
+            "reasons":  votes + bonus_r,
+            "score":    score,
+        }
+
+    # ── Intraday signal v2 (live 5-min candle trading) ───────────────────────
+
+    def generate_intraday_signal_v2(self, indicators: Dict) -> Dict:
+        """
+        Intraday signal v2 — STRICT discipline for 5-minute candles.
+
+        Hard gates (any failing → NEUTRAL immediately):
+          1. Time: skip 9:15–9:20 (opening noise) and 12:00–13:00 (lunch)
+          2. Volume: bar_volume > 1.5× 20-bar avg volume
+          3. Market structure: not SIDEWAYS
+          4. Candle: not DOJI (no directional conviction)
+          5. VWAP: must be available
+
+        Soft combos (need ≥3 agreeing for a signal):
+          1. Market structure aligned (UPTREND→BUY, DOWNTREND→SELL)
+          2. VWAP pullback zone (price within 0.8% of VWAP — ideal entry)
+          3. Rejection candle in direction (hammer/engulf)
+          4. RSI momentum zone (BUY: 40–65; SELL: 35–60)
+          5. EMA9/21 micro-structure (EMA9>EMA21 for BUY; <EMA21 for SELL)
+
+        VWAP directional gate (applied after combos):
+          - price ABOVE VWAP → suppress all SELL votes
+          - price BELOW VWAP → suppress all BUY votes
+
+        SL / Target:
+          - hard % based: default sl_pct=0.75%, target_pct=1.5% (2:1 RR)
+
+        Returns strict JSON-compatible dict:
+          action, reason, entry_price, stop_loss, target,
+          confidence, market_condition, signal, strength, reasons
+        """
+        bar_hour         = indicators.get("bar_hour", 10)
+        bar_minute       = indicators.get("bar_minute", 0)
+        last_close       = indicators.get("last_close", 0.0)
+        vwap             = indicators.get("vwap", 0.0)
+        ema_9            = indicators.get("ema_9", 0.0)
+        ema_21           = indicators.get("ema_21", 0.0)
+        rsi              = indicators.get("rsi", 50.0)
+        volume           = indicators.get("volume", 0.0)
+        avg_volume       = indicators.get("avg_volume", 1.0)
+        market_structure = indicators.get("market_structure", "UNKNOWN")
+        candle_pattern   = indicators.get("candle_pattern", "NONE")
+        sl_pct           = indicators.get("sl_pct", 0.75)
+        target_pct       = indicators.get("target_pct", 1.5)
+
+        vol_ratio = volume / avg_volume if avg_volume > 0 else 1.0
+
+        def _neutral_v2(reason: str) -> Dict:
+            return {
+                "signal": "NEUTRAL", "action": "NO_TRADE", "strength": 0,
+                "reasons": [], "reason": reason, "entry_price": 0.0,
+                "stop_loss": 0.0, "target": 0.0, "confidence": "LOW",
+                "market_condition": "SIDEWAYS", "reject_reason": reason, "score": 0,
+            }
+
+        # ── Hard gates ────────────────────────────────────────────────────
+        if bar_hour == 9 and bar_minute < 20:
+            return _neutral_v2("Time: skip opening 5 min (9:15–9:20) — high noise")
+        if bar_hour == 12 or (bar_hour == 13 and bar_minute == 0):
+            return _neutral_v2("Time: lunch hour (12:00–13:00) — thin liquidity")
+        if vol_ratio < 1.5:
+            return _neutral_v2(f"Volume too low: {vol_ratio:.2f}x avg (need ≥1.5x)")
+        if market_structure == "SIDEWAYS":
+            return _neutral_v2("SIDEWAYS structure — no directional edge")
+        if candle_pattern == "DOJI":
+            return _neutral_v2("Doji candle — no directional conviction")
+        if vwap <= 0:
+            return _neutral_v2("VWAP unavailable — cannot assess bias")
+
+        price_vs_vwap = "ABOVE" if last_close > vwap else "BELOW"
+        vwap_dev_pct  = abs(last_close - vwap) / vwap * 100
+
+        buy_votes:  list = []
+        sell_votes: list = []
+
+        # Combo 1: Market structure
+        if market_structure == "UPTREND":
+            buy_votes.append("Market: UPTREND (HH/HL pattern confirmed)")
+        elif market_structure == "DOWNTREND":
+            sell_votes.append("Market: DOWNTREND (LH/LL pattern confirmed)")
+
+        # Combo 2: VWAP pullback zone (within 0.8% = ideal entry, not chase)
+        if price_vs_vwap == "ABOVE" and vwap_dev_pct <= 0.8:
+            buy_votes.append(
+                f"VWAP pullback: +{vwap_dev_pct:.2f}% from VWAP — quality LONG entry"
+            )
+        elif price_vs_vwap == "BELOW" and vwap_dev_pct <= 0.8:
+            sell_votes.append(
+                f"VWAP pullback: -{vwap_dev_pct:.2f}% from VWAP — quality SHORT entry"
+            )
+
+        # Combo 3: Rejection candle
+        if candle_pattern in ("HAMMER", "BULL_ENGULF"):
+            buy_votes.append(f"Rejection candle: {candle_pattern} — buyers defending level")
+        elif candle_pattern in ("BEAR_ENGULF",):
+            sell_votes.append(f"Rejection candle: {candle_pattern} — sellers rejecting level")
+
+        # Combo 4: RSI momentum zone (not extended)
+        if 40 <= rsi <= 65:
+            buy_votes.append(f"RSI={rsi:.1f} — bullish zone (40–65), not overbought")
+        elif 35 <= rsi <= 60:
+            sell_votes.append(f"RSI={rsi:.1f} — bearish zone (35–60), not oversold")
+
+        # Combo 5: EMA9/21 micro-structure
+        if ema_9 > 0 and ema_21 > 0:
+            if ema_9 > ema_21:
+                buy_votes.append(f"EMA9({ema_9:.2f}) > EMA21({ema_21:.2f}) — micro uptrend")
+            else:
+                sell_votes.append(f"EMA9({ema_9:.2f}) < EMA21({ema_21:.2f}) — micro downtrend")
+
+        # ── VWAP directional gate: suppress opposite-side votes ───────────
+        if price_vs_vwap == "ABOVE":
+            sell_votes = []   # No shorts above VWAP
+        else:
+            buy_votes = []    # No longs below VWAP
+
+        n_buy  = len(buy_votes)
+        n_sell = len(sell_votes)
+
+        if n_buy >= 3 and n_buy > n_sell:
+            direction, votes, strength = "BUY",  buy_votes,  n_buy
+        elif n_sell >= 3 and n_sell > n_buy:
+            direction, votes, strength = "SELL", sell_votes, n_sell
+        else:
+            return _neutral_v2(
+                f"Insufficient combos — BUY={n_buy} SELL={n_sell} (need ≥3 same side)"
+            )
+
+        # ── SL / Target (hard % based) ────────────────────────────────────
+        entry = last_close
+        if direction == "BUY":
+            stop_loss = round(entry * (1 - sl_pct / 100), 2)
+            target    = round(entry * (1 + target_pct / 100), 2)
+        else:
+            stop_loss = round(entry * (1 + sl_pct / 100), 2)
+            target    = round(entry * (1 - target_pct / 100), 2)
+
+        # ── Confidence ────────────────────────────────────────────────────
+        has_pattern  = candle_pattern not in ("NONE", "DOJI")
+        near_vwap    = vwap_dev_pct <= 0.4
+        if strength >= 5 and has_pattern and near_vwap:
+            confidence = "HIGH"
+        elif strength >= 4 or (has_pattern and near_vwap):
+            confidence = "MEDIUM"
+        else:
+            confidence = "LOW"
+
+        market_cond = (
+            f"{market_structure} | VWAP {price_vs_vwap} "
+            f"({vwap_dev_pct:.2f}% dev) | vol {vol_ratio:.1f}x avg"
+        )
+
+        return {
+            "signal":           direction,
+            "action":           direction,
+            "strength":         strength,
+            "reasons":          votes,
+            "reason":           "; ".join(votes),
+            "entry_price":      round(entry, 2),
+            "stop_loss":        stop_loss,
+            "target":           target,
+            "confidence":       confidence,
+            "market_condition": market_cond,
+            "sl_pct":           sl_pct,
+            "target_pct":       target_pct,
+            "rr_ratio":         round(target_pct / sl_pct, 2),
+            "score":            strength * 10 + (10 if confidence == "HIGH" else 5 if confidence == "MEDIUM" else 0),
+        }
 
     # ── Legacy methods (used by trading_agent.py) ─────────────────────────────
 

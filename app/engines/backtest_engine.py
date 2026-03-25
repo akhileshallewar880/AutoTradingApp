@@ -45,10 +45,11 @@ class BacktestRequest:
     symbols: List[str] = field(default_factory=list)        # empty → NIFTY_UNIVERSE
     start_date: str = "2024-01-01"                           # YYYY-MM-DD
     end_date: str = ""                                       # empty → yesterday
-    sl_atr_multiplier: float = 1.0                          # floor multiplier (structural SL overrides this; kept for edge cases)
-    target_rr: float = 2.0                                  # target = SL_distance × RR  (2:1 is standard for swing)
-    min_signal_strength: int = 3                            # daily signal needs ≥3 combos (EMA+Price+RSI+MACD+ADX)
-    max_hold_bars: int = 15                                 # 15 days for daily candles gives trades room to develop
+    sl_atr_multiplier: float = 1.0                          # floor multiplier (structural SL overrides this)
+    target_rr: float = 2.0                                  # target = SL_distance × RR
+    min_signal_strength: int = 3                            # combos required (higher = fewer, better trades)
+    max_hold_bars: int = 15                                 # days before timeout exit (ignored when no_timeout=True)
+    no_timeout: bool = False                                # True → only SL/target exits; never force-close on time
     include_short: bool = True                              # backtest SELL signals too
     include_trades_detail: bool = True                      # include per-trade rows in report
 
@@ -217,22 +218,89 @@ class BacktestEngine:
         )
         adx_series = dx_series.rolling(14).mean()
 
+        # ── EMA20 slope (5-bar change — positive = rising) ────────────────
+        ema20_slope = ema20 - ema20.shift(5)
+
+        # ── Market structure via EMA slope + price position ───────────────
+        # UPTREND  : price > EMA50  AND  EMA20 slope positive  AND  EMA20 > EMA50
+        # DOWNTREND: price < EMA50  AND  EMA20 slope negative  AND  EMA20 < EMA50
+        # SIDEWAYS : everything else
+        above_ema50  = close > ema50
+        below_ema50  = close < ema50
+        ema20_rising = ema20_slope > 0
+        ema20_fall   = ema20_slope < 0
+        ema20_up     = ema20 > ema50
+        ema20_dn     = ema20 < ema50
+
+        mkt_struct = pd.Series("SIDEWAYS", index=df.index)
+        mkt_struct = mkt_struct.where(
+            ~(above_ema50 & ema20_rising & ema20_up), "UPTREND"
+        )
+        mkt_struct = mkt_struct.where(
+            ~(below_ema50 & ema20_fall & ema20_dn), "DOWNTREND"
+        )
+
+        # ── Volume ratio (vs 20-day rolling average) ──────────────────────
+        vol_avg    = volume.rolling(20).mean().replace(0, float("nan"))
+        vol_ratio  = volume / vol_avg
+
+        # ── Candle patterns ───────────────────────────────────────────────
+        open_ = df["Open"]
+        body  = (close - open_).abs()
+        upper_wick = high - pd.concat([close, open_], axis=1).max(axis=1)
+        lower_wick = pd.concat([close, open_], axis=1).min(axis=1) - low
+        bar_range  = (high - low).replace(0, float("nan"))
+
+        # Hammer: big lower wick, small body, close in upper portion
+        is_hammer = (
+            (lower_wick >= 2 * body)
+            & (upper_wick <= body * 0.5)
+            & (body / bar_range >= 0.05)   # candle not flat
+        )
+        # Bullish engulfing: prev bearish, curr bullish and fully engulfs
+        prev_bear    = close.shift(1) < open_.shift(1)
+        curr_bull    = close > open_
+        is_bull_eng  = prev_bear & curr_bull & (open_ <= close.shift(1)) & (close >= open_.shift(1))
+
+        # Bearish engulfing
+        prev_bull    = close.shift(1) > open_.shift(1)
+        curr_bear    = close < open_
+        is_bear_eng  = prev_bull & curr_bear & (open_ >= close.shift(1)) & (close <= open_.shift(1))
+
+        # Doji: body ≤ 10% of bar range
+        is_doji = body <= 0.1 * bar_range
+
+        candle_pattern = pd.Series("NONE", index=df.index)
+        candle_pattern[is_hammer]   = "HAMMER"
+        candle_pattern[is_bull_eng] = "BULL_ENGULF"
+        candle_pattern[is_bear_eng] = "BEAR_ENGULF"
+        candle_pattern[is_doji]     = "DOJI"
+
+        # ── Pullback to EMA20 (within 2% — quality entry zone) ────────────
+        ema20_dev  = (close - ema20).abs() / ema20.replace(0, float("nan"))
+        pullback   = ema20_dev < 0.02
+
         return pd.DataFrame({
-            "open":      df["Open"],
-            "high":      high,
-            "low":       low,
-            "close":     close,
-            "volume":    volume,
-            "ema20":     ema20,
-            "ema50":     ema50,
-            "atr_14":    atr_14,
-            "rsi_14":    rsi_14,
-            "macd_hist": macd_hist,
-            "macd_bx":   macd_bullish_xover,
-            "macd_brx":  macd_bearish_xover,
-            "di_plus":   di_plus_s,
-            "di_minus":  di_minus_s,
-            "adx":       adx_series,
+            "open":           df["Open"],
+            "high":           high,
+            "low":            low,
+            "close":          close,
+            "volume":         volume,
+            "ema20":          ema20,
+            "ema50":          ema50,
+            "ema20_slope":    ema20_slope,
+            "atr_14":         atr_14,
+            "rsi_14":         rsi_14,
+            "macd_hist":      macd_hist,
+            "macd_bx":        macd_bullish_xover,
+            "macd_brx":       macd_bearish_xover,
+            "di_plus":        di_plus_s,
+            "di_minus":       di_minus_s,
+            "adx":            adx_series,
+            "market_struct":  mkt_struct,
+            "vol_ratio":      vol_ratio,
+            "candle_pattern": candle_pattern,
+            "pullback":       pullback,
         }, index=df.index)
 
     # ── Indicator dict builder ────────────────────────────────────────────────
@@ -251,6 +319,7 @@ class BacktestEngine:
             "last_close":             float(row["close"]),
             "ema_20":                 float(row["ema20"]),
             "ema_50":                 float(row["ema50"]),
+            "ema20_slope":            float(row["ema20_slope"]) if not pd.isna(row["ema20_slope"]) else 0.0,
             "rsi":                    float(row["rsi_14"]),
             "macd_histogram":         float(row["macd_hist"]),
             "macd_bullish_crossover": bool(row["macd_bx"]),
@@ -258,6 +327,10 @@ class BacktestEngine:
             "di_plus":                float(row["di_plus"]),
             "di_minus":               float(row["di_minus"]),
             "adx":                    float(row["adx"]),
+            "market_structure":       str(row["market_struct"]),
+            "volume_ratio":           float(row["vol_ratio"]) if not pd.isna(row["vol_ratio"]) else 1.0,
+            "candle_pattern":         str(row["candle_pattern"]),
+            "pullback_to_ema20":      bool(row["pullback"]),
         }
 
     # ── Per-symbol simulation ─────────────────────────────────────────────────
@@ -342,6 +415,8 @@ class BacktestEngine:
                     continue
 
             # Simulate exit from entry bar onwards
+            # When no_timeout=True, extend max_hold to remaining bars (rely only on SL/target)
+            effective_max_hold = (n - entry_idx - 1) if req.no_timeout else req.max_hold_bars
             outcome, exit_price, exit_bar_idx = self._simulate_exit(
                 ind=ind,
                 entry_idx=entry_idx,
@@ -349,7 +424,7 @@ class BacktestEngine:
                 stop_loss=stop_loss,
                 target=target,
                 is_short=is_short,
-                max_hold=req.max_hold_bars,
+                max_hold=effective_max_hold,
             )
 
             hold_bars = exit_bar_idx - entry_idx
@@ -582,6 +657,7 @@ class BacktestEngine:
             "target_rr": req.target_rr,
             "min_signal_strength": req.min_signal_strength,
             "max_hold_bars": req.max_hold_bars,
+            "no_timeout": req.no_timeout,
             "include_short": req.include_short,
         }
 

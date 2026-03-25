@@ -40,10 +40,14 @@ class BacktestRequestBody(BaseModel):
         description="Minimum number of indicator combos that must agree (1–5)",
     )
     max_hold_bars: int = Field(
-        default=5,
+        default=15,
         ge=1,
-        le=30,
-        description="Exit at close after N days if neither SL nor target is hit",
+        le=60,
+        description="Exit at close after N days if neither SL nor target is hit (ignored when no_timeout=true)",
+    )
+    no_timeout: bool = Field(
+        default=False,
+        description="If true, only SL or target can close a trade — no forced time-based exit",
     )
     include_short: bool = Field(
         default=True,
@@ -85,6 +89,7 @@ async def run_backtest(body: BacktestRequestBody):
             target_rr=body.target_rr,
             min_signal_strength=body.min_signal_strength,
             max_hold_bars=body.max_hold_bars,
+            no_timeout=body.no_timeout,
             include_short=body.include_short,
             include_trades_detail=body.include_trades_detail,
         )
