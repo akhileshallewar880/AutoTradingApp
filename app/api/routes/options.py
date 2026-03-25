@@ -22,7 +22,7 @@ from app.agents.options_llm_agent import options_llm_agent
 from app.agents.options_execution_agent import options_execution_agent
 from app.core.logging import logger
 from datetime import datetime, date
-from typing import List
+from typing import List, Optional
 import uuid
 import asyncio
 

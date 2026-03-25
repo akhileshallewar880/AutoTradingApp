@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Union
 from datetime import datetime, date
 
 
@@ -10,7 +10,7 @@ class OptionsRequest(BaseModel):
     capital_to_use: float = Field(..., gt=0, description="Capital to deploy for this trade")
     access_token: str = Field(..., description="User's Zerodha access token")
     api_key: str = Field(..., description="User's Zerodha API key")
-    user_id: int = Field(..., description="VanTrade user ID")
+    user_id: Optional[Union[int, str]] = Field(None, description="User ID (numeric VanTrade ID or Zerodha string ID)")
     lots: int = Field(default=1, ge=1, le=50, description="Number of lots to trade")
 
 

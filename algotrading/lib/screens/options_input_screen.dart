@@ -112,6 +112,12 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
     setState(() { _isLoading = true; _error = null; });
 
     try {
+      // user_id can be Zerodha string (e.g. "AB1234") or numeric VanTrade ID
+      int? parsedUserId;
+      try { parsedUserId = int.parse(auth.user!.userId); } catch (_) {
+        parsedUserId = auth.user!.userId.hashCode.abs();
+      }
+
       final body = jsonEncode({
         'index': _selectedIndex,
         'expiry_date': _selectedExpiry,
@@ -120,7 +126,7 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
         'lots': _lots,
         'access_token': auth.user!.accessToken,
         'api_key': auth.user!.apiKey,
-        'user_id': auth.user!.userId,
+        'user_id': parsedUserId,
       });
 
       final resp = await http
