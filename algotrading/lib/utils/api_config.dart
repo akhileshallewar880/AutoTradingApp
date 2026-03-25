@@ -42,6 +42,12 @@ class ApiConfig {
   static const String backtestRunUrl = '$baseUrl/backtest/run';
   static const String backtestUniverseUrl = '$baseUrl/backtest/universe';
 
+  // Options trading endpoints
+  static const String optionsExpiriesUrl = '$baseUrl/options/expiries';
+  static const String optionsAnalyzeUrl = '$baseUrl/options/analyze';
+  static String optionsConfirmUrl(String id) => '$baseUrl/options/$id/confirm';
+  static String optionsStatusUrl(String id) => '$baseUrl/options/$id/status';
+
   // Timeout duration - 2 minutes for analysis (yfinance + AI can be slow)
   static const Duration timeout = Duration(seconds: 150);
 

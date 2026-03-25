@@ -14,6 +14,7 @@ import 'analysis_input_screen.dart';
 import 'backtest_screen.dart';
 import 'gtt_analysis_screen.dart';
 import 'gtt_portfolio_analysis_screen.dart';
+import 'options_input_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -1179,6 +1180,43 @@ class _HomeScreenState extends State<HomeScreen> {
                         SizedBox(width: 6),
                         Text(
                           'Analysis',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Options Trading button
+            Expanded(
+              child: Material(
+                color: const Color(0xFF7C3AED),
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const OptionsInputScreen(),
+                    ),
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 13),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.candlestick_chart, color: Colors.white, size: 18),
+                        SizedBox(width: 6),
+                        Text(
+                          'Options',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 13,
