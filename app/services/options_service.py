@@ -167,23 +167,165 @@ class OptionsService:
     # ── Live data ────────────────────────────────────────────────────────────
 
     def get_index_price(self, index: str, api_key: str, access_token: str) -> float:
-        """Fetch live index price via Zerodha quote."""
+        """
+        Get current index price using Kite paid API.
+
+        Tries in order:
+          1. kite.quote() — primary, paid plan + INDICES segment enabled in app
+          2. kite.ltp()   — lighter endpoint, same permissions
+          3. historical_data() on hardcoded token — always works on paid plan
+          4. Put-call parity from NFO instruments — zero extra permissions
+        """
         zerodha_service.set_credentials(api_key, access_token)
-        symbol = self.INDEX_QUOTE_SYMBOLS[index.upper()]
-        quotes = zerodha_service.kite.quote([symbol])
-        price = quotes[symbol]["last_price"]
-        logger.info(f"[OptionsService] {index} live price: {price:.2f}")
-        return price
+        index_upper = index.upper()
+        symbol = self.INDEX_QUOTE_SYMBOLS[index_upper]
+
+        # ── Attempt 1: kite.quote() ──────────────────────────────────────
+        try:
+            quotes = zerodha_service.kite.quote([symbol])
+            price = float(quotes[symbol]["last_price"])
+            logger.info(f"[OptionsService] {index} price via quote(): {price:.2f}")
+            return price
+        except Exception as e:
+            logger.warning(f"[OptionsService] quote() failed for {index}: {e}")
+
+        # ── Attempt 2: kite.ltp() ────────────────────────────────────────
+        try:
+            ltp_data = zerodha_service.kite.ltp([symbol])
+            price = float(ltp_data[symbol]["last_price"])
+            logger.info(f"[OptionsService] {index} price via ltp(): {price:.2f}")
+            return price
+        except Exception as e:
+            logger.warning(f"[OptionsService] ltp() also failed for {index}: {e}")
+
+        # ── Attempt 3: historical_data on hardcoded token ────────────────
+        token = self.INDEX_TOKENS.get(index_upper)
+        if token:
+            try:
+                now = datetime.now()
+                candles = zerodha_service.kite.historical_data(
+                    token, now - timedelta(minutes=5), now, "minute",
+                    continuous=False, oi=False
+                )
+                if candles:
+                    price = float(candles[-1]["close"])
+                    logger.info(
+                        f"[OptionsService] {index} price via historical_data(): {price:.2f}"
+                    )
+                    return price
+            except Exception as e:
+                logger.warning(f"[OptionsService] historical_data() failed for {index}: {e}")
+
+        # ── Attempt 4: Put-call parity ────────────────────────────────────
+        logger.warning(f"[OptionsService] All live price methods failed — using put-call parity")
+        return self._index_price_from_parity(index_upper, api_key, access_token)
+
+    def _index_price_from_parity(
+        self, index: str, api_key: str, access_token: str
+    ) -> float:
+        """
+        Estimate index price using put-call parity on the nearest expiry.
+
+        For each strike where both CE and PE exist:
+          synthetic_price = strike + CE_last_price − PE_last_price
+
+        Average across up to 7 near-ATM strikes.
+        Accuracy: typically within ±5 points of actual index.
+        """
+        instruments = self._get_instruments(api_key, access_token)
+        today = date.today()
+
+        # Find nearest expiry
+        expiries = sorted(set(
+            inst["expiry"] for inst in instruments
+            if inst.get("name", "").upper() == index
+            and inst.get("instrument_type") in ("CE", "PE")
+            and inst.get("expiry") and inst["expiry"] >= today
+        ))
+        if not expiries:
+            raise RuntimeError(f"No upcoming expiries found for {index} in NFO instruments")
+
+        nearest_expiry = expiries[0]
+        strikes_map: Dict[float, Dict] = {}
+
+        for inst in instruments:
+            if (
+                inst.get("name", "").upper() == index
+                and inst.get("expiry") == nearest_expiry
+                and inst.get("instrument_type") in ("CE", "PE")
+                and inst.get("last_price", 0) > 0
+            ):
+                strike = inst["strike"]
+                opt_type = inst["instrument_type"]
+                if strike not in strikes_map:
+                    strikes_map[strike] = {}
+                strikes_map[strike][opt_type] = inst["last_price"]
+
+        # Only use strikes with both CE and PE prices
+        valid = {
+            strike: prices
+            for strike, prices in strikes_map.items()
+            if "CE" in prices and "PE" in prices
+        }
+
+        if not valid:
+            raise RuntimeError(
+                f"Could not derive {index} price from parity — "
+                "no strikes with both CE and PE last prices"
+            )
+
+        # Initial estimate: median strike
+        strikes_sorted = sorted(valid.keys())
+        mid_idx = len(strikes_sorted) // 2
+        initial_estimate = strikes_sorted[mid_idx]
+
+        # Find 7 strikes nearest to initial_estimate
+        nearest = sorted(
+            strikes_sorted,
+            key=lambda s: abs(s - initial_estimate),
+        )[:7]
+
+        # Compute synthetic prices and average
+        synthetic_prices = [
+            s + valid[s]["CE"] - valid[s]["PE"]
+            for s in nearest
+        ]
+        avg_price = sum(synthetic_prices) / len(synthetic_prices)
+
+        logger.info(
+            f"[OptionsService] {index} price via put-call parity "
+            f"(expiry={nearest_expiry}, n={len(nearest)}): {avg_price:.2f}"
+        )
+        return round(avg_price, 2)
 
     def get_option_premium(
         self, instrument_token: int, api_key: str, access_token: str
     ) -> float:
-        """Fetch live LTP for an option contract by instrument_token."""
+        """
+        Fetch live LTP for an option contract.
+        Tries ltp() first, falls back to quote().
+        """
         zerodha_service.set_credentials(api_key, access_token)
-        quotes = zerodha_service.kite.quote([f"NFO:{instrument_token}"])
-        # kite.quote with token returns key as "NFO:token"
+        nfo_key = f"NFO:{instrument_token}"
+
+        # ── Attempt 1: ltp() ────────────────────────────────────────────
+        try:
+            ltp_data = zerodha_service.kite.ltp([nfo_key])
+            key = list(ltp_data.keys())[0]
+            return ltp_data[key]["last_price"]
+        except Exception as e:
+            logger.warning(f"[OptionsService] ltp() failed for {nfo_key}: {e} — trying quote()")
+
+        # ── Attempt 2: quote() ───────────────────────────────────────────
+        quotes = zerodha_service.kite.quote([nfo_key])
         key = list(quotes.keys())[0]
         return quotes[key]["last_price"]
+
+    # Hardcoded Zerodha instrument tokens for NSE indices (stable, never change)
+    INDEX_TOKENS = {
+        "NIFTY": 256265,     # NSE:NIFTY 50
+        "BANKNIFTY": 260105, # NSE:NIFTY BANK
+    }
 
     async def get_index_candles(
         self,
@@ -195,13 +337,29 @@ class OptionsService:
         """
         Fetch intraday candles for the index (from market open to now).
         Returns list of dicts with keys: date, open, high, low, close, volume.
+
+        Uses hardcoded instrument tokens — avoids needing kite.quote() permission
+        for NSE index symbols (which requires Marketdata scope on some plans).
         """
         zerodha_service.set_credentials(api_key, access_token)
-        symbol = self.INDEX_QUOTE_SYMBOLS[index.upper()]
+        index_upper = index.upper()
 
-        # Get instrument_token for the index via quote
-        quotes = zerodha_service.kite.quote([symbol])
-        instrument_token = quotes[symbol]["instrument_token"]
+        # Use hardcoded token first; fall back to ltp() / quote() if somehow not in map
+        instrument_token = self.INDEX_TOKENS.get(index_upper)
+        if instrument_token is None:
+            symbol = self.INDEX_QUOTE_SYMBOLS[index_upper]
+            try:
+                ltp_data = zerodha_service.kite.ltp([symbol])
+                key = list(ltp_data.keys())[0]
+                instrument_token = ltp_data[key]["instrument_token"]
+            except Exception:
+                quotes = zerodha_service.kite.quote([symbol])
+                instrument_token = quotes[symbol]["instrument_token"]
+
+        logger.info(
+            f"[OptionsService] Fetching {interval} candles for {index_upper} "
+            f"(token={instrument_token})"
+        )
 
         now = datetime.now()
         from_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)

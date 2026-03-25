@@ -48,6 +48,20 @@ class ApiConfig {
   static String optionsConfirmUrl(String id) => '$baseUrl/options/$id/confirm';
   static String optionsStatusUrl(String id) => '$baseUrl/options/$id/status';
 
+  // Portfolio endpoints (paid Kite API)
+  static const String holdingsUrl = '$baseUrl/portfolio/holdings';
+  static const String quoteUrl = '$baseUrl/portfolio/quote';
+  static const String orderMarginsUrl = '$baseUrl/portfolio/order-margins';
+  static const String convertPositionUrl = '$baseUrl/portfolio/convert-position';
+  static String modifyOrderUrl(String id) => '$baseUrl/portfolio/orders/$id';
+  static String cancelOrderUrl(String id) => '$baseUrl/portfolio/orders/$id';
+  static String orderHistoryUrl(String id) => '$baseUrl/portfolio/orders/$id/history';
+
+  // Live ticker (KiteTicker SSE)
+  static const String tickerStreamUrl = '$baseUrl/ticker/stream';
+  static const String tickerSnapshotUrl = '$baseUrl/ticker/snapshot';
+  static const String tickerStatusUrl = '$baseUrl/ticker/status';
+
   // Timeout duration - 2 minutes for analysis (yfinance + AI can be slow)
   static const Duration timeout = Duration(seconds: 150);
 

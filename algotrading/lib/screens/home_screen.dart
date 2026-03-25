@@ -15,6 +15,7 @@ import 'backtest_screen.dart';
 import 'gtt_analysis_screen.dart';
 import 'gtt_portfolio_analysis_screen.dart';
 import 'options_input_screen.dart';
+import 'holdings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -30,10 +31,21 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _perfLoading = false;
   String? _perfError;
 
+  // ── Live index prices (KiteTicker snapshot) ────────────────────────────
+  Map<String, dynamic> _indexPrices = {};
+  Timer? _indexRefreshTimer;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _initDashboard());
+  }
+
+  @override
+  void dispose() {
+    _indexRefreshTimer?.cancel();
+    context.read<DashboardProvider>().stopAutoRefresh();
+    super.dispose();
   }
 
   void _initDashboard() {
@@ -44,6 +56,35 @@ class _HomeScreenState extends State<HomeScreen> {
           .then((_) => _checkSessionExpired());
       dash.startAutoRefresh(auth.user!.accessToken, apiKey: auth.user!.apiKey);
       _fetchPerformance();
+      _fetchIndexPrices();
+      // Refresh index prices every 30 seconds
+      _indexRefreshTimer = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => _fetchIndexPrices(),
+      );
+    }
+  }
+
+  Future<void> _fetchIndexPrices() async {
+    final auth = context.read<AuthProvider>();
+    if (auth.user == null || auth.isDemoMode) return;
+    try {
+      final uri = Uri.parse(ApiConfig.tickerSnapshotUrl).replace(
+        queryParameters: {
+          'api_key': auth.user!.apiKey,
+          'access_token': auth.user!.accessToken,
+          // NIFTY 50 = 256265, NIFTY BANK = 260105
+          'tokens': '256265,260105',
+        },
+      );
+      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        setState(() => _indexPrices = data['snapshot'] ?? {});
+      }
+    } catch (_) {
+      // Silent fail — index strip is best-effort
     }
   }
 
@@ -111,12 +152,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await context.read<AuthProvider>().logout();
     if (!mounted) return;
     Navigator.pushReplacementNamed(context, '/login');
-  }
-
-  @override
-  void dispose() {
-    context.read<DashboardProvider>().stopAutoRefresh();
-    super.dispose();
   }
 
   Future<void> _refresh() async {
@@ -270,7 +305,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       // ── Welcome row ──────────────────────────────────────────
                       _buildWelcomeRow(user?.userName ?? 'Trader'),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
+
+                      // ── Live index prices strip ───────────────────────────────
+                      if (!auth.isDemoMode && _indexPrices.isNotEmpty)
+                        _buildIndexPriceStrip(),
+                      if (!auth.isDemoMode && _indexPrices.isNotEmpty)
+                        const SizedBox(height: 12),
 
                       // ── Dashboard content ────────────────────────────────────
                       if (dash.error != null && dash.dashboard == null)
@@ -437,6 +478,83 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ── Live Index Price Strip ───────────────────────────────────────────────
+  Widget _buildIndexPriceStrip() {
+    final entries = [
+      ('NIFTY', '256265'),
+      ('BANKNIFTY', '260105'),
+    ];
+    return Row(
+      children: entries.map((e) {
+        final label = e.$1;
+        final token = e.$2;
+        final tick = _indexPrices[token] as Map<String, dynamic>?;
+        final ltp = (tick?['last_price'] ?? 0.0) as num;
+        final change = (tick?['net_change'] ?? 0.0) as num;
+        final isUp = change >= 0;
+        return Expanded(
+          child: Container(
+            margin: EdgeInsets.only(right: label == 'NIFTY' ? 6 : 0),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isUp ? Colors.green[200]! : Colors.red[200]!,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 4,
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      ltp == 0 ? '—' : _currency.format(ltp),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Icon(
+                          isUp ? Icons.arrow_upward : Icons.arrow_downward,
+                          size: 10,
+                          color: isUp ? Colors.green[600] : Colors.red[600],
+                        ),
+                        Text(
+                          '${change.abs().toStringAsFixed(2)}%',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: isUp ? Colors.green[600] : Colors.red[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
   // ── Balance + Today P&L ──────────────────────────────────────────────────
   Widget _buildBalancePnlCard(DashboardModel? data) {
     final balance = data?.availableBalance ?? 0.0;
@@ -490,7 +608,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
+                color: Colors.white.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -528,7 +646,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             Text(
                               '(${isPositive ? '+' : ''}${pnlPct.toStringAsFixed(2)}%)',
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.7),
+                                color: Colors.white.withValues(alpha: 0.7),
                                 fontSize: 12,
                               ),
                             ),
@@ -762,9 +880,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.07),
+        color: color.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.2)),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -941,7 +1059,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: (isTwoLeg ? Colors.deepPurple : Colors.orange)
-                      .withOpacity(0.1),
+                      .withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -1088,7 +1206,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: statusColor.withOpacity(0.1),
+                color: statusColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
@@ -1217,6 +1335,44 @@ class _HomeScreenState extends State<HomeScreen> {
                         SizedBox(width: 6),
                         Text(
                           'Options',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Holdings button
+            Expanded(
+              child: Material(
+                color: Colors.indigo[700],
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const HoldingsScreen(),
+                    ),
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 13),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.account_balance_wallet,
+                            color: Colors.white, size: 18),
+                        SizedBox(width: 6),
+                        Text(
+                          'Holdings',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 13,

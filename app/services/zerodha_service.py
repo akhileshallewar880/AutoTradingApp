@@ -369,7 +369,152 @@ class ZerodhaService:
             logger.error(f"Error fetching GTTs: {e}")
             raise
 
-    async def place_gtt(self, 
+    async def get_holdings(self) -> List[Dict]:
+        """
+        Fetch user's long-term CNC holdings (stocks held across sessions).
+        Returns each holding with average_price, last_price, pnl, day_change etc.
+        Requires paid Kite Connect plan.
+        """
+        loop = asyncio.get_event_loop()
+        holdings = await loop.run_in_executor(None, self.kite.holdings)
+        return holdings or []
+
+    async def get_order_margins(self, orders: List[Dict]) -> List[Dict]:
+        """
+        Calculate margin required for a list of orders BEFORE placing them.
+        Each order dict: {exchange, tradingsymbol, transaction_type, variety,
+                          product, order_type, quantity, price (optional)}
+        Returns margin breakdown: total, overnight, exposure, option_premium etc.
+        Requires paid Kite Connect plan.
+        """
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, lambda: self.kite.order_margins(orders)
+        )
+        return result or []
+
+    async def get_basket_order_margins(self, orders: List[Dict]) -> Dict:
+        """
+        Calculate net margin for a basket of orders considering hedges.
+        More accurate than summing individual order_margins for options strategies.
+        """
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, lambda: self.kite.basket_order_margins(orders)
+        )
+        return result or {}
+
+    async def modify_order(
+        self,
+        order_id: str,
+        variety: str = "regular",
+        quantity: Optional[int] = None,
+        price: Optional[float] = None,
+        order_type: Optional[str] = None,
+        trigger_price: Optional[float] = None,
+        validity: Optional[str] = None,
+    ) -> str:
+        """
+        Modify a pending order (change price, quantity, order type).
+        Only OPEN/PENDING orders can be modified.
+        """
+        params: Dict[str, Any] = {"variety": variety, "order_id": order_id}
+        if quantity is not None:
+            params["quantity"] = quantity
+        if price is not None:
+            params["price"] = price
+        if order_type is not None:
+            params["order_type"] = order_type
+        if trigger_price is not None:
+            params["trigger_price"] = trigger_price
+        if validity is not None:
+            params["validity"] = validity
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, lambda: self.kite.modify_order(**params)
+        )
+        logger.info(f"Order {order_id} modified. Result: {result}")
+        return str(result)
+
+    async def convert_position(
+        self,
+        tradingsymbol: str,
+        exchange: str,
+        transaction_type: str,
+        position_type: str,
+        quantity: int,
+        old_product: str,
+        new_product: str,
+    ) -> bool:
+        """
+        Convert a position product type (e.g. MIS → CNC to extend intraday to delivery).
+        transaction_type : BUY or SELL
+        position_type    : day or overnight
+        old_product      : MIS, CNC, NRML
+        new_product      : MIS, CNC, NRML
+        """
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self.kite.convert_position(
+                tradingsymbol=tradingsymbol,
+                exchange=exchange,
+                transaction_type=transaction_type,
+                position_type=position_type,
+                quantity=quantity,
+                old_product=old_product,
+                new_product=new_product,
+            ),
+        )
+        logger.info(
+            f"Position converted: {tradingsymbol} {old_product}→{new_product} qty={quantity}"
+        )
+        return bool(result)
+
+    async def get_order_history(self, order_id: str) -> List[Dict]:
+        """
+        Fetch complete lifecycle history of a single order.
+        Returns list of status changes: OPEN → COMPLETE / REJECTED / CANCELLED.
+        """
+        loop = asyncio.get_event_loop()
+        history = await loop.run_in_executor(
+            None, lambda: self.kite.order_history(order_id)
+        )
+        return history or []
+
+    async def get_market_depth(self, symbols: List[str]) -> Dict:
+        """
+        Fetch full market depth (5-level bid/ask order book) for symbols.
+        Returns quote data including depth.buy and depth.sell arrays.
+        Each level: price, quantity, orders count.
+        Requires paid Kite Connect plan with market data.
+        """
+        formatted = []
+        for s in symbols:
+            if ":" not in s:
+                formatted.append(f"NSE:{s}")
+            else:
+                formatted.append(s)
+        loop = asyncio.get_event_loop()
+        quotes = await loop.run_in_executor(None, lambda: self.kite.quote(formatted))
+        # Extract just the depth + ohlc + last_price for each symbol
+        result = {}
+        for sym, data in quotes.items():
+            result[sym] = {
+                "last_price": data.get("last_price"),
+                "volume": data.get("volume"),
+                "buy_quantity": data.get("buy_quantity"),
+                "sell_quantity": data.get("sell_quantity"),
+                "ohlc": data.get("ohlc", {}),
+                "change": data.get("change"),
+                "depth": data.get("depth", {"buy": [], "sell": []}),
+                "upper_circuit_limit": data.get("upper_circuit_limit"),
+                "lower_circuit_limit": data.get("lower_circuit_limit"),
+            }
+        return result
+
+    async def place_gtt(self,
                        tradingsymbol: str, 
                        exchange: str,
                        trigger_values: List[float],

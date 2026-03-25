@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
-from app.api.routes import agent, performance, auth, analysis, dashboard, credentials, live_trading, backtest, options
+from app.api.routes import agent, performance, auth, analysis, dashboard, credentials, live_trading, backtest, options, portfolio, ticker
 from app.core.logging import logger
 
 settings = get_settings()
@@ -32,6 +32,8 @@ def create_app() -> FastAPI:
     app.include_router(live_trading.router, prefix="/api/v1", tags=["Live Trading"])
     app.include_router(backtest.router, prefix="/api/v1/backtest", tags=["Backtest"])
     app.include_router(options.router, prefix="/api/v1/options", tags=["Options Trading"])
+    app.include_router(portfolio.router, prefix="/api/v1/portfolio", tags=["Portfolio"])
+    app.include_router(ticker.router, prefix="/api/v1/ticker", tags=["Live Ticker"])
 
     @app.on_event("startup")
     async def startup_event():
