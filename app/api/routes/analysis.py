@@ -482,6 +482,10 @@ async def execute_trades(
                 if original_qty != override_map[sym]:
                     logger.info(f"Quantity override for {sym}: {original_qty} → {override_map[sym]}")
 
+        # Store exact count of stocks being executed so the status endpoint
+        # shows the user-selected count, not the full analysis count.
+        _analyses[analysis_id]["executing_count"] = len(stocks)
+
         async def update_callback(update: ExecutionUpdate):
             if analysis_id not in active_executions:
                 active_executions[analysis_id] = []
@@ -525,10 +529,32 @@ async def get_execution_status(analysis_id: str):
             raise HTTPException(status_code=404, detail="Analysis not found")
 
         updates = active_executions.get(analysis_id, [])
+
+        # Use the executing_count stored when execution started (reflects user
+        # selection, not the full analysis count which may include deselected stocks).
+        # Falls back to full stock count if execution hasn't started yet.
         stocks = analysis_data.get("stocks", [])
-        total_stocks = len(stocks)
-        completed_stocks = len([u for u in updates if u.update_type == "COMPLETED"])
-        failed_stocks = len([u for u in updates if u.update_type == "ERROR"])
+        total_stocks = analysis_data.get("executing_count", len(stocks))
+
+        # Count by unique symbols that reached a terminal state.
+        # "Completed" = entry order was filled (position handled one way or another):
+        #   COMPLETED        → filled + GTT placed ✓
+        #   GTT_FAILED       → filled but GTT errored AND squareoff also failed (open position!)
+        #   SQUAREDOFF       → GTT failed but position was immediately squared off ✓
+        #   SQUAREOFF_FAILED → GTT failed AND squareoff failed — manual action needed!
+        # "Failed" = entry order never executed:
+        #   ORDER_REJECTED, ORDER_TIMEOUT → order bounced/timed out
+        #   ERROR / MARKET_CLOSED        → unrecoverable error
+        _COMPLETED_TYPES = {"COMPLETED", "GTT_FAILED", "SQUAREDOFF", "SQUAREOFF_FAILED"}
+        _FAILED_TYPES    = {"ORDER_REJECTED", "ORDER_TIMEOUT", "ERROR", "MARKET_CLOSED"}
+
+        completed_syms = {u.stock_symbol for u in updates if u.update_type in _COMPLETED_TYPES}
+        failed_syms    = {u.stock_symbol for u in updates if u.update_type in _FAILED_TYPES}
+        # A symbol counted as completed should not also appear in failed
+        failed_syms -= completed_syms
+
+        completed_stocks = len(completed_syms)
+        failed_stocks    = len(failed_syms)
 
         return ExecutionStatus(
             analysis_id=analysis_id,

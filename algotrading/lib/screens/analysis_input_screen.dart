@@ -39,7 +39,8 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
       final balance =
           context.read<DashboardProvider>().dashboard?.availableBalance ?? 0;
       setState(() => _availableBalance = balance);
-      _capitalController.text = balance > 0 ? balance.toStringAsFixed(0) : '';
+      // Use floor() so we never suggest more capital than actually available
+      _capitalController.text = balance > 0 ? balance.floor().toString() : '';
       _fetchSectors();
     });
   }
@@ -415,26 +416,16 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
         final displayName = s['display_name'] as String? ?? sectorKey;
         final changePct   = (s['change_pct'] as num?)?.toDouble() ?? 0.0;
         final last        = (s['last'] as num?)?.toDouble() ?? 0.0;
-        final momentum    = s['momentum'] as String? ?? 'NEUTRAL';
         final selected    = _selectedSectors.contains(sectorKey);
 
-        final isUp   = momentum == 'BULLISH';
-        final isDown = momentum == 'BEARISH';
-        final changeColor = isUp
-            ? Colors.green[700]!
-            : isDown
-                ? Colors.red[700]!
-                : Colors.grey[600]!;
-        final bgColor = selected
-            ? (isUp
-                ? Colors.green[50]!
-                : isDown
-                    ? Colors.red[50]!
-                    : Colors.blue[50]!)
-            : Colors.grey[50]!;
+        // Gradient color based on magnitude, not just direction
+        final changeColor = _sectorColor(changePct);
+        final bgColor     = selected
+            ? changeColor.withAlpha(18)
+            : changeColor.withAlpha(8);
         final borderColor = selected
-            ? (isUp ? Colors.green[400]! : isDown ? Colors.red[400]! : Colors.blue[300]!)
-            : Colors.grey[200]!;
+            ? changeColor.withAlpha(160)
+            : changeColor.withAlpha(40);
 
         return GestureDetector(
           onTap: () {
@@ -521,6 +512,21 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
         );
       }).toList(),
     );
+  }
+
+  /// Returns a gradient color based on % change magnitude.
+  /// Dark green = strongly up, light green = mildly up,
+  /// grey = flat, light red = mildly down, dark red = strongly down.
+  Color _sectorColor(double pct) {
+    if (pct >= 2.0)  return const Color(0xFF1B5E20); // deep green
+    if (pct >= 1.0)  return const Color(0xFF2E7D32); // dark green
+    if (pct >= 0.5)  return const Color(0xFF388E3C); // medium green
+    if (pct >= 0.2)  return const Color(0xFF66BB6A); // light green
+    if (pct > -0.2)  return const Color(0xFF757575); // neutral grey
+    if (pct > -0.5)  return const Color(0xFFEF9A9A); // light red
+    if (pct > -1.0)  return const Color(0xFFE53935); // medium red
+    if (pct > -2.0)  return const Color(0xFFC62828); // dark red
+    return            const Color(0xFF7F0000);        // deep red
   }
 
   Widget _buildSectorSkeleton() {
@@ -760,7 +766,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                       fontSize: 12,
                     ),
                     onPressed: () => setState(() {
-                      _capitalController.text = amount.toStringAsFixed(0);
+                      _capitalController.text = amount.floor().toString();
                     }),
                   );
                 }).toList(),

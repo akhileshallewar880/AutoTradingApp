@@ -78,8 +78,10 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
   Widget build(BuildContext context) {
     final status = context.watch<AnalysisProvider>().executionStatus;
     final isDone = status?.overallStatus == 'COMPLETED' ||
-        status?.overallStatus == 'FAILED';
-    final isSuccess = status?.overallStatus == 'COMPLETED';
+        status?.overallStatus == 'FAILED'  ||
+        status?.overallStatus == 'GTT_FAILED';
+    final isSuccess = status?.overallStatus == 'COMPLETED' ||
+        status?.overallStatus == 'GTT_FAILED';
 
     return Scaffold(
       appBar: AppBar(
@@ -244,16 +246,23 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
     final isError = update.updateType == 'ERROR' ||
         update.updateType == 'FAILED';
     final isMarketClosed = update.updateType == 'MARKET_CLOSED';
-    final isGtt = update.updateType == 'GTT_CREATED';
+    final isGtt = update.updateType == 'GTT_CREATED' ||
+        update.updateType == 'GTT_PLACED';
+    final isSquaredOff = update.updateType == 'SQUAREDOFF';
+    final isSquareOffFailed = update.updateType == 'SQUAREOFF_FAILED';
+    final isGttFailed = update.updateType == 'GTT_FAILED';
 
     Color tileColor;
     IconData icon;
-    if (isMarketClosed) {
-      tileColor = Colors.orange[700]!;
-      icon = Icons.access_time_rounded;
-    } else if (isError) {
-      tileColor = Colors.red[700]!;
-      icon = Icons.error_outline;
+    if (isSquareOffFailed || isGttFailed) {
+      tileColor = Colors.red[900]!;
+      icon = Icons.warning_amber_rounded;
+    } else if (isMarketClosed || isError) {
+      tileColor = isMarketClosed ? Colors.orange[700]! : Colors.red[700]!;
+      icon = isMarketClosed ? Icons.access_time_rounded : Icons.error_outline;
+    } else if (isSquaredOff) {
+      tileColor = Colors.purple[700]!;
+      icon = Icons.swap_horiz_rounded;
     } else if (isOrder) {
       tileColor = Colors.green[700]!;
       icon = Icons.check_circle_outline;
@@ -349,6 +358,25 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
     );
   }
 
+  String _completionSubtitle(ExecutionStatusModel status) {
+    final hasGttFailed = status.updates
+        .any((u) => u.updateType == 'GTT_FAILED');
+    final allFilled = status.completedStocks > 0 && status.failedStocks == 0;
+
+    if (allFilled && hasGttFailed) {
+      return 'Orders filled but GTT placement failed. '
+          'Set stop-loss & target manually in your Zerodha app.';
+    }
+    if (allFilled) {
+      return 'All trades executed. GTT orders set for targets & stop-losses.';
+    }
+    if (status.completedStocks > 0 && status.failedStocks > 0) {
+      return '${status.completedStocks} order(s) executed, '
+          '${status.failedStocks} failed. Check Zerodha app.';
+    }
+    return 'Some orders could not be placed. Check your Zerodha app.';
+  }
+
   Widget _buildCompletionSection(
       ExecutionStatusModel status, bool isSuccess) {
     return Container(
@@ -370,9 +398,7 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
           AnimatedCompletionWidget(
             isSuccess: isSuccess,
             title: isSuccess ? 'Orders Placed!' : 'Execution Failed',
-            subtitle: isSuccess
-                ? 'All trades have been executed. GTT orders set for targets & stop-losses.'
-                : 'Some orders could not be placed. Check your Zerodha app.',
+            subtitle: _completionSubtitle(status),
             stats: [
               CompletionStatItem('Completed', '${status.completedStocks}',
                   color: Colors.green[700]),

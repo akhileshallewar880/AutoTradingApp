@@ -255,19 +255,58 @@ class ExecutionAgent:
                         is_short=is_short,
                     )
             except Exception as gtt_err:
-                # GTT placement failed but entry order IS filled — position is open
-                err_msg = (
-                    f"⚠ Entry order filled but GTT placement failed: {gtt_err}. "
-                    f"Position is OPEN ({entry_label} {quantity} shares). "
-                    f"Manual exit required — SL ₹{gtt_stop_loss:.2f}, Target ₹{gtt_target:.2f}."
-                )
+                # GTT placement failed but entry order IS filled — square off immediately
                 logger.error(f"{stock_symbol} GTT failed after fill: {gtt_err}")
                 await self._send_update(
-                    analysis_id, stock_symbol, "GTT_FAILED", err_msg, update_callback,
+                    analysis_id, stock_symbol, "GTT_FAILED",
+                    f"GTT placement failed: {gtt_err}. Squaring off position immediately…",
+                    update_callback,
                 )
-                execution_log["status"] = "GTT_FAILED"
-                execution_log["error"] = str(gtt_err)
                 execution_log["gtt_order_id"] = None
+
+                # Reverse direction to exit the open position
+                exit_transaction = "BUY" if is_short else "SELL"
+                try:
+                    exit_order_id = await self.os.execute_trade(
+                        symbol=stock_symbol,
+                        quantity=quantity,
+                        price=0,
+                        stop_loss=0,
+                        target=0,
+                        product=product,
+                        transaction_type=exit_transaction,
+                    )
+                    logger.info(
+                        f"{stock_symbol} squared off after GTT failure — "
+                        f"{exit_transaction} {quantity} MARKET. Order: {exit_order_id}"
+                    )
+                    await self._send_update(
+                        analysis_id, stock_symbol, "SQUAREDOFF",
+                        (
+                            f"Position squared off ({exit_transaction} {quantity} shares @ MARKET). "
+                            f"Exit Order ID: {exit_order_id}. No open position."
+                        ),
+                        update_callback,
+                        order_id=exit_order_id,
+                    )
+                    execution_log["status"] = "SQUAREDOFF"
+                    execution_log["error"] = f"GTT failed ({gtt_err}); auto square-off placed."
+                except Exception as sq_err:
+                    # Both GTT and square-off failed — user must act manually NOW
+                    critical_msg = (
+                        f"⚠ GTT FAILED AND AUTO SQUARE-OFF ALSO FAILED: {sq_err}. "
+                        f"YOU HAVE AN OPEN {entry_label} POSITION OF {quantity} SHARES IN "
+                        f"{stock_symbol}. EXIT MANUALLY IN ZERODHA IMMEDIATELY!"
+                    )
+                    logger.critical(f"{stock_symbol} SQUARE-OFF FAILED: {sq_err}")
+                    await self._send_update(
+                        analysis_id, stock_symbol, "SQUAREOFF_FAILED",
+                        critical_msg, update_callback,
+                    )
+                    execution_log["status"] = "SQUAREOFF_FAILED"
+                    execution_log["error"] = (
+                        f"GTT failed ({gtt_err}); square-off also failed ({sq_err})"
+                    )
                 return execution_log
 
             execution_log["gtt_order_id"] = gtt_id
