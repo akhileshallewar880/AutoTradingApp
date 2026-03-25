@@ -16,6 +16,7 @@ class AnalysisResultsScreen extends StatefulWidget {
 
 class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
   bool _allExpanded = false;
+  String? _confirmError;
 
   @override
   Widget build(BuildContext context) {
@@ -584,7 +585,36 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (hasSelection)
+          if (_confirmError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.red[200]!),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.error_outline, color: Colors.red[700], size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _confirmError!,
+                        style: TextStyle(fontSize: 13, color: Colors.red[800]),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => setState(() => _confirmError = null),
+                      child: Icon(Icons.close, size: 16, color: Colors.red[400]),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (hasSelection && _confirmError == null)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
@@ -782,6 +812,8 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     BuildContext context,
     AnalysisResponseModel analysis,
   ) async {
+    setState(() => _confirmError = null);
+
     // ── Client-side market hours guard ───────────────────────────────────
     // Check before making any network call — gives instant feedback.
     if (!_isMarketOpen()) {
@@ -836,30 +868,9 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
           detail.isNotEmpty ? detail : _marketClosedReason(),
         );
       } else {
-        // Generic error snackbar for other failures
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.error_outline, color: Colors.white, size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    e.toString().replaceFirst('Exception: ', ''),
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-            margin: const EdgeInsets.all(16),
-            duration: const Duration(seconds: 5),
-          ),
-        );
+        setState(() {
+          _confirmError = e.toString().replaceFirst('Exception: ', '');
+        });
       }
     }
   }

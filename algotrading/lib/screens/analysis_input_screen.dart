@@ -844,13 +844,11 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           );
         }
       } catch (e) {
+        // Error is already stored in analysisProvider.error — no popup needed.
+        // The inline error box below the Generate button will show it.
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: $e'),
-              backgroundColor: Colors.red[700],
-            ),
-          );
+          // Force a rebuild so the provider error box becomes visible.
+          setState(() {});
         }
       }
     }

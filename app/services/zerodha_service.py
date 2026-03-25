@@ -179,7 +179,7 @@ class ZerodhaService:
             logger.error(f"Error fetching margins: {e}")
             raise
 
-    async def place_order(self, symbol: str, transaction_type: str, quantity: int, price: float = 0, variety: str = "regular", exchange: str = "NSE", order_type: str = "MARKET", product: str = "MIS", validity: str = "DAY", tag: str = "algo_trade") -> str:
+    async def place_order(self, symbol: str, transaction_type: str, quantity: int, price: float = 0, trigger_price: float = 0, variety: str = "regular", exchange: str = "NSE", order_type: str = "MARKET", product: str = "MIS", validity: str = "DAY", tag: str = "algo_trade") -> str:
         """Place an order."""
         logger.info(f"Placing order: {symbol} {transaction_type} {quantity} @ {price}")
         try:
@@ -196,6 +196,10 @@ class ZerodhaService:
             }
             if order_type == "LIMIT":
                 params["price"] = price
+            if order_type in ("SL", "SL-M"):
+                params["trigger_price"] = trigger_price
+            if order_type == "SL":
+                params["price"] = price  # SL-limit needs both price and trigger_price
 
             loop = asyncio.get_event_loop()
             order_id = await loop.run_in_executor(None, lambda: self.kite.place_order(**params))
@@ -377,8 +381,12 @@ class ZerodhaService:
             GTT order ID
         """
         try:
-            logger.info(f"Placing GTT for {tradingsymbol}: Triggers {trigger_values}")
-            
+            logger.info(
+                f"Placing GTT | symbol={tradingsymbol} type={gtt_type} "
+                f"last_price={last_price} triggers={trigger_values} "
+                f"orders={orders}"
+            )
+
             gtt_params = {
                 "trigger_type": gtt_type,
                 "tradingsymbol": tradingsymbol,
@@ -387,7 +395,7 @@ class ZerodhaService:
                 "last_price": last_price,
                 "orders": orders
             }
-            
+
             loop = asyncio.get_event_loop()
             gtt_id = await loop.run_in_executor(
                 None,
@@ -396,7 +404,11 @@ class ZerodhaService:
             logger.info(f"GTT placed successfully. ID: {gtt_id}")
             return str(gtt_id)
         except Exception as e:
-            logger.error(f"Error placing GTT: {e}")
+            logger.error(
+                f"GTT placement failed | symbol={tradingsymbol} "
+                f"triggers={trigger_values} last_price={last_price} "
+                f"orders={orders} | error: {e}"
+            )
             raise
         
 zerodha_service = ZerodhaService()

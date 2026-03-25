@@ -359,16 +359,30 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
   }
 
   String _completionSubtitle(ExecutionStatusModel status) {
-    final hasGttFailed = status.updates
-        .any((u) => u.updateType == 'GTT_FAILED');
+    final hasGttFailed = status.updates.any((u) => u.updateType == 'GTT_FAILED');
+    final hasSquaredOff = status.updates.any((u) => u.updateType == 'SQUAREDOFF');
+    final hasSquareOffFailed = status.updates.any((u) => u.updateType == 'SQUAREOFF_FAILED');
+    final hasSlmPlaced = status.updates.any((u) =>
+        u.updateType == 'GTT_PLACED' && u.message.contains('SL-M'));
     final allFilled = status.completedStocks > 0 && status.failedStocks == 0;
 
+    if (hasSquareOffFailed) {
+      return '⚠ GTT failed and auto square-off also failed. '
+          'Exit your open position manually in Zerodha NOW.';
+    }
+    if (hasSquaredOff) {
+      return 'GTT failed — position was automatically squared off. No open position.';
+    }
     if (allFilled && hasGttFailed) {
-      return 'Orders filled but GTT placement failed. '
-          'Set stop-loss & target manually in your Zerodha app.';
+      return 'Orders filled but stop-loss could not be set. '
+          'Set SL & target manually in your Zerodha app.';
+    }
+    if (allFilled && hasSlmPlaced) {
+      return 'Trades executed with SL-M protection. '
+          'Monitor target manually and cancel SL-M if target is hit first.';
     }
     if (allFilled) {
-      return 'All trades executed. GTT orders set for targets & stop-losses.';
+      return 'All trades executed with GTT stop-loss & target orders.';
     }
     if (status.completedStocks > 0 && status.failedStocks > 0) {
       return '${status.completedStocks} order(s) executed, '
