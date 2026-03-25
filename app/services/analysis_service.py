@@ -5,7 +5,7 @@ from app.core.logging import logger
 from typing import List, Dict, Optional
 import pandas as pd
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 # ── Last-resort fallback universe (only used if NSE CSV download and dynamic
@@ -62,23 +62,34 @@ class AnalysisService:
 
         # ── Swing / Delivery pipeline ──────────────────────────────────────
         try:
+            # Build kite_instance for Zerodha-native data if credentials provided
+            kite_instance = None
+            if user_api_key and user_access_token:
+                from kiteconnect import KiteConnect
+                kite_instance = KiteConnect(api_key=user_api_key)
+                kite_instance.set_access_token(user_access_token)
+
             screen_limit = min(limit * 3, 150)
             candidates = await self.ds.screen_top_movers(
                 limit=screen_limit,
                 sectors=sectors,
                 hold_duration_days=hold_duration_days,
+                kite_instance=kite_instance,
             )
 
             if not candidates:
                 logger.warning("Screener returned no candidates, falling back to NIFTY 50")
                 candidates = await self.ds.screen_top_movers(
-                    limit=screen_limit, sectors=["NIFTY 50"]
+                    limit=screen_limit, sectors=["NIFTY 50"], kite_instance=kite_instance,
                 )
 
             enriched = []
             for c in candidates:
                 symbol = c["symbol"]
-                df = await self.ds.get_candle_data(symbol, "day", period="60d")
+                if kite_instance:
+                    df = await self.ds.get_candle_data_zerodha(kite_instance, symbol, "day", 60)
+                else:
+                    df = await self.ds.get_candle_data(symbol, "day", period="60d")
 
                 if df.empty or len(df) < 10:
                     logger.debug(f"Skipping {symbol}: insufficient candle data")
@@ -127,10 +138,15 @@ class AnalysisService:
         from app.engines.strategy_engine import strategy_engine
 
         # Create user-specific Zerodha service with their credentials
+        kite_instance = None
         if user_api_key and user_access_token:
             user_zerodha = ZerodhaService()
             user_zerodha.set_credentials(user_api_key, user_access_token)
             logger.info(f"[Intraday-CREDS] Using USER-SPECIFIC zerodha instance with api_key={user_api_key[:6]}... token={user_access_token[:10]}...{user_access_token[-10:]}")
+            # Also create a raw KiteConnect instance for Zerodha-native data methods
+            from kiteconnect import KiteConnect
+            kite_instance = KiteConnect(api_key=user_api_key)
+            kite_instance.set_access_token(user_access_token)
         else:
             from app.services.zerodha_service import zerodha_service
             user_zerodha = zerodha_service
@@ -257,14 +273,17 @@ class AnalysisService:
                     if col in df.columns:
                         df[col] = df[col].astype(float)
 
-                indicators = await self.calculate_intraday_indicators(df, cand)
+                indicators = await self.calculate_intraday_indicators(df, cand, kite_instance=kite_instance)
                 if not indicators:
                     continue
 
                 signal_data = strategy_engine.generate_intraday_signal(indicators)
 
-                # 20-day avg volume from yfinance for volume_ratio
-                avg_vol_20d = await self._get_avg_volume(symbol)
+                # 20-day avg volume — prefer Zerodha, fall back to yfinance
+                if kite_instance and token:
+                    avg_vol_20d = await self._get_avg_volume_zerodha(kite_instance, token)
+                else:
+                    avg_vol_20d = await self._get_avg_volume(symbol)
                 volume_ratio = cand["volume"] / avg_vol_20d if avg_vol_20d > 0 else 1.0
 
                 enriched.append({
@@ -295,7 +314,7 @@ class AnalysisService:
         return enriched[:limit]
 
     async def calculate_intraday_indicators(
-        self, df: pd.DataFrame, quote_data: Dict
+        self, df: pd.DataFrame, quote_data: Dict, kite_instance=None
     ) -> Dict:
         """
         Calculate intraday-specific technical indicators from 5-minute candles:
@@ -397,7 +416,13 @@ class AnalysisService:
 
             # ── Pivot Points from previous day ─────────────────────────────
             symbol = quote_data.get("symbol", "")
-            pivots = await self._get_pivot_points_async(symbol, quote_data)
+            token = quote_data.get("instrument_token", 0)
+            if kite_instance and token:
+                pivots = await self._fetch_pivot_points_zerodha(kite_instance, token)
+                if not pivots:
+                    pivots = await self._get_pivot_points_async(symbol, quote_data)
+            else:
+                pivots = await self._get_pivot_points_async(symbol, quote_data)
 
             # ── Volume of latest candle ────────────────────────────────────
             latest_candle_vol = float(volume.iloc[-1])
@@ -499,6 +524,70 @@ class AnalysisService:
                     return 0.0
                 return float(hist["Volume"].mean())
             return await loop.run_in_executor(None, _fetch)
+        except Exception:
+            return 0.0
+
+    async def _fetch_pivot_points_zerodha(self, kite_instance, token: int) -> Dict:
+        """Fetch pivot points using Zerodha historical daily data."""
+        loop = asyncio.get_event_loop()
+        try:
+            to_dt = datetime.now(self.IST)
+            from_dt = to_dt - timedelta(days=5)
+
+            def _fetch():
+                return kite_instance.historical_data(
+                    token,
+                    from_dt.replace(tzinfo=None),
+                    to_dt.replace(tzinfo=None),
+                    "day",
+                )
+
+            hist = await loop.run_in_executor(None, _fetch)
+            if not hist or len(hist) < 2:
+                return {}
+
+            prev = hist[-2]
+            H = float(prev["high"])
+            L = float(prev["low"])
+            C = float(prev["close"])
+
+            P = (H + L + C) / 3
+            R1 = 2 * P - L
+            R2 = P + (H - L)
+            S1 = 2 * P - H
+            S2 = P - (H - L)
+
+            return {
+                "pivot": round(P, 2),
+                "r1": round(R1, 2),
+                "r2": round(R2, 2),
+                "s1": round(S1, 2),
+                "s2": round(S2, 2),
+            }
+        except Exception as e:
+            logger.debug(f"_fetch_pivot_points_zerodha failed: {e}")
+            return {}
+
+    async def _get_avg_volume_zerodha(self, kite_instance, token: int) -> float:
+        """Get 30-day average volume from Zerodha historical data."""
+        loop = asyncio.get_event_loop()
+        try:
+            to_dt = datetime.now(self.IST)
+            from_dt = to_dt - timedelta(days=35)
+
+            def _fetch():
+                return kite_instance.historical_data(
+                    token,
+                    from_dt.replace(tzinfo=None),
+                    to_dt.replace(tzinfo=None),
+                    "day",
+                )
+
+            hist = await loop.run_in_executor(None, _fetch)
+            if not hist:
+                return 0.0
+            volumes = [float(h.get("volume", 0)) for h in hist if h.get("volume")]
+            return sum(volumes) / len(volumes) if volumes else 0.0
         except Exception:
             return 0.0
 

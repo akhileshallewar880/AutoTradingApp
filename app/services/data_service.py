@@ -2,6 +2,7 @@ import yfinance as yf
 import requests
 import asyncio
 import io
+import statistics
 import pandas as pd
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
@@ -81,6 +82,11 @@ class DataService:
         "STARCEMENT", "BIRLACORPN", "DALBHARAT", "JKPAPER", "TNPL",
     ]
 
+    # Class-level instrument token cache — shared across all instances
+    _zerodha_instrument_tokens: Dict[str, int] = {}   # symbol → token
+    _tokens_fetched_at: Optional[datetime] = None
+    _tokens_ttl_hours = 24
+
     def __init__(self):
         self._nse_universe: Optional[List[str]] = None  # cached base symbols
         self._universe_fetched_at: Optional[datetime] = None
@@ -128,6 +134,7 @@ class DataService:
         batch_size: int = 50,
         max_candidates: int = 200,
         hold_duration_days: int = 0,
+        kite_instance=None,
     ) -> List[Dict]:
         """
         Two-pass screener over the full NSE universe:
@@ -135,7 +142,15 @@ class DataService:
                   Filter by: volume > 200K (500K for intraday), price ₹10–₹10000
           Pass 2: Score by composite (hold-duration-aware)
                   Return top `limit` candidates enriched with metadata.
+        If kite_instance is provided, delegates to Zerodha-based screener.
         """
+        if kite_instance is not None:
+            return await self.screen_top_movers_zerodha(
+                kite_instance,
+                limit=limit,
+                hold_duration_days=hold_duration_days,
+            )
+
         universe = await self.get_nse_universe(sectors)
 
         # Limit universe size to avoid very long waits
@@ -191,6 +206,253 @@ class DataService:
             None, self._fetch_yfinance_data, yf_symbol, timeframe, period
         )
         return df
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Zerodha-native data methods
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _populate_token_cache(self, kite_instance) -> None:
+        """Fetch NSE instrument list from Zerodha and build symbol→token map."""
+        try:
+            instruments = kite_instance.instruments("NSE")
+            token_map = {}
+            for inst in instruments:
+                if inst.get("instrument_type") in ("EQ",) and inst.get("tradingsymbol"):
+                    token_map[inst["tradingsymbol"]] = inst["instrument_token"]
+            self.__class__._zerodha_instrument_tokens = token_map
+            self.__class__._tokens_fetched_at = datetime.utcnow()
+            logger.info(f"NSE instrument token cache built: {len(token_map)} symbols")
+        except Exception as e:
+            logger.warning(f"Instrument token cache build failed: {e}")
+
+    async def _ensure_token_cache(self, kite_instance) -> None:
+        """Refresh token cache if stale (>24h)."""
+        now = datetime.utcnow()
+        is_stale = (
+            not self._zerodha_instrument_tokens
+            or self._tokens_fetched_at is None
+            or (now - self._tokens_fetched_at).total_seconds() > self._tokens_ttl_hours * 3600
+        )
+        if is_stale:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._populate_token_cache, kite_instance)
+
+    async def screen_top_movers_zerodha(
+        self,
+        kite_instance,
+        limit: int = 20,
+        max_candidates: int = 300,
+        hold_duration_days: int = 0,
+    ) -> List[Dict]:
+        """
+        Screen NSE stocks using Zerodha live quotes instead of yfinance.
+        Steps:
+          1. Ensure instrument token cache is built.
+          2. Take universe of symbols from our FALLBACK_SYMBOLS + NSE CSV (cached).
+          3. Call kite.quote() in batches of 450 for live OHLC + volume.
+          4. Filter by volume/price.
+          5. For top 60 filtered candidates: fetch 5-day daily candles for momentum/volatility.
+          6. Score and rank.
+        """
+        await self._ensure_token_cache(kite_instance)
+
+        # Get symbol universe (use cached NSE list or fallback)
+        universe = list(self._nse_universe) if self._nse_universe else self.FALLBACK_SYMBOLS[:]
+        import random
+        random.shuffle(universe)
+        universe = universe[:max_candidates]
+
+        # Only keep symbols that have a known token
+        universe = [s for s in universe if s in self._zerodha_instrument_tokens]
+        if not universe:
+            logger.warning("[Zerodha-Screen] No tokens found in cache, falling back to yfinance")
+            return await self.screen_top_movers(limit=limit, hold_duration_days=hold_duration_days)
+
+        logger.info(f"[Zerodha-Screen] Fetching live quotes for {len(universe)} symbols via Zerodha")
+
+        is_intraday = hold_duration_days == 0
+        min_volume = 500_000 if is_intraday else 200_000
+
+        # Batch kite.quote() — max 500 symbols per call
+        batch_size = 450
+        all_quotes: Dict = {}
+        loop = asyncio.get_event_loop()
+
+        def _fetch_quotes(syms):
+            keys = [f"NSE:{s}" for s in syms]
+            try:
+                return kite_instance.quote(keys)
+            except Exception as ex:
+                logger.warning(f"[Zerodha-Screen] quote batch failed: {ex}")
+                return {}
+
+        for i in range(0, len(universe), batch_size):
+            batch = universe[i:i+batch_size]
+            q = await loop.run_in_executor(None, _fetch_quotes, batch)
+            all_quotes.update(q)
+
+        logger.info(f"[Zerodha-Screen] Received quotes for {len(all_quotes)} symbols")
+
+        # Filter pass 1: volume + price
+        candidates = []
+        for sym in universe:
+            key = f"NSE:{sym}"
+            q = all_quotes.get(key, {})
+            if not q:
+                continue
+            last_price = float(q.get("last_price", 0))
+            volume = int(q.get("volume", 0))
+            ohlc = q.get("ohlc", {})
+            prev_close = float(ohlc.get("close", last_price))
+
+            if last_price < 10 or last_price > 10_000:
+                continue
+            if volume < min_volume:
+                continue
+
+            day_change_pct = ((last_price - prev_close) / prev_close * 100) if prev_close > 0 else 0.0
+            token = self._zerodha_instrument_tokens.get(sym, 0)
+
+            candidates.append({
+                "symbol": sym,
+                "company_name": sym,
+                "last_price": last_price,
+                "volume": volume,
+                "instrument_token": token,
+                "prev_close": prev_close,
+                "today_open": float(ohlc.get("open", last_price)),
+                "today_high": float(ohlc.get("high", last_price)),
+                "today_low": float(ohlc.get("low", last_price)),
+                "day_change_pct": round(day_change_pct, 2),
+            })
+
+        logger.info(f"[Zerodha-Screen] {len(candidates)} candidates after volume/price filter")
+
+        # Sort by volume, enrich top 60 with 5-day history for momentum
+        candidates.sort(key=lambda x: x["volume"], reverse=True)
+        top_candidates = candidates[:min(60, len(candidates))]
+
+        to_dt = datetime.utcnow()
+        from_dt = to_dt - timedelta(days=10)  # 10 days to ensure 5 trading days
+
+        enriched = []
+        for c in top_candidates:
+            token = c["instrument_token"]
+            sym = c["symbol"]
+            try:
+                def _hist(tok, fd, td):
+                    return kite_instance.historical_data(tok, fd, td, "day")
+                hist = await loop.run_in_executor(None, _hist, token, from_dt, to_dt)
+
+                if not hist or len(hist) < 2:
+                    c.update({
+                        "momentum_5d_pct": c["day_change_pct"],
+                        "volatility_5d": 1.0,
+                        "avg_volume_5d": float(c["volume"]),
+                        "volume_ratio": 1.0,
+                        "high": c["today_high"],
+                        "low": c["today_low"],
+                        "open": c["today_open"],
+                        "composite_score": self._compute_score(c, is_intraday, 1.0, c["day_change_pct"], 1.0),
+                    })
+                    enriched.append(c)
+                    continue
+
+                closes = [float(h["close"]) for h in hist]
+                volumes = [int(h["volume"]) for h in hist]
+
+                first_close = closes[0]
+                last_close = closes[-1]
+                momentum_5d = ((last_close - first_close) / first_close * 100) if first_close > 0 else 0.0
+
+                daily_returns = [((closes[i] - closes[i-1]) / closes[i-1]) for i in range(1, len(closes)) if closes[i-1] > 0]
+                volatility = statistics.stdev(daily_returns) * 100 if len(daily_returns) > 1 else 1.0
+                avg_volume = sum(volumes) / len(volumes) if volumes else float(c["volume"])
+                volume_ratio = c["volume"] / avg_volume if avg_volume > 0 else 1.0
+
+                composite_score = self._compute_score(c, is_intraday, volume_ratio, momentum_5d, volatility)
+
+                c.update({
+                    "momentum_5d_pct": round(momentum_5d, 2),
+                    "volatility_5d": round(volatility, 2),
+                    "avg_volume_5d": round(avg_volume, 0),
+                    "volume_ratio": round(volume_ratio, 2),
+                    "high": float(hist[-1]["high"]),
+                    "low": float(hist[-1]["low"]),
+                    "open": float(hist[-1]["open"]),
+                    "composite_score": round(composite_score, 4),
+                })
+                enriched.append(c)
+
+            except Exception as e:
+                logger.debug(f"[Zerodha-Screen] {sym} history failed: {e}")
+                c.update({
+                    "momentum_5d_pct": c["day_change_pct"],
+                    "volatility_5d": 1.0,
+                    "volume_ratio": 1.0,
+                    "high": c["today_high"],
+                    "low": c["today_low"],
+                    "open": c["today_open"],
+                    "composite_score": self._compute_score(c, is_intraday, 1.0, c["day_change_pct"], 1.0),
+                })
+                enriched.append(c)
+
+        enriched.sort(key=lambda x: x.get("composite_score", 0), reverse=True)
+        logger.info(f"[Zerodha-Screen] Returning {min(limit, len(enriched))} stocks")
+        return enriched[:limit]
+
+    def _compute_score(self, c: Dict, is_intraday: bool, volume_ratio: float, momentum_5d: float, volatility: float) -> float:
+        if is_intraday:
+            return volume_ratio * 0.5 + max(abs(c.get("day_change_pct", 0)), 0.1) * 0.3 + max(volume_ratio, 0.1) * 0.2
+        else:
+            return (volume_ratio * 0.5 + max(momentum_5d, 0) * 0.3 + max(c.get("day_change_pct", 0), 0) * 0.2) / max(volatility, 0.1)
+
+    async def get_candle_data_zerodha(
+        self,
+        kite_instance,
+        symbol: str,
+        timeframe: str = "day",
+        period_days: int = 60,
+    ) -> pd.DataFrame:
+        """Fetch OHLCV candles using Zerodha historical_data API."""
+        await self._ensure_token_cache(kite_instance)
+        token = self._zerodha_instrument_tokens.get(symbol)
+        if not token:
+            logger.warning(f"[Zerodha-Candles] No token for {symbol}, falling back to yfinance")
+            return await self.get_candle_data(symbol, timeframe, period=f"{period_days}d")
+
+        to_dt = datetime.utcnow()
+        from_dt = to_dt - timedelta(days=period_days + 5)  # buffer for weekends
+
+        interval_map = {
+            "day": "day",
+            "60min": "60minute",
+            "30min": "30minute",
+            "15min": "15minute",
+            "5min": "5minute",
+        }
+        kite_interval = interval_map.get(timeframe, "day")
+
+        loop = asyncio.get_event_loop()
+        try:
+            def _fetch():
+                return kite_instance.historical_data(token, from_dt, to_dt, kite_interval)
+
+            raw = await loop.run_in_executor(None, _fetch)
+            if not raw:
+                return pd.DataFrame()
+
+            df = pd.DataFrame(raw)
+            df.columns = [c.lower() if isinstance(c, str) else c for c in df.columns]
+            for col in ["open", "high", "low", "close", "volume"]:
+                if col in df.columns:
+                    df[col] = df[col].astype(float)
+
+            logger.info(f"[Zerodha-Candles] {symbol}: {len(df)} {kite_interval} candles via Zerodha")
+            return df
+        except Exception as e:
+            logger.warning(f"[Zerodha-Candles] {symbol}: Zerodha failed ({e}), falling back to yfinance")
+            return await self.get_candle_data(symbol, timeframe, period=f"{period_days}d")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Legacy compatibility (used by trading_agent.py)

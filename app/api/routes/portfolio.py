@@ -17,6 +17,23 @@ from app.core.logging import logger
 from typing import List, Optional
 import asyncio
 
+_PERMISSION_ERROR_MSG = (
+    "This feature requires the Zerodha Kite Connect paid API plan. "
+    "Enable it at console.zerodha.com/app/kiteconnect"
+)
+
+
+def _check_permission_error(e: Exception) -> None:
+    """Raise HTTP 403 if the exception looks like a Zerodha permission/plan error."""
+    err_str = str(e).lower()
+    if (
+        "permission" in err_str
+        or "insufficient" in err_str
+        or "403" in err_str
+        or (hasattr(e, "status") and getattr(e, "status", 0) == 403)
+    ):
+        raise HTTPException(status_code=403, detail=_PERMISSION_ERROR_MSG)
+
 router = APIRouter()
 
 
@@ -98,6 +115,7 @@ async def get_holdings(
             },
         }
     except Exception as e:
+        _check_permission_error(e)
         logger.error(f"[Holdings] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Holdings fetch failed: {e}")
 
@@ -123,6 +141,7 @@ async def get_market_quote(
         result = await zerodha_service.get_market_depth(symbol_list)
         return {"quotes": result, "count": len(result)}
     except Exception as e:
+        _check_permission_error(e)
         logger.error(f"[Quote] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Quote fetch failed: {e}")
 
@@ -163,6 +182,7 @@ async def calculate_order_margins(request: OrderMarginsRequest):
             "order_count": len(margins),
         }
     except Exception as e:
+        _check_permission_error(e)
         logger.error(f"[OrderMargins] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Margin calculation failed: {e}")
 
@@ -207,6 +227,7 @@ async def convert_position(request: ConvertPositionRequest):
             ),
         }
     except Exception as e:
+        _check_permission_error(e)
         logger.error(f"[ConvertPosition] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Position conversion failed: {e}")
 
@@ -237,6 +258,7 @@ async def modify_order(order_id: str, request: ModifyOrderRequest):
         )
         return {"order_id": result, "message": f"Order {order_id} modified"}
     except Exception as e:
+        _check_permission_error(e)
         logger.error(f"[ModifyOrder] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Order modification failed: {e}")
 
@@ -256,6 +278,7 @@ async def cancel_order(
         result = await zerodha_service.cancel_order(order_id, variety)
         return {"order_id": result, "message": f"Order {order_id} cancelled"}
     except Exception as e:
+        _check_permission_error(e)
         logger.error(f"[CancelOrder] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Order cancellation failed: {e}")
 
@@ -274,5 +297,6 @@ async def get_order_history(
         history = await zerodha_service.get_order_history(order_id)
         return {"order_id": order_id, "history": history, "steps": len(history)}
     except Exception as e:
+        _check_permission_error(e)
         logger.error(f"[OrderHistory] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Order history fetch failed: {e}")

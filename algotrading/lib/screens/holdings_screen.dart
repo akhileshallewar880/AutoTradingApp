@@ -49,6 +49,8 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           _holdings = list.map(Holding.fromJson).toList();
           _summary = HoldingsSummary.fromJson(data['summary'] ?? {});
         });
+      } else if (resp.statusCode == 403) {
+        setState(() => _error = '__UPGRADE_REQUIRED__');
       } else {
         String msg = 'Failed to load holdings';
         try { msg = jsonDecode(resp.body)['detail'] ?? msg; } catch (_) {}
@@ -347,6 +349,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   }
 
   Widget _buildError() {
+    if (_error == '__UPGRADE_REQUIRED__') return _buildUpgradeCard();
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -362,6 +365,55 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
             ElevatedButton(
               onPressed: _fetchHoldings,
               child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUpgradeCard() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.amber[50],
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.amber[300]!),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.workspace_premium, size: 56, color: Colors.amber[700]),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Kite Connect Paid Plan Required',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Portfolio holdings require the Zerodha Kite Connect paid API subscription (₹2000/month). '
+                    'Enable it from your Kite developer console.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: _fetchHoldings,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Retry'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.amber[700],
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
