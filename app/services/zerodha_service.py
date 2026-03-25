@@ -280,6 +280,16 @@ class ZerodhaService:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, lambda: self.kite.ltp(formatted))
 
+    async def cancel_order(self, order_id: str, variety: str = "regular") -> str:
+        """Cancel a pending order."""
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self.kite.cancel_order(variety=variety, order_id=order_id),
+        )
+        logger.info(f"Order {order_id} cancelled. Result: {result}")
+        return str(result)
+
     async def get_ohlc(self, symbols: List[str]) -> Dict:
         """
         Get OHLC + last_price for symbols.
@@ -397,10 +407,15 @@ class ZerodhaService:
             }
 
             loop = asyncio.get_event_loop()
-            gtt_id = await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 None,
                 lambda: self.kite.place_gtt(**gtt_params)
             )
+            # kite.place_gtt() returns {'trigger_id': <int>} — extract the id
+            if isinstance(result, dict):
+                gtt_id = result.get("trigger_id", result)
+            else:
+                gtt_id = result
             logger.info(f"GTT placed successfully. ID: {gtt_id}")
             return str(gtt_id)
         except Exception as e:

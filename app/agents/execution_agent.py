@@ -62,13 +62,21 @@ class ExecutionAgent:
         self.zs.set_credentials(api_key, access_token)
 
         try:
-            # ── Step 1: Place entry order ──────────────────────────────────
+            # ── Step 1: Place LIMIT entry order ────────────────────────────
+            # LIMIT order at the AI-recommended entry price ensures we get
+            # exactly the price the analysis was based on, with no slippage.
+            # The agent waits for the fill; if price never reaches the limit
+            # within the timeout the order is cancelled automatically.
             entry_label = "SHORT SELL" if is_short else "BUY"
             await self._send_update(
                 analysis_id,
                 stock_symbol,
                 "ORDER_PLACING",
-                f"Placing {entry_label} {product} order for {quantity} shares @ ₹{entry_price:.2f}",
+                (
+                    f"Placing {entry_label} LIMIT order — "
+                    f"{quantity} shares @ ₹{entry_price:.2f} ({product}). "
+                    f"Waiting for price to reach ₹{entry_price:.2f}…"
+                ),
                 update_callback,
             )
 
@@ -80,6 +88,7 @@ class ExecutionAgent:
                 target=target,
                 product=product,
                 transaction_type=action,
+                order_type="LIMIT",
             )
 
             execution_log["entry_order_id"] = entry_order_id
@@ -88,21 +97,15 @@ class ExecutionAgent:
                 analysis_id,
                 stock_symbol,
                 "ORDER_PLACED",
-                f"{entry_label} order placed. Order ID: {entry_order_id}",
+                (
+                    f"{entry_label} LIMIT order placed @ ₹{entry_price:.2f}. "
+                    f"Order ID: {entry_order_id} — monitoring for fill…"
+                ),
                 update_callback,
                 order_id=entry_order_id,
             )
 
             # ── Step 2: Monitor until filled ───────────────────────────────
-            await self._send_update(
-                analysis_id,
-                stock_symbol,
-                "ORDER_MONITORING",
-                "Monitoring order status…",
-                update_callback,
-                order_id=entry_order_id,
-            )
-
             is_filled, fill_info = await self._wait_for_order_fill(entry_order_id, timeout=300)
 
             if not is_filled:
@@ -114,13 +117,29 @@ class ExecutionAgent:
                     msg = (
                         f"Order {final_status}"
                         + (f": {reason}" if reason else "")
-                        + ". No position opened — GTT not placed."
+                        + ". No position opened."
                     )
                     log_status = "REJECTED"
                 else:
+                    # Limit order not filled within 5 min — cancel it so it
+                    # doesn't fill later when we're no longer monitoring.
                     update_type = "ORDER_TIMEOUT"
-                    msg = "Order not filled within timeout — GTT not placed."
                     log_status = "TIMEOUT"
+                    try:
+                        await self.zs.cancel_order(entry_order_id)
+                        msg = (
+                            f"Price did not reach ₹{entry_price:.2f} within 5 minutes. "
+                            f"Limit order cancelled — no position opened."
+                        )
+                    except Exception as cancel_err:
+                        logger.warning(
+                            f"{stock_symbol}: cancel after timeout failed: {cancel_err}"
+                        )
+                        msg = (
+                            f"Price did not reach ₹{entry_price:.2f} within 5 minutes. "
+                            f"Order may still be pending — check Zerodha app and cancel manually "
+                            f"if needed. Order ID: {entry_order_id}"
+                        )
 
                 await self._send_update(
                     analysis_id, stock_symbol, update_type, msg, update_callback,
@@ -186,23 +205,40 @@ class ExecutionAgent:
                     order_id=entry_order_id,
                 )
 
-            # ── Step 4: Fetch live LTP for accurate GTT last_price ─────────
-            gtt_last_price = actual_fill  # fallback
+            # ── Step 4: Fetch live price for accurate GTT last_price ──────
+            # Try kite.ltp() first (lighter); fall back to kite.quote() if
+            # the account doesn't have the paid data subscription.
+            # Using a stale fill price risks the GTT triggering immediately
+            # if the market has moved past the SL since the order filled.
+            gtt_last_price = actual_fill  # final fallback
+            live_price_source = "fill"
             try:
                 ltp_data = await self.zs.get_ltp([stock_symbol])
                 ltp_key = f"NSE:{stock_symbol}"
                 live_ltp = ltp_data.get(ltp_key, {}).get("last_price", 0.0)
                 if live_ltp > 0:
                     gtt_last_price = live_ltp
-                    logger.info(
-                        f"{stock_symbol}: using live LTP ₹{live_ltp:.2f} as GTT last_price "
-                        f"(fill was ₹{actual_fill:.2f})"
+                    live_price_source = "ltp"
+            except Exception:
+                # kite.ltp() needs paid plan — try kite.quote() instead
+                try:
+                    quote_data = await self.zs.get_quote([stock_symbol])
+                    quote_key = f"NSE:{stock_symbol}"
+                    live_quote = quote_data.get(quote_key, {}).get("last_price", 0.0)
+                    if live_quote > 0:
+                        gtt_last_price = live_quote
+                        live_price_source = "quote"
+                except Exception as quote_err:
+                    logger.warning(
+                        f"{stock_symbol}: both LTP and quote fetch failed — "
+                        f"using fill price ₹{actual_fill:.2f} as GTT last_price. "
+                        f"Error: {quote_err}"
                     )
-            except Exception as ltp_err:
-                logger.warning(
-                    f"{stock_symbol}: LTP fetch failed, using fill price ₹{actual_fill:.2f} "
-                    f"as GTT last_price. Error: {ltp_err}"
-                )
+
+            logger.info(
+                f"{stock_symbol}: GTT last_price=₹{gtt_last_price:.2f} "
+                f"(source={live_price_source}, fill=₹{actual_fill:.2f})"
+            )
 
             # ── Step 5: Validate GTT trigger prices vs live market ─────────
             gtt_stop_loss, gtt_target, price_warn = self._validate_and_fix_gtt_prices(
@@ -296,6 +332,7 @@ class ExecutionAgent:
                             target=0,
                             product=product,
                             transaction_type=exit_transaction,
+                            order_type="MARKET",
                         )
                         logger.info(
                             f"{stock_symbol} squared off after GTT failure — "

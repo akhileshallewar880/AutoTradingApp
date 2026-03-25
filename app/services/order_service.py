@@ -64,6 +64,7 @@ class OrderService:
         target: float,
         product: str = "CNC",
         transaction_type: str = "BUY",
+        order_type: str = "LIMIT",
     ) -> str:
         """
         Execute an entry order via Zerodha.
@@ -73,6 +74,8 @@ class OrderService:
                               "SELL" for short sell positions (intraday only with MIS)
             product:          "MIS"  for intraday (auto-squares off at 3:15 PM)
                               "CNC"  for delivery / long-term
+            order_type:       "LIMIT" (default) places at exact entry_price for better fills.
+                              "MARKET" for immediate fills (used for squareoff exits).
 
         Raises:
             MarketClosedException: If called outside NSE market hours.
@@ -83,8 +86,8 @@ class OrderService:
         try:
             action_label = "SHORT SELL" if transaction_type == "SELL" else "BUY"
             logger.info(
-                f"Placing order: {symbol} {action_label} {quantity} @ ₹{price} "
-                f"product={product}"
+                f"Placing {order_type} order: {symbol} {action_label} {quantity} "
+                f"@ ₹{price} product={product}"
             )
 
             if not self.is_market_open():
@@ -96,13 +99,14 @@ class OrderService:
                 symbol=symbol,
                 transaction_type=transaction_type,
                 quantity=quantity,
-                order_type="MARKET",
+                order_type=order_type,
+                price=price,
                 product=product,
                 exchange="NSE",
                 validity="DAY",
             )
             logger.info(
-                f"{'SHORT SELL' if transaction_type == 'SELL' else 'BUY'} MARKET order "
+                f"{'SHORT SELL' if transaction_type == 'SELL' else 'BUY'} {order_type} order "
                 f"placed ({product}). Order ID: {order_id}"
             )
             return order_id
