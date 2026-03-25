@@ -411,13 +411,12 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
   Widget _buildLiveSectorGrid() {
     return Column(
       children: _liveSectors.map((s) {
-        final sectorKey  = s['sector'] as String;
+        final sectorKey   = s['sector'] as String;
         final displayName = s['display_name'] as String? ?? sectorKey;
-        final changePct  = (s['change_pct'] as num?)?.toDouble() ?? 0.0;
-        final momentum   = s['momentum'] as String? ?? 'NEUTRAL';
-        final advances   = (s['advances'] as num?)?.toInt() ?? 0;
-        final declines   = (s['declines'] as num?)?.toInt() ?? 0;
-        final selected   = _selectedSectors.contains(sectorKey);
+        final changePct   = (s['change_pct'] as num?)?.toDouble() ?? 0.0;
+        final last        = (s['last'] as num?)?.toDouble() ?? 0.0;
+        final momentum    = s['momentum'] as String? ?? 'NEUTRAL';
+        final selected    = _selectedSectors.contains(sectorKey);
 
         final isUp   = momentum == 'BULLISH';
         final isDown = momentum == 'BEARISH';
@@ -482,11 +481,14 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                   ),
                 ),
 
-                // Advances / Declines pill
-                if (advances + declines > 0) ...[
-                  _miniPill('$advances', Colors.green[700]!),
-                  const SizedBox(width: 4),
-                  _miniPill('$declines', Colors.red[700]!),
+                // Index level (e.g. "34,521")
+                if (last > 0) ...[
+                  Text(
+                    last >= 1000
+                        ? last.toStringAsFixed(0)
+                        : last.toStringAsFixed(1),
+                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                  ),
                   const SizedBox(width: 10),
                 ],
 
@@ -520,17 +522,6 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
       }).toList(),
     );
   }
-
-  Widget _miniPill(String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-        decoration: BoxDecoration(
-          color: color.withAlpha(15),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 10, color: color, fontWeight: FontWeight.w600)),
-      );
 
   Widget _buildSectorSkeleton() {
     return Column(

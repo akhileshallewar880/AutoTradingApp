@@ -1,29 +1,53 @@
 """
 NSE Sector Activity Service
 ============================
-Fetches live sectoral index data from NSE India's public JSON API.
+Fetches live sectoral index data using yfinance (primary) with NSE API as fallback.
 
-NSE requires a browser-like session (cookies set by visiting the homepage).
-All results are cached for 5 minutes to avoid hammering the API.
+yfinance symbols for NSE sectoral indices:
+  ^CNXIT       Nifty IT
+  ^NSEBANK     Nifty Bank
+  ^CNXAUTO     Nifty Auto
+  ^CNXPHARMA   Nifty Pharma
+  ^CNXFMCG     Nifty FMCG
+  ^CNXMETAL    Nifty Metal
+  ^CNXREALTY   Nifty Realty
+  ^CNXENERGY   Nifty Energy
+  ^CNXINFRA    Nifty Infrastructure
+  ^CNXFINANCE  Nifty Financial Services
+  ^CNXPSE      Nifty PSE
+  ^CNXMEDIA    Nifty Media
 
-Endpoint used:
-  GET https://www.nseindia.com/api/allIndices
-  → returns all indices with percentChange, advances, declines, last price.
-
-We filter for the 12 main sectoral indices and compute an "activity score"
-  = abs(percentChange) × total_movers (advances + declines)
-to rank sectors by how much genuine movement is happening today.
+Change % is computed from the last two available daily closes.
+Results cached 5 minutes.
 """
 
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-import requests
+import numpy as np
+import pandas as pd
+import yfinance as yf
 
 from app.core.logging import logger
 
 
-# ── Sector → constituent stocks (liquid NSE names usable with Zerodha) ───────
+# ── Sector definitions ────────────────────────────────────────────────────────
+
+# (sector_key, yfinance_symbol, display_name)
+SECTOR_INDEX_MAP: List[Tuple[str, str, str]] = [
+    ("NIFTY IT",                 "^CNXIT",      "IT"),
+    ("NIFTY BANK",               "^NSEBANK",    "Banking"),
+    ("NIFTY AUTO",               "^CNXAUTO",    "Auto"),
+    ("NIFTY PHARMA",             "^CNXPHARMA",  "Pharma"),
+    ("NIFTY FMCG",               "^CNXFMCG",    "FMCG"),
+    ("NIFTY METAL",              "^CNXMETAL",   "Metal"),
+    ("NIFTY REALTY",             "^CNXREALTY",  "Realty"),
+    ("NIFTY ENERGY",             "^CNXENERGY",  "Energy"),
+    ("NIFTY INFRA",              "^CNXINFRA",   "Infra"),
+    ("NIFTY FINANCIAL SERVICES", "^CNXFINANCE", "Fin. Svcs"),
+    ("NIFTY PSE",                "^CNXPSE",     "PSU"),
+    ("NIFTY MEDIA",              "^CNXMEDIA",   "Media"),
+]
 
 SECTOR_STOCKS: Dict[str, List[str]] = {
     "NIFTY IT": [
@@ -64,7 +88,7 @@ SECTOR_STOCKS: Dict[str, List[str]] = {
     ],
     "NIFTY FINANCIAL SERVICES": [
         "HDFCBANK", "ICICIBANK", "BAJFINANCE", "BAJAJFINSV", "SBIN",
-        "KOTAKBANK", "AXISBANK", "HDFC", "LICHSGFIN", "MUTHOOTFIN",
+        "KOTAKBANK", "AXISBANK", "LICHSGFIN", "MUTHOOTFIN", "CHOLAFIN",
     ],
     "NIFTY PSE": [
         "ONGC", "BPCL", "NTPC", "POWERGRID", "COALINDIA",
@@ -75,122 +99,101 @@ SECTOR_STOCKS: Dict[str, List[str]] = {
     ],
 }
 
-# NSE API sometimes uses slightly different index names — normalise them
-_NSE_INDEX_ALIASES: Dict[str, str] = {
-    "Nifty IT": "NIFTY IT",
-    "Nifty Bank": "NIFTY BANK",
-    "Nifty Auto": "NIFTY AUTO",
-    "Nifty Pharma": "NIFTY PHARMA",
-    "Nifty FMCG": "NIFTY FMCG",
-    "Nifty Metal": "NIFTY METAL",
-    "Nifty Realty": "NIFTY REALTY",
-    "Nifty Energy": "NIFTY ENERGY",
-    "Nifty Infrastructure": "NIFTY INFRA",
-    "Nifty Financial Services": "NIFTY FINANCIAL SERVICES",
-    "Nifty PSE": "NIFTY PSE",
-    "Nifty Media": "NIFTY MEDIA",
-}
-
-_BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    ),
-    "Accept":          "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Referer":         "https://www.nseindia.com/market-data/live-market-indices/heatmap",
-    "X-Requested-With": "XMLHttpRequest",
-}
-
 
 class NSESectorService:
-    """
-    Singleton-style service that fetches and caches NSE sectoral index data.
-    """
-
-    _CACHE_TTL = 300          # seconds between API refreshes (5 min)
-    _REQUEST_TIMEOUT = 12     # seconds per HTTP request
+    _CACHE_TTL = 300  # 5 minutes
 
     def __init__(self) -> None:
-        self._cached_sectors: Optional[List[Dict]] = None
-        self._last_refresh: float = 0.0
+        self._cached: Optional[List[Dict]] = None
+        self._last_fetch: float = 0.0
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # ── Public ────────────────────────────────────────────────────────────────
 
     def get_sector_activity(self) -> List[Dict]:
         """
-        Returns a list of sector dicts sorted by activity (most active first).
+        Returns sectors sorted by activity (most active first).
 
-        Each dict has:
-            sector        : str   — "NIFTY IT", "NIFTY BANK", …
-            change_pct    : float — % change from previous close
-            last          : float — current index level
-            advances      : int   — advancing stocks count
-            declines      : int   — declining stocks count
-            activity_score: float — abs(change_pct) × (advances + declines)
-            momentum      : str   — "BULLISH" | "BEARISH" | "NEUTRAL"
-            stocks        : list  — recommended liquid symbols for this sector
+        Each dict:
+            sector         : "NIFTY IT"
+            display_name   : "IT"
+            change_pct     : float  — % change from prev close
+            last           : float  — current/last index level
+            prev_close     : float  — previous close
+            momentum       : "BULLISH" | "BEARISH" | "NEUTRAL"
+            activity_score : float  — abs(change_pct) used for sorting
+            stocks         : list[str]  — liquid symbols for this sector
         """
         now = time.time()
-        if self._cached_sectors and (now - self._last_refresh) < self._CACHE_TTL:
-            logger.debug("[NSE] Returning cached sector data")
-            return self._cached_sectors
+        if self._cached and (now - self._last_fetch) < self._CACHE_TTL:
+            return self._cached
 
-        sectors = self._fetch_from_nse()
+        sectors = self._fetch_with_yfinance()
         if sectors:
-            self._cached_sectors = sectors
-            self._last_refresh = now
-            logger.info(f"[NSE] Refreshed {len(sectors)} sectors from NSE API")
+            self._cached = sectors
+            self._last_fetch = now
+            logger.info(
+                f"[NSE] Refreshed {len(sectors)} sectors via yfinance"
+            )
         else:
-            logger.warning("[NSE] NSE API unavailable — serving fallback static sector list")
-            if not self._cached_sectors:
-                # First-time failure: build a static fallback so caller always gets something
-                self._cached_sectors = self._build_fallback()
+            logger.warning("[NSE] yfinance fetch failed — returning fallback")
+            if not self._cached:
+                self._cached = self._static_fallback()
 
-        return self._cached_sectors or []
+        return self._cached or []
 
     def invalidate_cache(self) -> None:
-        """Force refresh on next call."""
-        self._last_refresh = 0.0
+        self._last_fetch = 0.0
 
-    # ── Internal ──────────────────────────────────────────────────────────────
+    # ── yfinance fetch ────────────────────────────────────────────────────────
 
-    def _fetch_from_nse(self) -> Optional[List[Dict]]:
+    def _fetch_with_yfinance(self) -> Optional[List[Dict]]:
+        yf_symbols = [sym for _, sym, _ in SECTOR_INDEX_MAP]
+
         try:
-            session = self._make_session()
-            raw = session.get(
-                "https://www.nseindia.com/api/allIndices",
-                timeout=self._REQUEST_TIMEOUT,
+            # period="5d" ensures we have at least 2 trading days even after holidays
+            raw = yf.download(
+                yf_symbols,
+                period="5d",
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+                threads=True,
             )
-            raw.raise_for_status()
-            payload = raw.json()
         except Exception as exc:
-            logger.warning(f"[NSE] allIndices fetch failed: {exc}")
+            logger.warning(f"[NSE] yfinance download failed: {exc}")
             return None
 
+        # ── Extract Close prices ───────────────────────────────────────────
+        # raw may have a MultiIndex (Close, symbol) or single-level (single ticker)
+        try:
+            if isinstance(raw.columns, pd.MultiIndex):
+                close_df = raw["Close"]
+            else:
+                close_df = raw[["Close"]]
+                close_df.columns = [yf_symbols[0]]
+        except KeyError:
+            logger.warning("[NSE] yfinance response missing 'Close' column")
+            return None
+
+        close_df = close_df.dropna(how="all")
+        if len(close_df) < 2:
+            logger.warning(f"[NSE] Not enough rows ({len(close_df)}) to compute change")
+            return None
+
+        # Last two available trading-day closes
+        prev_row = close_df.iloc[-2]
+        last_row = close_df.iloc[-1]
+
         sectors: List[Dict] = []
-        for item in payload.get("data", []):
-            index_name: str = item.get("index", "")
-
-            # Normalise alias names that NSE uses
-            canonical = _NSE_INDEX_ALIASES.get(index_name, index_name)
-
-            if canonical not in SECTOR_STOCKS:
-                continue  # skip market-wide / thematic indices
-
+        for sector_key, yf_sym, display in SECTOR_INDEX_MAP:
             try:
-                change_pct = float(item.get("percentChange", 0.0) or 0.0)
-                last       = float(item.get("last",         0.0) or 0.0)
-                advances   = int(item.get("advances",  0) or 0)
-                declines   = int(item.get("declines",  0) or 0)
-                unchanged  = int(item.get("unchanged", 0) or 0)
-            except (ValueError, TypeError):
+                prev  = float(prev_row.get(yf_sym, np.nan))
+                last  = float(last_row.get(yf_sym, np.nan))
+                if np.isnan(prev) or np.isnan(last) or prev == 0:
+                    continue
+                change_pct = round((last - prev) / prev * 100, 2)
+            except Exception:
                 continue
-
-            total_movers   = advances + declines + unchanged
-            activity_score = round(abs(change_pct) * max(total_movers, 1), 3)
 
             if change_pct > 0.5:
                 momentum = "BULLISH"
@@ -200,16 +203,16 @@ class NSESectorService:
                 momentum = "NEUTRAL"
 
             sectors.append({
-                "sector":         canonical,
-                "display_name":   _short_name(canonical),
-                "change_pct":     round(change_pct, 2),
+                "sector":         sector_key,
+                "display_name":   display,
+                "change_pct":     change_pct,
                 "last":           round(last, 2),
-                "advances":       advances,
-                "declines":       declines,
-                "unchanged":      unchanged,
-                "activity_score": activity_score,
+                "prev_close":     round(prev, 2),
+                "advances":       0,   # not available from index data alone
+                "declines":       0,
+                "activity_score": round(abs(change_pct), 3),
                 "momentum":       momentum,
-                "stocks":         SECTOR_STOCKS[canonical],
+                "stocks":         SECTOR_STOCKS.get(sector_key, []),
             })
 
         if not sectors:
@@ -218,57 +221,24 @@ class NSESectorService:
         sectors.sort(key=lambda x: x["activity_score"], reverse=True)
         return sectors
 
-    def _make_session(self) -> requests.Session:
-        """
-        Create a session with real browser cookies.
-        NSE India blocks API calls that lack the session cookie set by the homepage.
-        """
-        s = requests.Session()
-        s.headers.update(_BROWSER_HEADERS)
-        try:
-            # Warm up the session — sets nseappid, nsit, bm_sv cookies
-            s.get("https://www.nseindia.com/", timeout=self._REQUEST_TIMEOUT)
-        except Exception as e:
-            logger.debug(f"[NSE] Homepage warm-up failed (continuing anyway): {e}")
-        return s
+    # ── Fallback ──────────────────────────────────────────────────────────────
 
-    def _build_fallback(self) -> List[Dict]:
-        """Static sector list used when NSE is unreachable (weekend / blocked)."""
+    def _static_fallback(self) -> List[Dict]:
         return [
             {
-                "sector":         name,
-                "display_name":   _short_name(name),
+                "sector":         key,
+                "display_name":   display,
                 "change_pct":     0.0,
                 "last":           0.0,
+                "prev_close":     0.0,
                 "advances":       0,
                 "declines":       0,
-                "unchanged":      0,
                 "activity_score": 0.0,
                 "momentum":       "UNKNOWN",
-                "stocks":         stocks,
+                "stocks":         SECTOR_STOCKS.get(key, []),
             }
-            for name, stocks in SECTOR_STOCKS.items()
+            for key, _, display in SECTOR_INDEX_MAP
         ]
 
 
-def _short_name(full: str) -> str:
-    """'NIFTY FINANCIAL SERVICES' → 'Financial Svcs', etc."""
-    mapping = {
-        "NIFTY IT":                  "IT",
-        "NIFTY BANK":                "Banking",
-        "NIFTY AUTO":                "Auto",
-        "NIFTY PHARMA":              "Pharma",
-        "NIFTY FMCG":                "FMCG",
-        "NIFTY METAL":               "Metal",
-        "NIFTY REALTY":              "Realty",
-        "NIFTY ENERGY":              "Energy",
-        "NIFTY INFRA":               "Infra",
-        "NIFTY FINANCIAL SERVICES":  "Fin. Svcs",
-        "NIFTY PSE":                 "PSU",
-        "NIFTY MEDIA":               "Media",
-    }
-    return mapping.get(full, full.replace("NIFTY ", "").title())
-
-
-# ── Singleton ─────────────────────────────────────────────────────────────────
 nse_sector_service = NSESectorService()
