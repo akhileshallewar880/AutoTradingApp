@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/analysis_provider.dart';
 import '../providers/dashboard_provider.dart';
+import '../utils/api_config.dart';
 import '../widgets/animated_loading_overlay.dart';
 import 'analysis_results_screen.dart';
 
@@ -24,6 +27,11 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
   Set<String> _selectedSectors = {'ALL'};
   double _availableBalance = 0;
 
+  // ── Live NSE sector data ─────────────────────────────────────────────────
+  List<Map<String, dynamic>> _liveSectors = [];
+  bool _sectorsLoading = false;
+  String? _sectorsError;
+
   @override
   void initState() {
     super.initState();
@@ -31,9 +39,8 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
       final balance =
           context.read<DashboardProvider>().dashboard?.availableBalance ?? 0;
       setState(() => _availableBalance = balance);
-      _capitalController.text = balance > 0
-          ? balance.toStringAsFixed(0)
-          : '';
+      _capitalController.text = balance > 0 ? balance.toStringAsFixed(0) : '';
+      _fetchSectors();
     });
   }
 
@@ -43,17 +50,28 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
     super.dispose();
   }
 
-  static const _sectors = [
-    'ALL',
-    'NIFTY 50',
-    'NIFTY Bank',
-    'IT',
-    'Pharma',
-    'Auto',
-    'FMCG',
-    'Energy',
-    'Metal',
-  ];
+  Future<void> _fetchSectors() async {
+    if (!mounted) return;
+    setState(() { _sectorsLoading = true; _sectorsError = null; });
+    try {
+      final resp = await http
+          .get(Uri.parse(ApiConfig.sectorsUrl))
+          .timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final list = (data['sectors'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        setState(() => _liveSectors = list);
+      } else {
+        setState(() => _sectorsError = 'Could not load sectors');
+      }
+    } catch (_) {
+      if (mounted) setState(() => _sectorsError = 'Offline — using defaults');
+    } finally {
+      if (mounted) setState(() => _sectorsLoading = false);
+    }
+  }
 
   static const _holdOptions = [
     (label: 'Intraday', days: 0),
@@ -107,31 +125,8 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // ── Sector Selection Card ────────────────────────────
-                    Card(
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _sectionHeader(
-                                Icons.category_outlined, 'Stock Universe'),
-                            const SizedBox(height: 4),
-                            Text(
-                              'ALL = entire NSE market (~1800 stocks). Select specific sectors to narrow focus.',
-                              style: TextStyle(
-                                  fontSize: 12, color: Colors.grey[600]),
-                            ),
-                            const SizedBox(height: 14),
-                            _buildSectorSelector(),
-                          ],
-                        ),
-                      ),
-                    ),
+                    // ── Sector Heatmap Card ──────────────────────────────
+                    _buildSectorCard(),
                     const SizedBox(height: 16),
 
                     // ── Hold Duration Card ───────────────────────────────
@@ -331,34 +326,250 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
   }
 
 
-  Widget _buildSectorSelector() {
+  // ── NSE Sector Heatmap Card ───────────────────────────────────────────────
+
+  Widget _buildSectorCard() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header row with refresh button
+            Row(
+              children: [
+                Icon(Icons.bar_chart, color: Colors.green[700], size: 20),
+                const SizedBox(width: 8),
+                const Text('NSE Sector Heatmap',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                if (_sectorsLoading)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  GestureDetector(
+                    onTap: _fetchSectors,
+                    child: Icon(Icons.refresh, size: 18, color: Colors.grey[500]),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _sectorsError != null
+                  ? _sectorsError!
+                  : 'Tap a sector to filter stocks. Most active sectors shown first.',
+              style: TextStyle(
+                  fontSize: 12,
+                  color: _sectorsError != null
+                      ? Colors.orange[700]
+                      : Colors.grey[600]),
+            ),
+            const SizedBox(height: 14),
+
+            // "All NSE" chip always first
+            _buildAllChip(),
+            const SizedBox(height: 10),
+
+            // Live sector tiles (or skeleton if loading with empty cache)
+            if (_sectorsLoading && _liveSectors.isEmpty)
+              _buildSectorSkeleton()
+            else if (_liveSectors.isEmpty)
+              _buildStaticSectorChips()
+            else
+              _buildLiveSectorGrid(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAllChip() {
+    final selected = _selectedSectors.contains('ALL');
+    return FilterChip(
+      label: const Text('All NSE'),
+      avatar: Icon(Icons.public, size: 14,
+          color: selected ? Colors.green[800] : Colors.grey[600]),
+      selected: selected,
+      onSelected: (_) => setState(() => _selectedSectors = {'ALL'}),
+      selectedColor: Colors.green[100],
+      checkmarkColor: Colors.green[700],
+      labelStyle: TextStyle(
+        color: selected ? Colors.green[800] : Colors.grey[700],
+        fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+      ),
+      side: BorderSide(
+          color: selected ? Colors.green[400]! : Colors.grey[300]!),
+      backgroundColor: Colors.grey[50],
+    );
+  }
+
+  Widget _buildLiveSectorGrid() {
+    return Column(
+      children: _liveSectors.map((s) {
+        final sectorKey  = s['sector'] as String;
+        final displayName = s['display_name'] as String? ?? sectorKey;
+        final changePct  = (s['change_pct'] as num?)?.toDouble() ?? 0.0;
+        final momentum   = s['momentum'] as String? ?? 'NEUTRAL';
+        final advances   = (s['advances'] as num?)?.toInt() ?? 0;
+        final declines   = (s['declines'] as num?)?.toInt() ?? 0;
+        final selected   = _selectedSectors.contains(sectorKey);
+
+        final isUp   = momentum == 'BULLISH';
+        final isDown = momentum == 'BEARISH';
+        final changeColor = isUp
+            ? Colors.green[700]!
+            : isDown
+                ? Colors.red[700]!
+                : Colors.grey[600]!;
+        final bgColor = selected
+            ? (isUp
+                ? Colors.green[50]!
+                : isDown
+                    ? Colors.red[50]!
+                    : Colors.blue[50]!)
+            : Colors.grey[50]!;
+        final borderColor = selected
+            ? (isUp ? Colors.green[400]! : isDown ? Colors.red[400]! : Colors.blue[300]!)
+            : Colors.grey[200]!;
+
+        return GestureDetector(
+          onTap: () {
+            setState(() {
+              if (selected) {
+                _selectedSectors.remove(sectorKey);
+                if (_selectedSectors.isEmpty) _selectedSectors = {'ALL'};
+              } else {
+                _selectedSectors.remove('ALL');
+                _selectedSectors.add(sectorKey);
+              }
+            });
+          },
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: borderColor, width: selected ? 1.5 : 1),
+            ),
+            child: Row(
+              children: [
+                // Momentum dot
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: changeColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 10),
+
+                // Sector name
+                Expanded(
+                  child: Text(
+                    displayName,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+                      color: Colors.grey[900],
+                    ),
+                  ),
+                ),
+
+                // Advances / Declines pill
+                if (advances + declines > 0) ...[
+                  _miniPill('$advances', Colors.green[700]!),
+                  const SizedBox(width: 4),
+                  _miniPill('$declines', Colors.red[700]!),
+                  const SizedBox(width: 10),
+                ],
+
+                // Change % badge
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: changeColor.withAlpha(20),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${changePct >= 0 ? '+' : ''}${changePct.toStringAsFixed(2)}%',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: changeColor,
+                    ),
+                  ),
+                ),
+
+                // Selected checkmark
+                if (selected) ...[
+                  const SizedBox(width: 8),
+                  Icon(Icons.check_circle, size: 16, color: Colors.green[700]),
+                ],
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _miniPill(String label, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withAlpha(15),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 10, color: color, fontWeight: FontWeight.w600)),
+      );
+
+  Widget _buildSectorSkeleton() {
+    return Column(
+      children: List.generate(
+        5,
+        (_) => Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          height: 42,
+          decoration: BoxDecoration(
+            color: Colors.grey[100],
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStaticSectorChips() {
+    // Fallback when live data unavailable — static name-only chips
+    const fallback = [
+      'NIFTY IT', 'NIFTY BANK', 'NIFTY AUTO', 'NIFTY PHARMA',
+      'NIFTY FMCG', 'NIFTY METAL', 'NIFTY ENERGY', 'NIFTY REALTY',
+    ];
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: _sectors.map((sector) {
-        final selected = _selectedSectors.contains(sector);
+      children: fallback.map((s) {
+        final selected = _selectedSectors.contains(s);
         return FilterChip(
-          label: Text(
-            sector == 'ALL' ? '🌐 All NSE' : sector,
-          ),
+          label: Text(s.replaceFirst('NIFTY ', '')),
           selected: selected,
           onSelected: (val) {
             setState(() {
-              if (sector == 'ALL') {
-                // ALL is exclusive — deselect everything else
-                _selectedSectors = {'ALL'};
+              if (val) {
+                _selectedSectors.remove('ALL');
+                _selectedSectors.add(s);
               } else {
-                if (val) {
-                  // Selecting a specific sector removes ALL
-                  _selectedSectors.remove('ALL');
-                  _selectedSectors.add(sector);
-                } else {
-                  _selectedSectors.remove(sector);
-                  // Fall back to ALL if nothing selected
-                  if (_selectedSectors.isEmpty) {
-                    _selectedSectors = {'ALL'};
-                  }
-                }
+                _selectedSectors.remove(s);
+                if (_selectedSectors.isEmpty) _selectedSectors = {'ALL'};
               }
             });
           },
@@ -366,12 +577,10 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           checkmarkColor: Colors.green[700],
           labelStyle: TextStyle(
             color: selected ? Colors.green[800] : Colors.grey[700],
-            fontWeight:
-                selected ? FontWeight.w600 : FontWeight.normal,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
           ),
           side: BorderSide(
-            color: selected ? Colors.green[400]! : Colors.grey[300]!,
-          ),
+              color: selected ? Colors.green[400]! : Colors.grey[300]!),
           backgroundColor: Colors.grey[50],
         );
       }).toList(),

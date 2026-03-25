@@ -6,6 +6,7 @@ from app.models.analysis_models import (
 from app.services.zerodha_service import zerodha_service
 from app.services.analysis_service import analysis_service
 from app.services.order_service import order_service, MarketClosedException
+from app.services.nse_sector_service import nse_sector_service
 from app.agents.llm_agent import llm_agent
 from app.agents.execution_agent import execution_agent
 from app.engines.risk_engine import risk_engine
@@ -16,6 +17,36 @@ import uuid
 import asyncio
 
 router = APIRouter()
+
+
+@router.get("/sectors")
+async def get_sector_activity():
+    """
+    Returns live NSE sectoral index activity sorted by today's movement.
+
+    Data source: NSE India public API (cached 5 minutes).
+    Falls back to a static sector list if NSE is unreachable.
+
+    Each sector includes:
+      - change_pct     : % change from previous close
+      - momentum       : BULLISH | BEARISH | NEUTRAL | UNKNOWN
+      - activity_score : magnitude × breadth (higher = more active)
+      - stocks         : list of liquid symbols in this sector (Zerodha-ready)
+    """
+    try:
+        loop = __import__("asyncio").get_event_loop()
+        sectors = await loop.run_in_executor(
+            None, nse_sector_service.get_sector_activity
+        )
+        return {
+            "sectors": sectors,
+            "count": len(sectors),
+            "top_sector": sectors[0]["sector"] if sectors else None,
+            "cached": True,
+        }
+    except Exception as exc:
+        logger.error(f"[Sectors-API] Error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Sector fetch failed: {exc}")
 
 # In-memory stores (lives for server process lifetime — no DB needed)
 _analyses: dict = {}          # analysis_id → {status, stocks, hold_duration_days, created_at}

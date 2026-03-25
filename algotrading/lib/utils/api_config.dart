@@ -35,6 +35,9 @@ class ApiConfig {
   static const String liveAgentPlaceLimitOrderUrl = '$baseUrl/live-trading/place-limit-order';
   static const String liveAgentBalanceUrl = '$baseUrl/live-trading/balance';
 
+  // Sector heatmap endpoint (live NSE sectoral activity)
+  static const String sectorsUrl = '$baseUrl/analysis/sectors';
+
   // Backtest endpoints
   static const String backtestRunUrl = '$baseUrl/backtest/run';
   static const String backtestUniverseUrl = '$baseUrl/backtest/universe';
