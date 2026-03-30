@@ -157,18 +157,6 @@ class OptionsEngine:
         """
         now = datetime.now()
 
-        # ── Time-of-day gate ─────────────────────────────────────────────
-        cutoff_hour, cutoff_min = 14, 0  # No new entries after 2:00 PM
-        if now.hour > cutoff_hour or (now.hour == cutoff_hour and now.minute >= cutoff_min):
-            logger.warning("[OptionsEngine] After 2:00 PM cutoff — returning NEUTRAL")
-            return {
-                "signal": "NEUTRAL",
-                "strength": 0,
-                "reasons": ["Time of day: after 2:00 PM — too late for new option entries"],
-                "score": 0,
-                "time_warning": True,
-            }
-
         # ── Expiry-day theta decay warning ───────────────────────────────
         expiry_warning = False
         if expiry_date and expiry_date == date.today():

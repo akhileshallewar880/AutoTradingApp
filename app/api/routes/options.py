@@ -107,12 +107,12 @@ async def analyze_options(request: OptionsRequest):
             index, request.api_key, request.access_token
         )
 
-        if len(candles) < 20:
+        if len(candles) < 5:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Not enough intraday candles ({len(candles)}) for {index}. "
-                    "Ensure market is open and has been trading for at least 2 hours."
+                    f"Not enough candle data ({len(candles)}) for {index}. "
+                    "Could not fetch historical data from Zerodha."
                 ),
             )
 
@@ -127,12 +127,6 @@ async def analyze_options(request: OptionsRequest):
         engine_signal = options_engine.generate_signal(
             indicators, expiry_date=request.expiry_date
         )
-
-        if engine_signal.get("time_warning"):
-            raise HTTPException(
-                status_code=400,
-                detail="After 2:00 PM IST — too late for new options entries.",
-            )
 
         logger.info(
             f"[Options-Analyze] Engine signal: {engine_signal['signal']} "
