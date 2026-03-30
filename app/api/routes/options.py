@@ -157,7 +157,9 @@ async def analyze_options(request: OptionsRequest):
         atm_strike = atm_data["atm_strike"]
         ce_inst = atm_data["ce"]
         pe_inst = atm_data["pe"]
-        lot_size = options_service.get_lot_size(index)
+        # Prefer the actual lot_size from Zerodha's instrument data (updates automatically
+        # when SEBI changes contract sizes). Fall back to hardcoded only if missing.
+        lot_size = int(ce_inst.get("lot_size") or options_service.get_lot_size(index))
 
         # ── Step 5: Fetch live premiums for CE and PE ─────────────────
         try:
