@@ -47,9 +47,18 @@ class OptionsEngine:
         typical_price = (high + low + close) / 3
         cum_tp_vol = (typical_price * volume).cumsum()
         cum_vol = volume.cumsum()
-        vwap = (cum_tp_vol / cum_vol).iloc[-1]
+        # Index candles (NIFTY/BANKNIFTY) have zero volume — VWAP would be NaN.
+        # In that case fall back to EMA20 as a proxy for "fair value".
         last_close = close.iloc[-1]
-        price_vs_vwap = "ABOVE" if last_close > vwap else "BELOW"
+        if cum_vol.iloc[-1] > 0:
+            vwap = (cum_tp_vol / cum_vol).iloc[-1]
+            price_vs_vwap = "ABOVE" if last_close > vwap else "BELOW"
+        else:
+            # Use 20-period SMA as VWAP proxy when volume is unavailable
+            vwap = close.rolling(20).mean().iloc[-1]
+            if np.isnan(vwap):
+                vwap = last_close  # fallback: treat as neutral
+            price_vs_vwap = "ABOVE" if last_close > vwap else "BELOW"
 
         # ── RSI (14) ────────────────────────────────────────────────────────
         delta = close.diff()
@@ -130,11 +139,12 @@ class OptionsEngine:
             "stoch_d": stoch_d,
             "candle_count": len(candles),
         }
+        vwap_label = "VWAP" if cum_vol.iloc[-1] > 0 else "SMA20(VWAP-proxy)"
         logger.info(
-            f"[OptionsEngine] Indicators: close={last_close:.2f} VWAP={vwap:.2f} "
-            f"({price_vs_vwap}) RSI={rsi:.1f} MACD_hist={macd_hist_now:.4f} "
-            f"BB={bb_position} EMA9={ema_9:.2f} EMA21={ema_21:.2f} "
-            f"Stoch K={stoch_k:.1f} D={stoch_d:.1f}"
+            f"[OptionsEngine] Indicators: close={last_close:.2f} "
+            f"{vwap_label}={vwap:.2f} ({price_vs_vwap}) RSI={rsi:.1f} "
+            f"MACD_hist={macd_hist_now:.4f} BB={bb_position} "
+            f"EMA9={ema_9:.2f} EMA21={ema_21:.2f} Stoch K={stoch_k:.1f} D={stoch_d:.1f}"
         )
         return indicators
 
