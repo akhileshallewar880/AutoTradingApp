@@ -166,7 +166,7 @@ async def analyze_options(request: OptionsRequest):
             premium_ce: float = await loop.run_in_executor(
                 None,
                 lambda: options_service.get_option_premium(
-                    ce_inst["instrument_token"],
+                    ce_inst["tradingsymbol"],
                     request.api_key,
                     request.access_token,
                 ),
@@ -174,7 +174,7 @@ async def analyze_options(request: OptionsRequest):
             premium_pe: float = await loop.run_in_executor(
                 None,
                 lambda: options_service.get_option_premium(
-                    pe_inst["instrument_token"],
+                    pe_inst["tradingsymbol"],
                     request.api_key,
                     request.access_token,
                 ),

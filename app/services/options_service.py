@@ -299,14 +299,15 @@ class OptionsService:
         return round(avg_price, 2)
 
     def get_option_premium(
-        self, instrument_token: int, api_key: str, access_token: str
+        self, trading_symbol: str, api_key: str, access_token: str
     ) -> float:
         """
         Fetch live LTP for an option contract.
+        trading_symbol should be the Zerodha tradingsymbol (e.g. "NIFTY26APR22350CE").
         Tries ltp() first, falls back to quote().
         """
         zerodha_service.set_credentials(api_key, access_token)
-        nfo_key = f"NFO:{instrument_token}"
+        nfo_key = f"NFO:{trading_symbol}"
 
         # ── Attempt 1: ltp() ────────────────────────────────────────────
         try:
