@@ -128,7 +128,11 @@ class OptionsExecutionAgent:
             # SL must not be above fill price (it's a sell SL-M)
             adjusted_sl = min(adjusted_sl, fill_price * 0.98)
 
-            # ── Step 4: Place SL-M SELL order ──────────────────────────
+            # ── Step 4: Place SL (Stop-Loss Limit) SELL order ──────────
+            # SL-M is discontinued for F&O. Use SL (stop-loss limit) instead:
+            # trigger_price = adjusted_sl (order activates when premium hits this)
+            # price = trigger - 2% slippage, rounded to tick (ensures fill after trigger)
+            sl_limit_price = self._sl_limit_price(adjusted_sl)
             sl_order_id = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: self.zs.kite.place_order(
@@ -138,8 +142,9 @@ class OptionsExecutionAgent:
                     transaction_type=self.zs.kite.TRANSACTION_TYPE_SELL,
                     quantity=quantity,
                     product=self.zs.kite.PRODUCT_MIS,
-                    order_type=self.zs.kite.ORDER_TYPE_SLM,
+                    order_type=self.zs.kite.ORDER_TYPE_SL,
                     trigger_price=adjusted_sl,
+                    price=sl_limit_price,
                 ),
             )
 
@@ -153,7 +158,7 @@ class OptionsExecutionAgent:
                 analysis_id, option_symbol, "COMPLETED",
                 (
                     f"Trade active! Fill=₹{fill_price:.2f} | "
-                    f"SL-M trigger=₹{adjusted_sl:.2f} (order {sl_order_id}) | "
+                    f"SL trigger=₹{adjusted_sl:.2f} limit=₹{sl_limit_price:.2f} (order {sl_order_id}) | "
                     f"Target=₹{adjusted_target:.2f} (exit manually or set limit sell). "
                     f"Auto square-off at 3:15 PM."
                 ),
@@ -174,6 +179,16 @@ class OptionsExecutionAgent:
             )
 
         return execution_log
+
+    def _sl_limit_price(self, trigger: float) -> float:
+        """
+        Return the limit price for an SL (stop-loss limit) SELL order.
+        Set 2% below the trigger, rounded down to the nearest NFO tick (0.05).
+        This ensures the order fills after the trigger is hit even with a gap.
+        """
+        raw = trigger * (1 - self.MARKET_PROTECTION_PCT)
+        ticks = int(raw / self.NFO_TICK_SIZE)
+        return round(ticks * self.NFO_TICK_SIZE, 2)
 
     def _market_protect_price(self, premium: float) -> float:
         """
