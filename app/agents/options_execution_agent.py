@@ -2,7 +2,8 @@
 Options Execution Agent
 
 Workflow for intraday options (MIS):
-  1. Place BUY MARKET order for the chosen option contract (CE/PE)
+  1. Place BUY LIMIT order with market-protection price (entry + 2% slippage, rounded
+     to NFO tick size 0.05) — Zerodha API rejects plain MARKET orders on NFO.
   2. Wait for fill — capture actual fill price (avg_price)
   3. Place a SL-M (Stop-Loss Market) SELL order with trigger = stop_loss_premium
      This acts as the automatic stop loss.
@@ -25,7 +26,9 @@ from app.models.analysis_models import ExecutionUpdate
 class OptionsExecutionAgent:
 
     FILL_POLL_INTERVAL = 3     # seconds between order status checks
-    FILL_TIMEOUT = 60          # seconds — market orders fill fast, 60s is generous
+    FILL_TIMEOUT = 60          # seconds — limit orders at market price fill fast
+    NFO_TICK_SIZE = 0.05       # minimum price increment for NFO options
+    MARKET_PROTECTION_PCT = 0.02  # 2% above current premium for buy limit (ensures fill)
 
     def __init__(self):
         self.zs = zerodha_service
@@ -63,10 +66,16 @@ class OptionsExecutionAgent:
         self.zs.set_credentials(api_key, access_token)
 
         try:
-            # ── Step 1: Place BUY MARKET order ─────────────────────────────
+            # ── Step 1: Place BUY LIMIT order with market protection ────────
+            # Zerodha API rejects plain MARKET orders on NFO.
+            # Use LIMIT at entry_premium + 2% slippage, rounded to tick size 0.05.
+            protect_price = self._market_protect_price(entry_premium)
             await self._send_update(
                 analysis_id, option_symbol, "ORDER_PLACING",
-                f"Placing BUY MARKET order — {quantity} units of {option_symbol} (MIS, NFO)",
+                (
+                    f"Placing BUY LIMIT order — {quantity} units of {option_symbol} "
+                    f"@ ₹{protect_price:.2f} (market-protection, MIS, NFO)"
+                ),
                 update_callback,
             )
 
@@ -79,14 +88,15 @@ class OptionsExecutionAgent:
                     transaction_type=self.zs.kite.TRANSACTION_TYPE_BUY,
                     quantity=quantity,
                     product=self.zs.kite.PRODUCT_MIS,
-                    order_type=self.zs.kite.ORDER_TYPE_MARKET,
+                    order_type=self.zs.kite.ORDER_TYPE_LIMIT,
+                    price=protect_price,
                 ),
             )
 
             execution_log["entry_order_id"] = entry_order_id
             await self._send_update(
                 analysis_id, option_symbol, "ORDER_PLACED",
-                f"BUY MARKET order placed: order_id={entry_order_id}. Waiting for fill…",
+                f"BUY LIMIT order placed: order_id={entry_order_id} @ ₹{protect_price:.2f}. Waiting for fill…",
                 update_callback,
             )
 
@@ -164,6 +174,16 @@ class OptionsExecutionAgent:
             )
 
         return execution_log
+
+    def _market_protect_price(self, premium: float) -> float:
+        """
+        Return a limit price slightly above the current premium to ensure fill
+        (market-protection pattern required by Zerodha NFO API).
+        Rounds up to the nearest NFO tick size (0.05).
+        """
+        raw = premium * (1 + self.MARKET_PROTECTION_PCT)
+        ticks = round(raw / self.NFO_TICK_SIZE)
+        return round(ticks * self.NFO_TICK_SIZE, 2)
 
     async def _wait_for_fill(
         self,
