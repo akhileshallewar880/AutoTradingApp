@@ -210,11 +210,37 @@ async def analyze_options(request: OptionsRequest):
 
         if opt_type in ("CE", "PE"):
             chosen_inst = ce_inst if opt_type == "CE" else pe_inst
-            lots_recommended = int(llm_result.get("lots_recommended", request.lots))
-            quantity = lots_recommended * lot_size
             entry = float(llm_result["entry_premium"])
             sl = float(llm_result["stop_loss_premium"])
             target = float(llm_result["target_premium"])
+
+            # ── Risk-based position sizing ─────────────────────────────
+            # Max rupee risk = capital × risk_percent / 100
+            # Risk per lot   = (entry - sl) × lot_size
+            # Max safe lots  = floor(max_risk_rupees / risk_per_lot)
+            # This is enforced regardless of what GPT recommended.
+            risk_per_lot = (entry - sl) * lot_size
+            max_risk_rupees = request.capital_to_use * (request.risk_percent / 100)
+
+            if risk_per_lot > 0:
+                max_safe_lots = max(1, int(max_risk_rupees / risk_per_lot))
+            else:
+                max_safe_lots = request.lots
+
+            lots_recommended = min(
+                int(llm_result.get("lots_recommended", request.lots)),
+                request.lots,
+                max_safe_lots,
+            )
+
+            if lots_recommended < int(llm_result.get("lots_recommended", request.lots)):
+                logger.warning(
+                    f"[Options-Analyze] Lots capped by risk engine: "
+                    f"GPT={llm_result.get('lots_recommended')} → {lots_recommended} "
+                    f"(max_risk=₹{max_risk_rupees:.0f}, risk_per_lot=₹{risk_per_lot:.0f})"
+                )
+
+            quantity = lots_recommended * lot_size
             total_investment = round(entry * quantity, 2)
             max_loss = round((entry - sl) * quantity, 2)
             max_profit = round((target - entry) * quantity, 2)

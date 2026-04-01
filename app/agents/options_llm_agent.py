@@ -88,8 +88,9 @@ class OptionsLLMAgent:
 - Current Price: ₹{current_price:.2f}
 - ATM Strike: {atm_strike}
 - Expiry Date: {expiry_date}
-- Capital: ₹{capital:,.0f} | Risk: {risk_percent}%
+- Capital: ₹{capital:,.0f} | Risk per trade: {risk_percent}% = ₹{capital * risk_percent / 100:,.0f} MAX LOSS
 - Lots requested: {lots} (lot size = {lot_size} units)
+- CONSTRAINT: Your SL must ensure (entry - SL) × lot_size × lots ≤ ₹{capital * risk_percent / 100:,.0f}. Reduce lots if needed.
 
 ## Technical Indicators (5-min candles)
 - RSI(14): {ind.get('rsi', 50):.1f}
