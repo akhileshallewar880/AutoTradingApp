@@ -5,9 +5,11 @@ Workflow for intraday options (MIS):
   1. Place BUY LIMIT order with market-protection price (entry + 2% slippage, rounded
      to NFO tick size 0.05) — Zerodha API rejects plain MARKET orders on NFO.
   2. Wait for fill — capture actual fill price (avg_price)
-  3. Place a SL-M (Stop-Loss Market) SELL order with trigger = stop_loss_premium
-     This acts as the automatic stop loss.
-  4. Advise user to exit manually at target premium, or place a limit SELL at target.
+  3. Place SL (stop-loss limit) SELL order: trigger=adjusted_sl, price=trigger-2%
+     SL-M is discontinued for F&O by the exchange.
+  4. Place LIMIT SELL order at target premium (take-profit leg).
+     GTT is not supported for MIS options — both SL and target orders are live
+     simultaneously; user must cancel the unfilled one after exit.
   5. Return execution log with order IDs.
 
 No GTT is used here — Zerodha does NOT support GTT for MIS orders on options.
@@ -59,6 +61,7 @@ class OptionsExecutionAgent:
             "status": "STARTED",
             "entry_order_id": None,
             "sl_order_id": None,
+            "target_order_id": None,
             "fill_price": None,
             "updates": [],
         }
@@ -152,15 +155,36 @@ class OptionsExecutionAgent:
             adjusted_target = round(
                 fill_price + (fill_price - adjusted_sl) * 2.0, 1
             )
+            # Snap target to tick size
+            adjusted_target = self._round_to_tick(adjusted_target)
 
+            # ── Step 5: Place LIMIT SELL order at target ────────────────
+            # GTT is not supported for MIS options. Place a regular LIMIT SELL.
+            # WARNING: both SL and target orders are live simultaneously —
+            # whichever fills first, the other must be cancelled manually.
+            target_order_id = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self.zs.kite.place_order(
+                    variety=self.zs.kite.VARIETY_REGULAR,
+                    exchange=self.zs.kite.EXCHANGE_NFO,
+                    tradingsymbol=option_symbol,
+                    transaction_type=self.zs.kite.TRANSACTION_TYPE_SELL,
+                    quantity=quantity,
+                    product=self.zs.kite.PRODUCT_MIS,
+                    order_type=self.zs.kite.ORDER_TYPE_LIMIT,
+                    price=adjusted_target,
+                ),
+            )
+
+            execution_log["target_order_id"] = target_order_id
             execution_log["status"] = "COMPLETED"
             await self._send_update(
                 analysis_id, option_symbol, "COMPLETED",
                 (
                     f"Trade active! Fill=₹{fill_price:.2f} | "
                     f"SL trigger=₹{adjusted_sl:.2f} limit=₹{sl_limit_price:.2f} (order {sl_order_id}) | "
-                    f"Target=₹{adjusted_target:.2f} (exit manually or set limit sell). "
-                    f"Auto square-off at 3:15 PM."
+                    f"Target=₹{adjusted_target:.2f} limit sell placed (order {target_order_id}). "
+                    f"⚠️ Cancel whichever order doesn't hit. Auto square-off at 3:15 PM."
                 ),
                 update_callback,
             )
@@ -179,6 +203,11 @@ class OptionsExecutionAgent:
             )
 
         return execution_log
+
+    def _round_to_tick(self, price: float) -> float:
+        """Round price to nearest NFO tick size (0.05)."""
+        ticks = round(price / self.NFO_TICK_SIZE)
+        return round(ticks * self.NFO_TICK_SIZE, 2)
 
     def _sl_limit_price(self, trigger: float) -> float:
         """
