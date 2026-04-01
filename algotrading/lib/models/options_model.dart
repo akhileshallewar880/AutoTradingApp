@@ -16,6 +16,8 @@ class OptionsTrade {
   final double maxProfit;
   final double riskRewardRatio;
   final double confidenceScore;
+  final int suggestedHoldMinutes;
+  final String holdReasoning;
   final String aiReasoning;
   final double currentIndexPrice;
   final String signal; // BUY_CE or BUY_PE
@@ -38,6 +40,8 @@ class OptionsTrade {
     required this.maxProfit,
     required this.riskRewardRatio,
     required this.confidenceScore,
+    required this.suggestedHoldMinutes,
+    required this.holdReasoning,
     required this.aiReasoning,
     required this.currentIndexPrice,
     required this.signal,
@@ -62,6 +66,8 @@ class OptionsTrade {
       maxProfit: (json['max_profit'] ?? 0).toDouble(),
       riskRewardRatio: (json['risk_reward_ratio'] ?? 2.0).toDouble(),
       confidenceScore: (json['confidence_score'] ?? 0.5).toDouble(),
+      suggestedHoldMinutes: (json['suggested_hold_minutes'] ?? 30) as int,
+      holdReasoning: json['hold_reasoning'] ?? '',
       aiReasoning: json['ai_reasoning'] ?? '',
       currentIndexPrice: (json['current_index_price'] ?? 0).toDouble(),
       signal: json['signal'] ?? 'NEUTRAL',

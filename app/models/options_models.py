@@ -38,6 +38,8 @@ class OptionsTrade(BaseModel):
     risk_reward_ratio: float
 
     confidence_score: float = Field(..., ge=0.0, le=1.0)
+    suggested_hold_minutes: int = 30       # how long to hold before time-based exit
+    hold_reasoning: str = ""               # why that duration
     ai_reasoning: str
 
     # Index context

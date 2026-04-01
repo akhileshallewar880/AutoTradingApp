@@ -264,6 +264,8 @@ async def analyze_options(request: OptionsRequest):
                 max_profit=max_profit,
                 risk_reward_ratio=rr,
                 confidence_score=float(llm_result.get("confidence_score", 0.5)),
+                suggested_hold_minutes=int(llm_result.get("suggested_hold_minutes", 30)),
+                hold_reasoning=llm_result.get("hold_reasoning", ""),
                 ai_reasoning=llm_result.get("ai_reasoning", ""),
                 current_index_price=current_price,
                 signal=engine_signal["signal"],

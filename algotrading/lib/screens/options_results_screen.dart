@@ -52,19 +52,21 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
             _dialogRow('Target', _currency.format(trade.targetPremium)),
             _dialogRow('Max Loss', _currency.format(trade.maxLoss)),
             _dialogRow('Max Profit', _currency.format(trade.maxProfit)),
+            _dialogRow('Hold Duration', '~${trade.suggestedHoldMinutes} min'),
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.amber[50],
+                color: Colors.orange[50],
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.amber[300]!),
+                border: Border.all(color: Colors.orange[300]!),
               ),
               child: Text(
-                'SL-M order will auto-place. '
-                'Exit at target manually or set a SELL limit order. '
+                '⏱ Hold ~${trade.suggestedHoldMinutes} min. '
+                'SL and target orders will auto-place. '
+                'Cancel the unfilled order after exit. '
                 'Auto square-off at 3:15 PM.',
-                style: TextStyle(fontSize: 12, color: Colors.amber[900]),
+                style: TextStyle(fontSize: 12, color: Colors.orange[900]),
               ),
             ),
           ],
@@ -172,6 +174,8 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
             const SizedBox(height: 16),
             if (trade == null) _buildNoTradeCard() else ...[
               _buildTradeCard(trade),
+              const SizedBox(height: 16),
+              _buildHoldDurationCard(trade),
               const SizedBox(height: 16),
               _buildLevelsCard(trade),
               const SizedBox(height: 16),
@@ -334,6 +338,62 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: color)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHoldDurationCard(OptionsTrade trade) {
+    final mins = trade.suggestedHoldMinutes;
+    final exitTime = DateTime.now().add(Duration(minutes: mins));
+    final exitStr =
+        '${exitTime.hour.toString().padLeft(2, '0')}:${exitTime.minute.toString().padLeft(2, '0')}';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.orange[50],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.orange[300]!),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange[100],
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.timer_outlined, color: Colors.orange[800], size: 28),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Hold for ~$mins minutes',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange[900],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Exit by $exitStr if SL/target not hit',
+                  style: TextStyle(fontSize: 13, color: Colors.orange[800]),
+                ),
+                if (trade.holdReasoning.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    trade.holdReasoning,
+                    style: TextStyle(fontSize: 12, color: Colors.orange[700], height: 1.4),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );

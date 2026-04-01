@@ -124,6 +124,8 @@ For your chosen option (CE or PE), specify:
 - Target premium: level to take profit (minimum 2× the risk)
 - Lots to trade (can be less than {lots} if risk is too high)
 - Confidence score: 0.0 (no confidence) to 1.0 (very high confidence)
+- Suggested hold minutes: how many minutes to hold before exiting if neither SL nor target is hit (15–90 min for intraday; shorter near end of day or on weak signals)
+- Hold reasoning: one sentence explaining why that hold duration (e.g. "momentum trade, exit by 11 AM before lunch drift")
 - Reasoning: detailed explanation of your decision
 
 Respond ONLY with valid JSON:
@@ -134,6 +136,8 @@ Respond ONLY with valid JSON:
   "target_premium": <float>,
   "lots_recommended": <int>,
   "confidence_score": <float 0.0-1.0>,
+  "suggested_hold_minutes": <int>,
+  "hold_reasoning": "<one sentence>",
   "ai_reasoning": "<detailed reasoning string>"
 }}
 """
@@ -215,6 +219,9 @@ Respond ONLY with valid JSON:
         lots = max(1, min(lots, max_lots))
         confidence = max(0.0, min(1.0, confidence))
 
+        hold_minutes = int(result.get("suggested_hold_minutes", 30))
+        hold_minutes = max(10, min(hold_minutes, 90))  # clamp 10–90 min
+
         result.update({
             "option_type": opt_type,
             "entry_premium": entry,
@@ -222,6 +229,8 @@ Respond ONLY with valid JSON:
             "target_premium": target,
             "lots_recommended": lots,
             "confidence_score": confidence,
+            "suggested_hold_minutes": hold_minutes,
+            "hold_reasoning": result.get("hold_reasoning", ""),
         })
         return result
 
@@ -260,6 +269,8 @@ Respond ONLY with valid JSON:
             "target_premium": target,
             "lots_recommended": 1,
             "confidence_score": round(engine_signal.get("score", 50) / 100, 2),
+            "suggested_hold_minutes": 30,
+            "hold_reasoning": "Default hold — exit within 30 minutes if target/SL not hit.",
             "ai_reasoning": (
                 f"Fallback analysis (GPT unavailable). "
                 f"Engine signal: {sig} with {engine_signal.get('strength', 0)}/5 votes. "
