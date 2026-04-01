@@ -1,10 +1,12 @@
 """
 Options Trading API Routes
 
-GET  /options/expiries          — Available expiry dates for NIFTY/BANKNIFTY
-POST /options/analyze           — Run AI options analysis + generate trade recommendation
-POST /options/{id}/confirm      — Execute the recommended options trade
-GET  /options/{id}/status       — Execution status (polling)
+GET  /options/expiries              — Available expiry dates for NIFTY/BANKNIFTY
+POST /options/analyze               — Run AI options analysis + generate trade recommendation
+POST /options/{id}/confirm          — Execute the recommended options trade
+GET  /options/{id}/status           — Execution status (polling)
+GET  /options/{id}/monitor          — Monitoring state + events (polling)
+POST /options/{id}/monitor/stop     — Stop monitoring for an analysis
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
@@ -20,6 +22,7 @@ from app.services.options_service import options_service
 from app.engines.options_engine import options_engine
 from app.agents.options_llm_agent import options_llm_agent
 from app.agents.options_execution_agent import options_execution_agent
+from app.agents.options_monitoring_agent import options_monitoring_agent, MonitoringSession
 from app.core.logging import logger
 from datetime import datetime, date
 from typing import List, Optional
@@ -29,8 +32,9 @@ import asyncio
 router = APIRouter()
 
 # In-memory store for options analyses (same pattern as analysis.py)
-_options_analyses: dict = {}        # analysis_id → OptionsAnalysisResponse dict
-_options_executions: dict = {}      # analysis_id → list of ExecutionUpdate
+_options_analyses: dict = {}           # analysis_id → OptionsAnalysisResponse dict
+_options_executions: dict = {}         # analysis_id → list of ExecutionUpdate
+_options_monitoring_events: dict = {}  # analysis_id → list of monitoring event dicts
 
 
 # ── GET /options/expiries ─────────────────────────────────────────────────────
@@ -188,7 +192,21 @@ async def analyze_options(request: OptionsRequest):
             f"[Options-Analyze] ATM {atm_strike}: CE=₹{premium_ce:.2f}, PE=₹{premium_pe:.2f}"
         )
 
-        # ── Step 6: LLM analysis ──────────────────────────────────────
+        # ── Step 6: Pre-compute risk budget for LLM constraint ───────
+        max_risk_rupees = round(request.capital_to_use * request.risk_percent / 100, 2)
+        # Max SL distance per unit so that (entry-sl) × lot_size × lots ≤ max_risk
+        max_sl_distance_per_unit = round(
+            max_risk_rupees / (request.lots * lot_size), 2
+        ) if request.lots * lot_size > 0 else 999.0
+
+        logger.info(
+            f"[Options-Analyze] Risk budget: capital=₹{request.capital_to_use} "
+            f"risk={request.risk_percent}% → max_loss=₹{max_risk_rupees} "
+            f"max_sl_dist_per_unit=₹{max_sl_distance_per_unit} "
+            f"(lots={request.lots} lot_size={lot_size})"
+        )
+
+        # ── Step 7: LLM analysis ──────────────────────────────────────
         llm_result = await options_llm_agent.analyze_options_opportunity(
             index=index,
             current_price=current_price,
@@ -202,9 +220,11 @@ async def analyze_options(request: OptionsRequest):
             lot_size=lot_size,
             capital=request.capital_to_use,
             risk_percent=request.risk_percent,
+            max_risk_rupees=max_risk_rupees,
+            max_sl_distance_per_unit=max_sl_distance_per_unit,
         )
 
-        # ── Step 7: Build OptionsTrade response ───────────────────────
+        # ── Step 8: Build OptionsTrade response ───────────────────────
         trade: Optional[OptionsTrade] = None
         opt_type = llm_result.get("option_type", "NONE")
 
@@ -384,7 +404,49 @@ async def _execute_options_background(
             access_token=access_token,
             update_callback=update_callback,
         )
-        analysis.status = "COMPLETED" if result["status"] == "COMPLETED" else "FAILED"
+
+        if result["status"] == "COMPLETED" and result.get("fill_price"):
+            analysis.status = "MONITORING"
+
+            # Build monitoring session from execution result
+            session = MonitoringSession(
+                analysis_id=analysis_id,
+                symbol=trade.option_symbol,
+                option_type=trade.option_type,
+                quantity=trade.quantity,
+                entry_fill_price=float(result["fill_price"]),
+                sl_trigger=float(result.get("sl_trigger", trade.stop_loss_premium)),
+                sl_limit=float(result.get("sl_limit", trade.stop_loss_premium * 0.98)),
+                target_price=float(result.get("target_price", trade.target_premium)),
+                sl_order_id=str(result.get("sl_order_id", "")),
+                target_order_id=str(result.get("target_order_id", "")),
+                api_key=api_key,
+                access_token=access_token,
+            )
+
+            async def monitoring_callback(event):
+                _options_monitoring_events.setdefault(analysis_id, []).append({
+                    "timestamp": event.timestamp,
+                    "event_type": event.event_type,
+                    "message": event.message,
+                    "data": event.data,
+                    "alert_level": event.alert_level,
+                })
+                # Mirror HUMAN_ALERT to execution updates so Flutter polling picks it up
+                if event.alert_level == "DANGER":
+                    _options_executions.setdefault(analysis_id, []).append(
+                        ExecutionUpdate(
+                            analysis_id=analysis_id,
+                            stock_symbol=trade.option_symbol,
+                            update_type="HUMAN_ALERT",
+                            message=event.message,
+                        )
+                    )
+
+            options_monitoring_agent.start_monitoring(session, monitoring_callback)
+        else:
+            analysis.status = "FAILED"
+
     except Exception as e:
         logger.error(f"[Options-Execute] Background task error: {e}", exc_info=True)
         analysis.status = "FAILED"
@@ -409,3 +471,57 @@ async def get_options_status(analysis_id: str):
         "updates": [u.dict() for u in updates],
         "update_count": len(updates),
     }
+
+
+# ── GET /options/{id}/monitor ─────────────────────────────────────────────────
+
+@router.get("/{analysis_id}/monitor")
+async def get_monitor_state(analysis_id: str):
+    """
+    Poll monitoring state and events for an active trade.
+    Returns current premium, P&L, SL, trailing SL, and all events.
+    Clients should poll every 15 seconds while status=MONITORING.
+    """
+    session = options_monitoring_agent.get_session(analysis_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="No monitoring session found")
+
+    events = _options_monitoring_events.get(analysis_id, [])
+
+    # Compute live P&L if we have a current premium
+    pnl = None
+    pnl_pct = None
+    if session.current_premium > 0:
+        pnl = round((session.current_premium - session.entry_fill_price) * session.quantity, 2)
+        pnl_pct = round(
+            (session.current_premium - session.entry_fill_price) / session.entry_fill_price * 100, 2
+        )
+
+    return {
+        "analysis_id": analysis_id,
+        "status": session.status,
+        "symbol": session.symbol,
+        "current_premium": session.current_premium,
+        "entry_fill_price": session.entry_fill_price,
+        "sl_trigger": session.sl_trigger,
+        "target_price": session.target_price,
+        "peak_premium": session.peak_premium,
+        "pnl": pnl,
+        "pnl_pct": pnl_pct,
+        "poll_count": session.poll_count,
+        "events": events[-50:],   # last 50 events
+        "event_count": len(events),
+        "has_human_alert": any(e.get("alert_level") == "DANGER" for e in events),
+    }
+
+
+# ── POST /options/{id}/monitor/stop ──────────────────────────────────────────
+
+@router.post("/{analysis_id}/monitor/stop")
+async def stop_monitoring(analysis_id: str):
+    """Manually stop the monitoring agent (e.g. after manual exit on Zerodha)."""
+    session = options_monitoring_agent.get_session(analysis_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="No monitoring session found")
+    options_monitoring_agent.stop_monitoring(analysis_id)
+    return {"status": "STOPPED", "analysis_id": analysis_id}

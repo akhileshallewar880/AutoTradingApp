@@ -63,6 +63,9 @@ class OptionsExecutionAgent:
             "sl_order_id": None,
             "target_order_id": None,
             "fill_price": None,
+            "sl_trigger": None,
+            "sl_limit": None,
+            "target_price": None,
             "updates": [],
         }
 
@@ -152,6 +155,8 @@ class OptionsExecutionAgent:
             )
 
             execution_log["sl_order_id"] = sl_order_id
+            execution_log["sl_trigger"] = adjusted_sl
+            execution_log["sl_limit"] = sl_limit_price
             adjusted_target = round(
                 fill_price + (fill_price - adjusted_sl) * 2.0, 1
             )
@@ -177,6 +182,7 @@ class OptionsExecutionAgent:
             )
 
             execution_log["target_order_id"] = target_order_id
+            execution_log["target_price"] = adjusted_target
             execution_log["status"] = "COMPLETED"
             await self._send_update(
                 analysis_id, option_symbol, "COMPLETED",

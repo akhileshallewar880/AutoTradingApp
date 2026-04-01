@@ -54,6 +54,9 @@ dependencies:
   # Date and number formatting
   intl: ^0.18.1
 
+  # Audio playback for danger alerts
+  audioplayers: ^6.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -81,6 +84,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/vantrade_launcher_icon.png
+    - assets/sounds/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

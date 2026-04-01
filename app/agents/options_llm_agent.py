@@ -50,6 +50,8 @@ class OptionsLLMAgent:
         lot_size: int,
         capital: float,
         risk_percent: float,
+        max_risk_rupees: float = 0.0,
+        max_sl_distance_per_unit: float = 999.0,
     ) -> Dict:
         """
         Ask GPT-4o to analyze the index and recommend a CE or PE trade.
@@ -88,9 +90,12 @@ class OptionsLLMAgent:
 - Current Price: ₹{current_price:.2f}
 - ATM Strike: {atm_strike}
 - Expiry Date: {expiry_date}
-- Capital: ₹{capital:,.0f} | Risk per trade: {risk_percent}% = ₹{capital * risk_percent / 100:,.0f} MAX LOSS
+- Capital: ₹{capital:,.0f} | Risk per trade: {risk_percent}% = ₹{max_risk_rupees:,.0f} MAX LOSS
 - Lots requested: {lots} (lot size = {lot_size} units)
-- CONSTRAINT: Your SL must ensure (entry - SL) × lot_size × lots ≤ ₹{capital * risk_percent / 100:,.0f}. Reduce lots if needed.
+- ⚠️ HARD CONSTRAINT: Max SL distance = ₹{max_sl_distance_per_unit:.2f} per unit
+  → (entry_premium - stop_loss_premium) MUST be ≤ ₹{max_sl_distance_per_unit:.2f}
+  → Total max loss = (entry - SL) × {lot_size} × {lots} ≤ ₹{max_risk_rupees:,.0f}
+  → If you cannot place a meaningful SL within this budget, reduce lots_recommended or return NONE.
 
 ## Technical Indicators (5-min candles)
 - RSI(14): {ind.get('rsi', 50):.1f}

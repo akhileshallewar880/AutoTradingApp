@@ -190,6 +190,8 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
                   _buildLotsCard(),
                   const SizedBox(height: 16),
                   _buildCapitalCard(),
+                  const SizedBox(height: 16),
+                  _buildRiskPreviewCard(),
                   const SizedBox(height: 24),
                   _buildAnalyzeButton(),
                   if (_error != null) _buildErrorBox(_error!),
@@ -464,6 +466,75 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildRiskPreviewCard() {
+    final capital = double.tryParse(_capitalController.text.trim()) ?? 0;
+    final maxLoss = capital * _riskPercent / 100;
+    final lotSize = _selectedIndex == 'NIFTY' ? 75 : 30;
+    final totalUnits = _lots * lotSize;
+    final maxSlPerUnit = totalUnits > 0 ? maxLoss / totalUnits : 0.0;
+
+    final isViable = maxSlPerUnit >= 10;
+    final color = isViable ? Colors.green[700]! : Colors.red[700]!;
+    final bgColor = isViable ? Colors.green[50]! : Colors.red[50]!;
+    final borderColor = isViable ? Colors.green[200]! : Colors.red[200]!;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isViable ? Icons.shield_outlined : Icons.warning_amber_outlined,
+                color: color,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Risk Budget',
+                style: TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.bold, color: color),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: _riskStat('Max Loss', '₹${maxLoss.toStringAsFixed(0)}', color)),
+              Expanded(child: _riskStat('Units', '$totalUnits', color)),
+              Expanded(child: _riskStat('SL room/unit', '₹${maxSlPerUnit.toStringAsFixed(1)}', color)),
+            ],
+          ),
+          if (!isViable) ...[
+            const SizedBox(height: 8),
+            Text(
+              'SL room too tight (< ₹10/unit). Increase capital, raise risk %, or reduce lots.',
+              style: TextStyle(fontSize: 11, color: Colors.red[700]),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _riskStat(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+        const SizedBox(height: 2),
+        Text(value,
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+      ],
     );
   }
 
