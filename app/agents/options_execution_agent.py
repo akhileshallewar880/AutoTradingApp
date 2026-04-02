@@ -124,15 +124,24 @@ class OptionsExecutionAgent:
             )
 
             # ── Step 3: Recalculate SL relative to actual fill ──────────
-            # If fill deviates from expected entry, scale SL proportionally
-            if entry_premium > 0:
+            # Scale SL proportionally to actual fill (handles slippage).
+            if entry_premium > 0 and stop_loss_premium < entry_premium:
                 sl_ratio = stop_loss_premium / entry_premium
-                adjusted_sl = round(fill_price * sl_ratio, 1)
+                raw_sl = fill_price * sl_ratio
             else:
-                adjusted_sl = stop_loss_premium
+                # Fallback: 25% below fill price
+                sl_ratio = 0.75
+                raw_sl = fill_price * 0.75
 
-            # SL must not be above fill price (it's a sell SL-M)
-            adjusted_sl = min(adjusted_sl, fill_price * 0.98)
+            # Hard rule: SL trigger MUST be strictly below fill price.
+            # Cap at fill * 0.97, then snap DOWN to nearest NFO tick (0.05).
+            raw_sl = min(raw_sl, fill_price * 0.97)
+            adjusted_sl = self._snap_tick_down(raw_sl)
+
+            logger.info(
+                f"[OptionsExecution] SL calc: fill=₹{fill_price:.2f} "
+                f"sl_ratio={sl_ratio:.3f} raw=₹{raw_sl:.4f} snapped=₹{adjusted_sl:.2f}"
+            )
 
             # ── Step 4: Place SL (Stop-Loss Limit) SELL order ──────────
             # SL-M is discontinued for F&O. Use SL (stop-loss limit) instead:
@@ -213,6 +222,12 @@ class OptionsExecutionAgent:
     def _round_to_tick(self, price: float) -> float:
         """Round price to nearest NFO tick size (0.05)."""
         ticks = round(price / self.NFO_TICK_SIZE)
+        return round(ticks * self.NFO_TICK_SIZE, 2)
+
+    def _snap_tick_down(self, price: float) -> float:
+        """Round DOWN to nearest NFO tick (0.05). Used for SL trigger so it is
+        always strictly below the reference price, never accidentally above it."""
+        ticks = int(price / self.NFO_TICK_SIZE)
         return round(ticks * self.NFO_TICK_SIZE, 2)
 
     def _sl_limit_price(self, trigger: float) -> float:

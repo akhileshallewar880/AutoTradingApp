@@ -279,7 +279,13 @@ class OptionsMonitoringAgent:
             )
             logger.info(f"[Monitor] SL modified to trigger=₹{new_trigger:.2f}")
             return True
-        except kite_exc.OrderException as e:
+        except Exception as e:
+            err = str(e)
+            if self._is_transient(err):
+                # Exchange is mid-processing — skip this trailing SL update,
+                # the next poll will try again when the order is settled.
+                logger.warning(f"[Monitor] SL modify skipped (transient): {err}")
+                return False
             logger.warning(f"[Monitor] modify_order failed ({e}) — trying cancel+replace")
 
         # Cancel existing + place new
@@ -444,16 +450,45 @@ Respond ONLY with valid JSON:
 
     # ── Exception handling ─────────────────────────────────────────────────────
 
+    # Zerodha error substrings that are transient and safe to retry silently
+    _TRANSIENT_ERRORS = (
+        "being processed",      # order mid-processing by exchange
+        "try later",            # exchange rate-limit
+        "too many requests",    # API rate-limit
+        "gateway timeout",
+        "service unavailable",
+        "temporarily unavailable",
+    )
+
+    def _is_transient(self, err: str) -> bool:
+        low = err.lower()
+        return any(t in low for t in self._TRANSIENT_ERRORS)
+
     async def _handle_unexpected(
         self, s: MonitoringSession, cb: Callable, exc: Exception
     ):
         s.retry_count += 1
         err = str(exc)
 
-        # Transient — keep monitoring
-        if s.retry_count <= MAX_RETRIES and isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        # Transient network errors
+        if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
             await self._emit(s, cb, "EXCEPTION",
-                f"Transient error (attempt {s.retry_count}/{MAX_RETRIES}): {err}",
+                f"Network error (attempt {s.retry_count}/{MAX_RETRIES}): {err}",
+                {"error": err}, "WARNING")
+            if s.retry_count <= MAX_RETRIES:
+                return
+            # Exceeded retries — human needed
+            await self._human_alert(s, cb,
+                f"Persistent network error after {MAX_RETRIES} retries: {err}",
+                {"error": err, "action_needed": "Check server connectivity"})
+            s.status = "HUMAN_NEEDED"
+            return
+
+        # Transient Zerodha exchange errors — skip this poll, keep monitoring
+        if self._is_transient(err):
+            s.retry_count = 0  # reset so one bad poll doesn't accumulate toward limit
+            await self._emit(s, cb, "EXCEPTION",
+                f"Transient exchange error (skipping poll): {err}",
                 {"error": err}, "WARNING")
             return
 
