@@ -27,6 +27,13 @@ from kiteconnect import exceptions as kite_exc
 from app.core.config import get_settings
 from app.core.logging import logger
 from app.services.zerodha_service import zerodha_service
+from app.services.ticker_service import ticker_service
+
+try:
+    from kiteconnect import KiteTicker as _KiteTickerCheck
+    KITE_TICKER_AVAILABLE = True
+except ImportError:
+    KITE_TICKER_AVAILABLE = False
 
 settings = get_settings()
 
@@ -65,6 +72,7 @@ class MonitoringSession:
     target_order_id: str
     api_key: str
     access_token: str
+    instrument_token: int = 0   # Zerodha instrument token for WebSocket subscription
 
     # Trailing SL tracking
     peak_premium: float = 0.0
@@ -91,6 +99,7 @@ class OptionsMonitoringAgent:
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
         self._sessions: Dict[str, MonitoringSession] = {}
+        self._sl_locks: Dict[str, asyncio.Lock] = {}  # per-session SL modification lock
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -101,6 +110,7 @@ class OptionsMonitoringAgent:
     ):
         """Launch monitoring as a fire-and-forget background task."""
         self._sessions[session.analysis_id] = session
+        self._sl_locks[session.analysis_id] = asyncio.Lock()
         asyncio.create_task(
             self._monitor_loop(session, event_callback),
             name=f"monitor-{session.analysis_id}",
@@ -122,72 +132,203 @@ class OptionsMonitoringAgent:
 
     async def _monitor_loop(self, s: MonitoringSession, cb: Callable):
         loop = asyncio.get_event_loop()
+        sl_lock = self._sl_locks.get(s.analysis_id, asyncio.Lock())
 
-        while s.status == "MONITORING":
-            await asyncio.sleep(POLL_INTERVAL_SECS)
+        # ── WebSocket tick callback ───────────────────────────────────────────────
+        # Called on every LTP tick from KiteTicker (sub-second latency).
+        async def on_tick(ltp: float):
+            if s.status != "MONITORING":
+                return
+            s.current_premium = ltp
             s.poll_count += 1
 
+            pnl = (ltp - s.entry_fill_price) * s.quantity
+            pnl_pct = (ltp - s.entry_fill_price) / s.entry_fill_price * 100
+            await self._emit(s, cb, "PREMIUM_UPDATE",
+                             f"Premium=₹{ltp:.2f} | P&L=₹{pnl:+.0f} ({pnl_pct:+.1f}%)",
+                             {"premium": ltp, "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct, 2)},
+                             "INFO")
+
+            # Force exit at 3:00 PM
+            if datetime.now().time() >= FORCE_EXIT_TIME:
+                await self._emit(s, cb, "GPT_DECISION",
+                                 "3:00 PM reached — force exiting.", {}, "WARNING")
+                await self._exit_position(s, cb, loop, "TIME_EXIT")
+                return
+
+            # Trailing SL (non-blocking — skip if SL lock held)
+            if not sl_lock.locked():
+                await self._apply_trailing_sl(s, cb, loop, ltp, sl_lock)
+
+        # ── WebSocket order update callback ───────────────────────────────────────
+        # Called when any order status changes — detect fills in real-time.
+        async def on_order_update(data: dict):
+            if s.status != "MONITORING":
+                return
+            oid = str(data.get("order_id", ""))
+            status = str(data.get("status", "")).upper()
+            avg = float(data.get("average_price") or data.get("price") or 0)
+
+            if oid == str(s.sl_order_id) and status == "COMPLETE":
+                s.current_premium = avg
+                pnl = round((avg - s.entry_fill_price) * s.quantity, 2)
+                await self._emit(s, cb, "POSITION_CLOSED",
+                                 f"SL hit. Exit @ ₹{avg:.2f} P&L=₹{pnl:+.0f}",
+                                 {"final_premium": avg, "pnl": pnl, "reason": "SL hit."}, "WARNING")
+                # Cancel target order
+                try:
+                    await loop.run_in_executor(
+                        None, lambda: zerodha_service.kite.cancel_order(
+                            variety=zerodha_service.kite.VARIETY_REGULAR,
+                            order_id=s.target_order_id))
+                except Exception as e:
+                    logger.warning(f"[Monitor] Cancel target after SL fill failed: {e}")
+                s.status = "EXITED"
+
+            elif oid == str(s.target_order_id) and status == "COMPLETE":
+                s.current_premium = avg
+                pnl = round((avg - s.entry_fill_price) * s.quantity, 2)
+                await self._emit(s, cb, "POSITION_CLOSED",
+                                 f"Target hit. Exit @ ₹{avg:.2f} P&L=₹{pnl:+.0f}",
+                                 {"final_premium": avg, "pnl": pnl, "reason": "Target hit."}, "INFO")
+                # Cancel SL order
+                try:
+                    await loop.run_in_executor(
+                        None, lambda: zerodha_service.kite.cancel_order(
+                            variety=zerodha_service.kite.VARIETY_REGULAR,
+                            order_id=s.sl_order_id))
+                except Exception as e:
+                    logger.warning(f"[Monitor] Cancel SL after target fill failed: {e}")
+                s.status = "EXITED"
+
+        # ── Subscribe to WebSocket if instrument_token is available ──────────────
+        ws_active = False
+        if s.instrument_token and KITE_TICKER_AVAILABLE:
             try:
                 zerodha_service.set_credentials(s.api_key, s.access_token)
+                subscribed = ticker_service.subscribe_monitoring(
+                    s.api_key, s.access_token, s.instrument_token, on_tick, loop
+                )
+                ticker_service.add_order_callback(s.api_key, s.access_token, on_order_update)
+                ws_active = subscribed
+                logger.info(
+                    f"[Monitor] WebSocket subscribed — token={s.instrument_token} "
+                    f"symbol={s.symbol}"
+                )
+            except Exception as e:
+                logger.warning(f"[Monitor] WebSocket subscribe failed, falling back to poll: {e}")
+                ws_active = False
 
-                # ── 1. Check if position already closed (SL or target hit) ───
-                closed = await self._check_position_closed(s, loop)
-                if closed:
-                    await self._emit(s, cb, "POSITION_CLOSED",
-                                     "Position already closed (SL or target hit by exchange).",
-                                     {"final_premium": s.current_premium}, "INFO")
-                    s.status = "EXITED"
+        # ── GPT timer task (runs every 5 minutes regardless of tick count) ───────
+        async def gpt_timer():
+            while s.status == "MONITORING":
+                await asyncio.sleep(GPT_EVERY_N_POLLS * POLL_INTERVAL_SECS)
+                if s.status != "MONITORING":
                     break
+                if s.current_premium <= 0:
+                    continue
+                try:
+                    decision = await self._ask_gpt(s, s.current_premium)
+                    await self._act_on_gpt(s, cb, loop, decision, s.current_premium, sl_lock)
+                except Exception as e:
+                    logger.warning(f"[Monitor] GPT timer error: {e}")
 
-                # ── 2. Fetch live premium ─────────────────────────────────────
-                premium = await self._fetch_live_premium(s, loop)
-                if premium is None:
-                    continue  # retry handled inside, will emit if max retries hit
-                s.current_premium = premium
-                s.retry_count = 0
+        gpt_task = asyncio.create_task(gpt_timer())
 
-                pnl = (premium - s.entry_fill_price) * s.quantity
-                pnl_pct = ((premium - s.entry_fill_price) / s.entry_fill_price) * 100
-                await self._emit(s, cb, "PREMIUM_UPDATE",
-                                 f"Premium=₹{premium:.2f} | P&L=₹{pnl:+.0f} ({pnl_pct:+.1f}%)",
-                                 {"premium": premium, "pnl": round(pnl, 2),
-                                  "pnl_pct": round(pnl_pct, 2)}, "INFO")
+        # ── Main wait loop ────────────────────────────────────────────────────────
+        if ws_active:
+            # WebSocket drives everything — just keep alive and check status
+            while s.status == "MONITORING":
+                await asyncio.sleep(5)
+                # Fallback position check every 60s in case WebSocket missed something
+                if s.poll_count > 0 and s.poll_count % 12 == 0:
+                    try:
+                        zerodha_service.set_credentials(s.api_key, s.access_token)
+                        closed, reason = await self._check_position_closed(s, loop)
+                        if closed:
+                            pnl = round((s.current_premium - s.entry_fill_price) * s.quantity, 2)
+                            await self._emit(s, cb, "POSITION_CLOSED",
+                                             f"{reason} Exit @ ₹{s.current_premium:.2f} P&L=₹{pnl:+.0f}",
+                                             {"final_premium": s.current_premium, "pnl": pnl, "reason": reason},
+                                             "INFO")
+                            s.status = "EXITED"
+                    except Exception:
+                        pass
+        else:
+            # Fallback: original REST polling loop
+            logger.info(f"[Monitor] Using REST poll fallback for {s.symbol}")
+            while s.status == "MONITORING":
+                await asyncio.sleep(POLL_INTERVAL_SECS)
 
-                # ── 3. Force exit at 3:00 PM ──────────────────────────────────
-                if datetime.now().time() >= FORCE_EXIT_TIME:
-                    await self._emit(s, cb, "GPT_DECISION",
-                                     "3:00 PM reached — force exiting to avoid auto square-off risk.",
-                                     {}, "WARNING")
-                    await self._exit_position(s, cb, loop, reason="TIME_EXIT")
+                try:
+                    zerodha_service.set_credentials(s.api_key, s.access_token)
+
+                    closed, close_reason = await self._check_position_closed(s, loop)
+                    if closed:
+                        pnl = round((s.current_premium - s.entry_fill_price) * s.quantity, 2)
+                        await self._emit(s, cb, "POSITION_CLOSED",
+                                         f"{close_reason} Exit @ ₹{s.current_premium:.2f} P&L=₹{pnl:+.0f}",
+                                         {"final_premium": s.current_premium, "pnl": pnl, "reason": close_reason},
+                                         "INFO")
+                        s.status = "EXITED"
+                        break
+
+                    premium = await self._fetch_live_premium(s, loop)
+                    if premium is None:
+                        continue
+                    s.current_premium = premium
+                    s.poll_count += 1
+                    s.retry_count = 0
+
+                    pnl = (premium - s.entry_fill_price) * s.quantity
+                    pnl_pct = ((premium - s.entry_fill_price) / s.entry_fill_price) * 100
+                    await self._emit(s, cb, "PREMIUM_UPDATE",
+                                     f"Premium=₹{premium:.2f} | P&L=₹{pnl:+.0f} ({pnl_pct:+.1f}%)",
+                                     {"premium": premium, "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct, 2)},
+                                     "INFO")
+
+                    if datetime.now().time() >= FORCE_EXIT_TIME:
+                        await self._emit(s, cb, "GPT_DECISION",
+                                         "3:00 PM reached — force exiting.", {}, "WARNING")
+                        await self._exit_position(s, cb, loop, "TIME_EXIT")
+                        break
+
+                    async with sl_lock:
+                        await self._apply_trailing_sl(s, cb, loop, premium, sl_lock)
+
+                except kite_exc.PermissionException as e:
+                    await self._human_alert(s, cb,
+                        f"Permission denied — access token may have expired: {e}",
+                        {"error": str(e), "action_needed": "Re-login and provide new access token"})
                     break
-
-                # ── 4. Trailing SL ────────────────────────────────────────────
-                await self._apply_trailing_sl(s, cb, loop, premium)
-
-                # ── 5. GPT decision every N polls ─────────────────────────────
-                if s.poll_count % GPT_EVERY_N_POLLS == 0:
-                    decision = await self._ask_gpt(s, premium)
-                    await self._act_on_gpt(s, cb, loop, decision, premium)
+                except Exception as e:
+                    await self._handle_unexpected(s, cb, e)
                     if s.status != "MONITORING":
                         break
 
-            except kite_exc.PermissionException as e:
-                await self._human_alert(s, cb,
-                    f"Permission denied — access token may have expired: {e}",
-                    {"error": str(e), "action_needed": "Re-login to Zerodha and provide new access token"})
-                break
-
+        # ── Cleanup ───────────────────────────────────────────────────────────────
+        gpt_task.cancel()
+        if ws_active:
+            try:
+                ticker_service.unsubscribe_monitoring(s.api_key, s.instrument_token, on_tick)
+                ticker_service.remove_order_callback(s.api_key, on_order_update)
             except Exception as e:
-                await self._handle_unexpected(s, cb, e)
-                if s.status != "MONITORING":
-                    break
+                logger.warning(f"[Monitor] WebSocket cleanup error: {e}")
 
         logger.info(f"[Monitor] Loop ended for {s.symbol} status={s.status}")
 
     # ── Step helpers ───────────────────────────────────────────────────────────
 
-    async def _check_position_closed(self, s: MonitoringSession, loop) -> bool:
-        """Return True if SL or target order has already been filled by exchange."""
+    async def _check_position_closed(
+        self, s: MonitoringSession, loop
+    ) -> tuple[bool, str]:
+        """
+        Return (True, reason) if the position has been closed by any means:
+          1. SL or target order filled by exchange (normal exit)
+          2. Net position quantity is 0 (manual exit via Kite app)
+        Returns (False, "") if position is still open.
+        """
+        # ── Check 1: SL or target order filled ───────────────────────────────
         try:
             orders = await loop.run_in_executor(None, zerodha_service.kite.orders)
             for order in orders:
@@ -197,10 +338,57 @@ class OptionsMonitoringAgent:
                     if status == "COMPLETE":
                         avg = float(order.get("average_price", 0))
                         s.current_premium = avg
-                        return True
+                        is_sl = oid == str(s.sl_order_id)
+                        reason = "SL hit." if is_sl else "Target hit."
+                        logger.info(
+                            f"[Monitor] {s.symbol} {reason} order {oid} "
+                            f"@ ₹{avg:.2f}"
+                        )
+                        return True, reason
         except Exception as e:
             logger.warning(f"[Monitor] order check failed: {e}")
-        return False
+
+        # ── Check 2: Manual exit — net position qty dropped to 0 ─────────────
+        try:
+            positions = await loop.run_in_executor(
+                None, zerodha_service.kite.positions
+            )
+            net_positions = positions.get("net", [])
+            for pos in net_positions:
+                if pos.get("tradingsymbol") == s.symbol:
+                    net_qty = int(pos.get("quantity", s.quantity))
+                    if net_qty == 0:
+                        logger.info(
+                            f"[Monitor] {s.symbol} manual exit detected (net qty=0). "
+                            "Cancelling pending SL/target orders."
+                        )
+                        await self._cancel_pending_orders(s, loop)
+                        s.current_premium = float(
+                            pos.get("last_price", s.current_premium)
+                        )
+                        return True, "Manually exited via Kite app."
+                    break
+        except Exception as e:
+            logger.warning(f"[Monitor] position check failed: {e}")
+
+        return False, ""
+
+    async def _cancel_pending_orders(self, s: MonitoringSession, loop):
+        """Cancel SL and target orders after a manual exit."""
+        for oid in [s.sl_order_id, s.target_order_id]:
+            if not oid:
+                continue
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda o=oid: zerodha_service.kite.cancel_order(
+                        variety=zerodha_service.kite.VARIETY_REGULAR,
+                        order_id=o,
+                    ),
+                )
+                logger.info(f"[Monitor] Cancelled order {oid} after manual exit")
+            except Exception as e:
+                logger.warning(f"[Monitor] Cancel order {oid} failed: {e}")
 
     async def _fetch_live_premium(
         self, s: MonitoringSession, loop
@@ -233,7 +421,8 @@ class OptionsMonitoringAgent:
         return None
 
     async def _apply_trailing_sl(
-        self, s: MonitoringSession, cb: Callable, loop, premium: float
+        self, s: MonitoringSession, cb: Callable, loop, premium: float,
+        sl_lock: Optional[asyncio.Lock] = None,
     ):
         """Move SL up whenever premium makes a new peak."""
         if premium <= s.peak_premium:
@@ -249,7 +438,11 @@ class OptionsMonitoringAgent:
             return  # no improvement
 
         new_limit = self._snap_tick(new_trigger * 0.98)
-        updated = await self._modify_sl_order(s, cb, loop, new_trigger, new_limit)
+        if sl_lock:
+            async with sl_lock:
+                updated = await self._modify_sl_order(s, cb, loop, new_trigger, new_limit)
+        else:
+            updated = await self._modify_sl_order(s, cb, loop, new_trigger, new_limit)
         if updated:
             old_sl = s.sl_trigger
             s.sl_trigger = new_trigger
@@ -327,21 +520,50 @@ class OptionsMonitoringAgent:
     async def _exit_position(
         self, s: MonitoringSession, cb: Callable, loop, reason: str
     ):
-        """Cancel SL + target orders, place LIMIT SELL at slight discount for quick fill."""
-        # Cancel pending orders
-        for oid in [s.sl_order_id, s.target_order_id]:
+        """
+        Exit the position safely:
+          1. Cancel SL order and wait for confirmation — placing a SELL while an SL
+             order is still OPEN causes Zerodha to reject with "existing sell order".
+          2. Cancel target order.
+          3. Place LIMIT SELL at current_premium × 0.99 for quick fill.
+        """
+        await self._emit(s, cb, "EXIT_PLACING",
+            f"Preparing exit (reason={reason}): cancelling SL order first…",
+            {"reason": reason}, "WARNING")
+
+        # ── Step 1: Cancel SL order and WAIT for it to reach terminal state ──
+        if s.sl_order_id:
             try:
                 await loop.run_in_executor(
                     None,
-                    lambda o=oid: zerodha_service.kite.cancel_order(
+                    lambda: zerodha_service.kite.cancel_order(
                         variety=zerodha_service.kite.VARIETY_REGULAR,
-                        order_id=o,
+                        order_id=s.sl_order_id,
+                    ),
+                )
+                confirmed = await self._wait_for_order_cancel(s.sl_order_id, loop)
+                if not confirmed:
+                    logger.warning(
+                        f"[Monitor] SL order {s.sl_order_id} did not confirm cancel "
+                        "within 6s — proceeding to place exit anyway"
+                    )
+            except Exception as e:
+                logger.warning(f"[Monitor] Cancel SL {s.sl_order_id} failed: {e}")
+
+        # ── Step 2: Cancel target order (best-effort, no wait needed) ────────
+        if s.target_order_id:
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: zerodha_service.kite.cancel_order(
+                        variety=zerodha_service.kite.VARIETY_REGULAR,
+                        order_id=s.target_order_id,
                     ),
                 )
             except Exception as e:
-                logger.warning(f"[Monitor] cancel order {oid} failed: {e}")
+                logger.warning(f"[Monitor] Cancel target {s.target_order_id} failed: {e}")
 
-        # Place exit LIMIT at current premium - 1% for quick fill
+        # ── Step 3: Place LIMIT SELL exit order ───────────────────────────────
         exit_price = self._snap_tick(s.current_premium * 0.99)
         try:
             exit_order_id = await loop.run_in_executor(
@@ -369,6 +591,33 @@ class OptionsMonitoringAgent:
                 f"CRITICAL: Cannot place exit order: {e}. Close position manually NOW.",
                 {"error": str(e), "action_needed": "Manually sell position on Zerodha app",
                  "symbol": s.symbol, "quantity": s.quantity})
+
+    async def _wait_for_order_cancel(
+        self, order_id: str, loop, timeout: float = 6.0
+    ) -> bool:
+        """
+        Poll order status until CANCELLED / REJECTED / COMPLETE or timeout.
+        Returns True when the order reaches a terminal state.
+        Called before placing an exit SELL to ensure the active SL order
+        (also a SELL) is gone — Zerodha rejects duplicate open SELL orders.
+        """
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            try:
+                orders = await loop.run_in_executor(None, zerodha_service.kite.orders)
+                order = next(
+                    (o for o in orders if str(o.get("order_id", "")) == str(order_id)),
+                    None,
+                )
+                if order:
+                    status = order.get("status", "").upper()
+                    if status in ("CANCELLED", "REJECTED", "COMPLETE"):
+                        logger.info(f"[Monitor] Order {order_id} confirmed {status}")
+                        return True
+            except Exception as e:
+                logger.warning(f"[Monitor] Cancel poll error: {e}")
+            await asyncio.sleep(0.5)
+        return False
 
     # ── GPT decision ───────────────────────────────────────────────────────────
 
@@ -421,7 +670,8 @@ Respond ONLY with valid JSON:
             return {"action": "HOLD", "new_sl": None, "reasoning": "GPT unavailable — holding."}
 
     async def _act_on_gpt(
-        self, s: MonitoringSession, cb: Callable, loop, decision: Dict, premium: float
+        self, s: MonitoringSession, cb: Callable, loop, decision: Dict, premium: float,
+        sl_lock: Optional[asyncio.Lock] = None,
     ):
         action = decision.get("action", "HOLD").upper()
         reasoning = decision.get("reasoning", "")
@@ -439,7 +689,11 @@ Respond ONLY with valid JSON:
             if new_sl_raw and float(new_sl_raw) > s.sl_trigger:
                 new_trigger = self._snap_tick(float(new_sl_raw))
                 new_limit = self._snap_tick(new_trigger * 0.98)
-                updated = await self._modify_sl_order(s, cb, loop, new_trigger, new_limit)
+                if sl_lock:
+                    async with sl_lock:
+                        updated = await self._modify_sl_order(s, cb, loop, new_trigger, new_limit)
+                else:
+                    updated = await self._modify_sl_order(s, cb, loop, new_trigger, new_limit)
                 if updated:
                     old_sl = s.sl_trigger
                     s.sl_trigger = new_trigger

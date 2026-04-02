@@ -74,6 +74,11 @@ except ImportError:
     migrate_execution_up = None
     migrate_execution_down = None
 
+try:
+    from app.migrations.add_daily_pnl_records import apply as apply_daily_pnl
+except ImportError:
+    apply_daily_pnl = None
+
 
 def main():
     """Run or rollback migrations based on command line arguments."""
@@ -114,6 +119,16 @@ def main():
                     logger.info("=" * 70)
                 else:
                     logger.error("❌ fix_execution_schema migration not found")
+                    sys.exit(1)
+            elif migration_name == "add_daily_pnl_records":
+                from app.core.database import engine
+                if apply_daily_pnl:
+                    apply_daily_pnl(engine)
+                    logger.info("=" * 70)
+                    logger.info("✅ DAILY PNL RECORDS MIGRATION SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ add_daily_pnl_records migration not found")
                     sys.exit(1)
             else:
                 logger.error(f"❌ Unknown migration: {migration_name}")

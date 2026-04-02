@@ -539,6 +539,35 @@ class TokenUsage(SQLModel, table=True):
     )
 
 
+class DailyPnlRecord(SQLModel, table=True):
+    """
+    Daily realized P&L snapshot per user.
+    Captured from kite.positions()['day'] each time the performance screen is opened.
+    Aggregated across days to produce the full monthly view without data loss on re-login.
+    """
+    __tablename__ = "vantrade_daily_pnl_records"
+
+    record_id: Optional[int] = Field(default=None, primary_key=True, index=True)
+    user_id: int = Field(foreign_key="vantrade_users.user_id", index=True)
+    trade_date: str = Field(index=True, max_length=10)      # YYYY-MM-DD
+    realized_pnl: Decimal = Field(sa_column=Column(Numeric(12, 2)))
+    gross_profit: Decimal = Field(sa_column=Column(Numeric(12, 2)))
+    gross_loss: Decimal = Field(sa_column=Column(Numeric(12, 2)))
+    total_charges: Decimal = Field(sa_column=Column(Numeric(12, 2)))
+    total_trades: int = Field(default=0)
+    winning_positions: int = Field(default=0)
+    losing_positions: int = Field(default=0)
+    updated_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_daily_pnl_user_date", "user_id", "trade_date"),
+    )
+
+
 class AdminUser(SQLModel, table=True):
     """
     Admin user accounts for dashboard access.

@@ -8,6 +8,7 @@ import '../providers/auth_provider.dart';
 import '../models/options_model.dart';
 import '../utils/api_config.dart';
 import '../services/monitoring_foreground_service.dart';
+import '../services/active_trade_store.dart';
 
 class OptionsResultsScreen extends StatefulWidget {
   final OptionsAnalysis analysis;
@@ -331,6 +332,19 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
               monitorUrl: ApiConfig.optionsMonitorUrl(widget.analysis.analysisId),
               symbol: widget.analysis.index,
             );
+            // Persist session so the user can reopen the monitor after closing the app
+            final tradeData = (data['trade'] as Map<String, dynamic>?);
+            ActiveTradeStore.save(
+              analysisId: widget.analysis.analysisId,
+              symbol: widget.analysis.trade?.optionSymbol ?? widget.analysis.index,
+              optionType: widget.analysis.trade?.optionType ?? 'CE',
+              entryFillPrice: (tradeData?['entry_premium'] as num?)?.toDouble()
+                  ?? widget.analysis.trade?.entryPremium ?? 0,
+              slTrigger: (tradeData?['stop_loss_premium'] as num?)?.toDouble()
+                  ?? widget.analysis.trade?.stopLossPremium ?? 0,
+              targetPrice: (tradeData?['target_premium'] as num?)?.toDouble()
+                  ?? widget.analysis.trade?.targetPremium ?? 0,
+            );
             return;
           }
           if (status == 'COMPLETED' || status == 'FAILED') {
@@ -384,6 +398,7 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
           if (status == 'EXITED' || status == 'STOPPED' || status == 'HUMAN_NEEDED') {
             setState(() => _monitoring = false);
             MonitoringForegroundService.stopMonitoring();
+            ActiveTradeStore.clear();
             break;
           }
         }
@@ -432,6 +447,7 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
       ).timeout(const Duration(seconds: 10));
     } catch (_) {}
     await MonitoringForegroundService.stopMonitoring();
+    await ActiveTradeStore.clear();
     if (mounted) setState(() => _monitoring = false);
   }
 
@@ -849,27 +865,83 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
   }
 
   Widget _buildLevelsCard(OptionsTrade trade) {
+    // Once the trade is live, show ACTUAL execution levels (fill price, real SL/target
+    // orders placed on Zerodha) rather than the AI analysis estimates.
+    final s = _monitorState;
+    final isLive = _monitoring && s != null;
+
+    final entryDisplay = isLive
+        ? (s['entry_fill_price'] as num?)?.toDouble() ?? trade.entryPremium
+        : trade.entryPremium;
+    final slDisplay = isLive
+        ? (s['sl_trigger'] as num?)?.toDouble() ?? trade.stopLossPremium
+        : trade.stopLossPremium;
+    final targetDisplay = isLive
+        ? (s['target_price'] as num?)?.toDouble() ?? trade.targetPremium
+        : trade.targetPremium;
+
+    final rr = (entryDisplay > slDisplay)
+        ? (targetDisplay - entryDisplay) / (entryDisplay - slDisplay)
+        : trade.riskRewardRatio;
+
     return _card(
       icon: Icons.price_change_outlined,
-      title: 'Premium Levels (per unit)',
+      title: isLive ? 'Actual Execution Levels' : 'Premium Levels (per unit)',
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _levelRow('Entry Premium', trade.entryPremium, Colors.blue[700]!),
+          if (isLive) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue[200]!),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.verified_outlined, size: 14, color: Colors.blue[700]),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Live — actual order prices on Zerodha',
+                    style: TextStyle(fontSize: 11, color: Colors.blue[700]),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          _levelRow('Entry (Fill Price)', entryDisplay, Colors.blue[700]!),
           const Divider(height: 16),
-          _levelRow('Stop Loss Premium', trade.stopLossPremium, Colors.red[700]!),
+          _levelRow('Stop Loss (Order Trigger)', slDisplay, Colors.red[700]!),
           const Divider(height: 16),
-          _levelRow('Target Premium', trade.targetPremium, Colors.green[700]!),
+          _levelRow('Target (Limit Order)', targetDisplay, Colors.green[700]!),
           const Divider(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('Risk:Reward', style: TextStyle(color: Colors.grey[700], fontSize: 14)),
               Text(
-                '1 : ${trade.riskRewardRatio.toStringAsFixed(1)}',
+                '1 : ${rr.toStringAsFixed(1)}',
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
             ],
           ),
+          if (isLive) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Analysis Estimate', style: TextStyle(color: Colors.grey[500], fontSize: 11)),
+                Text(
+                  'Entry ${_currency.format(trade.entryPremium)}  '
+                  'SL ${_currency.format(trade.stopLossPremium)}  '
+                  'T ${_currency.format(trade.targetPremium)}',
+                  style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

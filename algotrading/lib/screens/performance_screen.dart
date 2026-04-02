@@ -140,7 +140,7 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
             const SizedBox(height: 4),
             Center(
               child: Text(
-                'Today\'s Trading Performance',
+                'Monthly Trading Performance',
                 style: TextStyle(fontSize: 11, color: Colors.grey[400]),
               ),
             ),
@@ -280,7 +280,7 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
             const SizedBox(height: 16),
 
             // ── Charges breakdown info ────────────────────────────────────
-            _sectionHeader('Charges Breakdown (Est.)', Icons.info_outline),
+            _sectionHeader('Charges Breakdown (F&O Options)', Icons.receipt_outlined),
             const SizedBox(height: 10),
             Card(
               elevation: 2,
@@ -290,15 +290,16 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _chargeInfoRow('Brokerage', 'Min(₹20, 0.03% of turnover) per order'),
-                    _chargeInfoRow('STT', '0.025% on sell turnover (intraday)'),
-                    _chargeInfoRow('Exchange charges', '0.00345% of turnover (NSE)'),
+                    _chargeInfoRow('Brokerage', '₹20 flat per executed order (Zerodha)'),
+                    _chargeInfoRow('STT', '0.0125% on sell premium turnover (F&O)'),
+                    _chargeInfoRow('Exchange charges', '0.053% of premium turnover (NSE options)'),
                     _chargeInfoRow('SEBI charges', '₹10 per crore of turnover'),
                     _chargeInfoRow('GST', '18% on brokerage + exchange charges'),
-                    _chargeInfoRow('Stamp duty', '0.003% on buy turnover'),
+                    _chargeInfoRow('Stamp duty', '0.003% on buy premium turnover'),
                     const SizedBox(height: 8),
                     Text(
-                      '* Charges are estimated. Actual amounts may vary slightly.',
+                      '* Calculated using Zerodha published F&O rate card. '
+                      'Actual brokerage deducted at source may vary by a few rupees.',
                       style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                     ),
                   ],

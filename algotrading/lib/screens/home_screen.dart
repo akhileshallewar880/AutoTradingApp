@@ -16,7 +16,9 @@ import 'gtt_analysis_screen.dart';
 import 'gtt_portfolio_analysis_screen.dart';
 import 'options_input_screen.dart';
 import 'monitor_resume_screen.dart';
+import 'active_monitor_screen.dart';
 import 'holdings_screen.dart';
+import '../services/active_trade_store.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -36,10 +38,16 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic> _indexPrices = {};
   Timer? _indexRefreshTimer;
 
+  // ── Active options trade (persisted across app restarts) ───────────────
+  ActiveTrade? _activeTrade;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initDashboard());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initDashboard();
+      _checkActiveTrade();
+    });
   }
 
   @override
@@ -64,6 +72,12 @@ class _HomeScreenState extends State<HomeScreen> {
         (_) => _fetchIndexPrices(),
       );
     }
+  }
+
+  Future<void> _checkActiveTrade() async {
+    final trade = await ActiveTradeStore.load();
+    if (trade == null || !mounted) return;
+    setState(() => _activeTrade = trade);
   }
 
   Future<void> _fetchIndexPrices() async {
@@ -308,6 +322,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       _buildWelcomeRow(user?.userName ?? 'Trader'),
                       const SizedBox(height: 12),
 
+                      // ── Active trade banner ───────────────────────────────────
+                      if (_activeTrade != null)
+                        _buildActiveTradeBar(_activeTrade!),
+                      if (_activeTrade != null)
+                        const SizedBox(height: 12),
+
                       // ── Live index prices strip ───────────────────────────────
                       if (!auth.isDemoMode && _indexPrices.isNotEmpty)
                         _buildIndexPriceStrip(),
@@ -475,6 +495,91 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── Active trade banner ──────────────────────────────────────────────────
+  Widget _buildActiveTradeBar(ActiveTrade trade) {
+    final isCE = trade.optionType == 'CE';
+    return GestureDetector(
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ActiveMonitorScreen(trade: trade),
+          ),
+        );
+        // Re-check after returning — trade may have ended
+        if (mounted) _checkActiveTrade();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.grey[900]!, Colors.grey[850]!],
+          ),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.5)),
+        ),
+        child: Row(
+          children: [
+            // Pulsing dot
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.3, end: 1.0),
+              duration: const Duration(milliseconds: 900),
+              builder: (_, v, child) => Opacity(opacity: v, child: child),
+              onEnd: () => setState(() {}),
+              child: Container(
+                width: 10, height: 10,
+                decoration: const BoxDecoration(
+                  color: Colors.greenAccent,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Live Trade Active',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    '${trade.symbol}  ${isCE ? "CE ▲" : "PE ▼"}  '
+                    'Entry ₹${trade.entryFillPrice.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.greenAccent.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.4)),
+              ),
+              child: const Text(
+                'View',
+                style: TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

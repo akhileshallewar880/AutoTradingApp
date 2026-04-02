@@ -80,5 +80,6 @@ class MonitorResumeRequest(BaseModel):
     sl_trigger: float = Field(..., gt=0, description="Current SL trigger price")
     sl_limit: float = Field(..., gt=0, description="Current SL limit price")
     target_price: float = Field(..., gt=0, description="Target premium price")
+    instrument_token: int = Field(0, description="Zerodha instrument token for WebSocket subscription")
     api_key: str
     access_token: str

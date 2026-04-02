@@ -19,7 +19,7 @@ Auto square-off at 3:15 PM is the backstop.
 import asyncio
 import uuid
 from datetime import datetime
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Tuple
 from app.core.logging import logger
 from app.services.zerodha_service import zerodha_service
 from app.models.analysis_models import ExecutionUpdate
@@ -31,6 +31,16 @@ class OptionsExecutionAgent:
     FILL_TIMEOUT = 60          # seconds — limit orders at market price fill fast
     NFO_TICK_SIZE = 0.05       # minimum price increment for NFO options
     MARKET_PROTECTION_PCT = 0.02  # 2% above current premium for buy limit (ensures fill)
+    MAX_ENTRY_RETRIES = 3      # max times to retry a rejected entry order
+
+    # Rejection reasons that can be fixed by fetching fresh LTP + recalculating price
+    _PRICE_REJECTION_KEYWORDS = (
+        "price", "range", "tick", "ltp", "circuit", "limit",
+    )
+    # Rejection reasons that cannot be fixed — fail immediately
+    _FATAL_REJECTION_KEYWORDS = (
+        "margin", "fund", "quantity", "lot", "banned", "blocked", "square",
+    )
 
     def __init__(self):
         self.zs = zerodha_service
@@ -75,50 +85,25 @@ class OptionsExecutionAgent:
         self.zs.set_credentials(api_key, access_token)
 
         try:
-            # ── Step 1: Place BUY LIMIT order with market protection ────────
+            # ── Steps 1+2: Place BUY LIMIT with retry on rejection ──────────
             # Zerodha API rejects plain MARKET orders on NFO.
-            # Use LIMIT at entry_premium + 2% slippage, rounded to tick size 0.05.
-            protect_price = self._market_protect_price(entry_premium)
-            await self._send_update(
-                analysis_id, option_symbol, "ORDER_PLACING",
-                (
-                    f"Placing BUY LIMIT order — {quantity} units of {option_symbol} "
-                    f"@ ₹{protect_price:.2f} (market-protection, MIS, NFO)"
-                ),
-                update_callback,
-            )
-
-            entry_order_id = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.zs.kite.place_order(
-                    variety=self.zs.kite.VARIETY_REGULAR,
-                    exchange=self.zs.kite.EXCHANGE_NFO,
-                    tradingsymbol=option_symbol,
-                    transaction_type=self.zs.kite.TRANSACTION_TYPE_BUY,
-                    quantity=quantity,
-                    product=self.zs.kite.PRODUCT_MIS,
-                    order_type=self.zs.kite.ORDER_TYPE_LIMIT,
-                    price=protect_price,
-                ),
-            )
-
-            execution_log["entry_order_id"] = entry_order_id
-            await self._send_update(
-                analysis_id, option_symbol, "ORDER_PLACED",
-                f"BUY LIMIT order placed: order_id={entry_order_id} @ ₹{protect_price:.2f}. Waiting for fill…",
-                update_callback,
-            )
-
-            # ── Step 2: Wait for fill ────────────────────────────────────
-            fill_price = await self._wait_for_fill(
-                entry_order_id, analysis_id, option_symbol, update_callback
+            # We place LIMIT at entry_premium + 2% (market protection).  If the
+            # order is rejected because the price is stale (premium moved since
+            # analysis), we fetch the current LTP and retry up to MAX_ENTRY_RETRIES.
+            entry_order_id, fill_price = await self._place_entry_with_retry(
+                option_symbol=option_symbol,
+                quantity=quantity,
+                entry_premium=entry_premium,
+                analysis_id=analysis_id,
+                update_callback=update_callback,
             )
 
             if fill_price is None:
                 raise RuntimeError(
-                    f"Order {entry_order_id} did not fill within {self.FILL_TIMEOUT}s"
+                    f"Entry order could not be filled after {self.MAX_ENTRY_RETRIES} attempts"
                 )
 
+            execution_log["entry_order_id"] = entry_order_id
             execution_log["fill_price"] = fill_price
             await self._send_update(
                 analysis_id, option_symbol, "ORDER_FILLED",
@@ -127,19 +112,22 @@ class OptionsExecutionAgent:
             )
 
             # ── Step 3: Derive SL from analysis-recommended levels ──────
-            # Prefer the analysis SL adjusted for actual fill slippage.
-            # This keeps the monitoring levels consistent with what the
-            # user saw on the analysis screen.
+            # Scale the analysis SL proportionally to the actual fill price
+            # so the R:R the user approved is preserved.
+            # e.g. analysis entry=₹309 SL=₹306 (1% below) → fill=₹311 SL≈₹308
             if entry_premium > 0 and stop_loss_premium < entry_premium:
-                sl_ratio = stop_loss_premium / entry_premium
+                sl_ratio = stop_loss_premium / entry_premium   # e.g. 0.990
                 raw_sl = fill_price * sl_ratio
             else:
-                sl_ratio = 0.75
-                raw_sl = fill_price * 0.75
+                raw_sl = fill_price * 0.97   # fallback: 3% below fill
 
             # Hard rule: SL trigger MUST be strictly below fill price.
-            # Cap at fill * 0.97, then snap DOWN to nearest NFO tick (0.05).
-            raw_sl = min(raw_sl, fill_price * 0.97)
+            # Only apply the safety guard if the scaled SL is at or above fill.
+            # Do NOT force the SL 3% below fill when the analysis SL was tighter —
+            # that changes the R:R and causes the mismatch the user sees.
+            if raw_sl >= fill_price:
+                raw_sl = fill_price * 0.97
+
             adjusted_sl = self._snap_tick_down(raw_sl)
 
             # Derive target: scale analysis target by same fill/entry ratio
@@ -267,16 +255,224 @@ class OptionsExecutionAgent:
         ticks = round(raw / self.NFO_TICK_SIZE)
         return round(ticks * self.NFO_TICK_SIZE, 2)
 
+    async def _place_entry_with_retry(
+        self,
+        option_symbol: str,
+        quantity: int,
+        entry_premium: float,
+        analysis_id: str,
+        update_callback: Optional[Callable],
+    ) -> Tuple[Optional[str], Optional[float]]:
+        """
+        Place a BUY LIMIT entry order with automatic retry on price-related rejections.
+
+        Strategy on rejection:
+          - Price / range / tick errors → fetch fresh LTP from Zerodha, recalculate
+            market-protection price, and retry (up to MAX_ENTRY_RETRIES).
+          - Fatal errors (margin, quantity, banned, etc.) → fail immediately.
+          - Timeout (did not fill within FILL_TIMEOUT) → widen protection slightly
+            and retry once more.
+
+        Returns (order_id, fill_price) or (None, None) on final failure.
+        """
+        loop = asyncio.get_event_loop()
+        current_premium = entry_premium  # starts with analysis price; refreshed on retry
+
+        for attempt in range(1, self.MAX_ENTRY_RETRIES + 1):
+            protect_price = self._market_protect_price(current_premium)
+
+            await self._send_update(
+                analysis_id, option_symbol, "ORDER_PLACING",
+                (
+                    f"[Attempt {attempt}/{self.MAX_ENTRY_RETRIES}] "
+                    f"Placing BUY LIMIT — {quantity} × {option_symbol} "
+                    f"@ ₹{protect_price:.2f} (LTP basis: ₹{current_premium:.2f}, MIS, NFO)"
+                ),
+                update_callback,
+            )
+
+            try:
+                order_id = await loop.run_in_executor(
+                    None,
+                    lambda p=protect_price: self.zs.kite.place_order(
+                        variety=self.zs.kite.VARIETY_REGULAR,
+                        exchange=self.zs.kite.EXCHANGE_NFO,
+                        tradingsymbol=option_symbol,
+                        transaction_type=self.zs.kite.TRANSACTION_TYPE_BUY,
+                        quantity=quantity,
+                        product=self.zs.kite.PRODUCT_MIS,
+                        order_type=self.zs.kite.ORDER_TYPE_LIMIT,
+                        price=p,
+                    ),
+                )
+            except Exception as place_err:
+                # Zerodha raises InputException for synchronous rejections
+                reason = str(place_err)
+                logger.error(
+                    f"[OptionsExecution] place_order raised on attempt {attempt}: {reason}"
+                )
+                await self._send_update(
+                    analysis_id, option_symbol, "ORDER_REJECTED",
+                    f"Order placement error (attempt {attempt}): {reason}",
+                    update_callback,
+                )
+                refreshed = await self._handle_rejection(
+                    option_symbol, reason, attempt, analysis_id, update_callback
+                )
+                if refreshed is None:
+                    return None, None   # fatal rejection
+                current_premium = refreshed
+                continue
+
+            await self._send_update(
+                analysis_id, option_symbol, "ORDER_PLACED",
+                f"Order placed: {order_id} @ ₹{protect_price:.2f}. Waiting for fill…",
+                update_callback,
+            )
+
+            fill_price, rejection_reason = await self._wait_for_fill(
+                order_id, analysis_id, option_symbol, update_callback
+            )
+
+            if fill_price is not None:
+                return order_id, fill_price
+
+            if rejection_reason is not None:
+                # Order was rejected after being accepted — diagnose and retry
+                refreshed = await self._handle_rejection(
+                    option_symbol, rejection_reason, attempt,
+                    analysis_id, update_callback
+                )
+                if refreshed is None:
+                    return None, None   # fatal rejection
+                current_premium = refreshed
+            else:
+                # Timeout — widen protection by another 1% and retry
+                logger.warning(
+                    f"[OptionsExecution] Fill timeout on attempt {attempt}. "
+                    f"Fetching fresh LTP and widening protection."
+                )
+                ltp = await self._fetch_ltp(option_symbol)
+                current_premium = ltp if ltp else current_premium * 1.01
+                await self._send_update(
+                    analysis_id, option_symbol, "ORDER_TIMEOUT",
+                    (
+                        f"Order did not fill within {self.FILL_TIMEOUT}s "
+                        f"(attempt {attempt}). Fresh LTP: ₹{current_premium:.2f}. Retrying…"
+                    ),
+                    update_callback,
+                )
+
+        logger.error(
+            f"[OptionsExecution] {option_symbol} entry failed after "
+            f"{self.MAX_ENTRY_RETRIES} attempts."
+        )
+        return None, None
+
+    async def _handle_rejection(
+        self,
+        option_symbol: str,
+        reason: str,
+        attempt: int,
+        analysis_id: str,
+        update_callback: Optional[Callable],
+    ) -> Optional[float]:
+        """
+        Triage the rejection reason.
+        Returns a refreshed premium to use for the next attempt,
+        or None if the rejection is fatal and no retry should be made.
+        """
+        reason_lower = reason.lower()
+
+        # Fatal reasons — cannot be fixed programmatically
+        if any(kw in reason_lower for kw in self._FATAL_REJECTION_KEYWORDS):
+            logger.error(
+                f"[OptionsExecution] Fatal rejection for {option_symbol}: {reason}"
+            )
+            await self._send_update(
+                analysis_id, option_symbol, "ORDER_REJECTED",
+                f"Fatal rejection — cannot retry: {reason}",
+                update_callback,
+            )
+            return None
+
+        # Price / range rejections — fetch fresh LTP and retry
+        if any(kw in reason_lower for kw in self._PRICE_REJECTION_KEYWORDS):
+            ltp = await self._fetch_ltp(option_symbol)
+            if ltp and ltp > 0:
+                logger.info(
+                    f"[OptionsExecution] Price rejection on attempt {attempt}. "
+                    f"Fresh LTP for {option_symbol}: ₹{ltp:.2f}"
+                )
+                await self._send_update(
+                    analysis_id, option_symbol, "ORDER_REJECTED",
+                    (
+                        f'Order rejected: "{reason}". '
+                        f"Fetched fresh LTP ₹{ltp:.2f} — recalculating price and retrying…"
+                    ),
+                    update_callback,
+                )
+                return ltp
+            else:
+                logger.error(
+                    f"[OptionsExecution] Price rejection but LTP fetch failed: {reason}"
+                )
+                await self._send_update(
+                    analysis_id, option_symbol, "ORDER_REJECTED",
+                    f"Order rejected and LTP fetch failed: {reason}",
+                    update_callback,
+                )
+                return None
+
+        # Unknown reason — attempt retry with fresh LTP as a best-effort
+        ltp = await self._fetch_ltp(option_symbol)
+        if ltp and ltp > 0 and attempt < self.MAX_ENTRY_RETRIES:
+            await self._send_update(
+                analysis_id, option_symbol, "ORDER_REJECTED",
+                (
+                    f'Order rejected (unknown reason): "{reason}". '
+                    f"Retrying with fresh LTP ₹{ltp:.2f}…"
+                ),
+                update_callback,
+            )
+            return ltp
+
+        await self._send_update(
+            analysis_id, option_symbol, "ORDER_REJECTED",
+            f"Order rejected and out of retries: {reason}",
+            update_callback,
+        )
+        return None
+
+    async def _fetch_ltp(self, option_symbol: str) -> Optional[float]:
+        """Fetch the current last-traded price of an NFO option from Zerodha."""
+        try:
+            loop = asyncio.get_event_loop()
+            nfo_key = f"NFO:{option_symbol}"
+            ltp_data = await loop.run_in_executor(
+                None, lambda: self.zs.kite.ltp([nfo_key])
+            )
+            ltp = ltp_data.get(nfo_key, {}).get("last_price", 0.0)
+            logger.info(f"[OptionsExecution] LTP fetch {option_symbol}: ₹{ltp:.2f}")
+            return float(ltp) if ltp else None
+        except Exception as e:
+            logger.warning(f"[OptionsExecution] LTP fetch failed for {option_symbol}: {e}")
+            return None
+
     async def _wait_for_fill(
         self,
         order_id: str,
         analysis_id: str,
         symbol: str,
         update_callback: Optional[Callable],
-    ) -> Optional[float]:
+    ) -> Tuple[Optional[float], Optional[str]]:
         """
-        Poll order status until COMPLETE or timeout.
-        Returns fill price (average_price) or None on timeout.
+        Poll order status until COMPLETE, REJECTED, CANCELLED, or timeout.
+
+        Returns:
+          (fill_price, None)  — filled successfully
+          (None, reason)      — rejected/cancelled with reason string
+          (None, None)        — timed out without a terminal status
         """
         elapsed = 0
         loop = asyncio.get_event_loop()
@@ -298,22 +494,23 @@ class OptionsExecutionAgent:
                     if status == "COMPLETE":
                         avg_price = float(order.get("average_price", 0))
                         logger.info(
-                            f"[OptionsExecution] {symbol} order {order_id} filled @ ₹{avg_price:.2f}"
+                            f"[OptionsExecution] {symbol} order {order_id} "
+                            f"filled @ ₹{avg_price:.2f}"
                         )
-                        return avg_price
+                        return avg_price, None
                     elif status in ("REJECTED", "CANCELLED"):
+                        reason = order.get("status_message", status)
                         logger.error(
-                            f"[OptionsExecution] Order {order_id} {status}: "
-                            f"{order.get('status_message', '')}"
+                            f"[OptionsExecution] Order {order_id} {status}: {reason}"
                         )
-                        return None
+                        return None, reason
             except Exception as e:
                 logger.warning(f"[OptionsExecution] Status poll error: {e}")
 
         logger.error(
             f"[OptionsExecution] Order {order_id} timeout after {self.FILL_TIMEOUT}s"
         )
-        return None
+        return None, None
 
     async def _send_update(
         self,

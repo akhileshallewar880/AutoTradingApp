@@ -93,7 +93,7 @@ def init_db() -> None:
             Analysis, StockRecommendation, Signal,
             Order, GttOrder, ExecutionUpdate,
             Trade, OpenPosition,
-            MonthlyPerformance, DailyPerformance,
+            MonthlyPerformance, DailyPerformance, DailyPnlRecord,
             AuditLog, ApiCallLog, ErrorLog
         )
 

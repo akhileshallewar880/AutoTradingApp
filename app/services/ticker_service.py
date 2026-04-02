@@ -54,6 +54,8 @@ class _UserTicker:
         self._kt: Optional["KiteTicker"] = None
         self._connected = False
         self._thread: Optional[threading.Thread] = None
+        self._monitoring_callbacks: Dict[int, List] = {}  # instrument_token → [async_fn(ltp)]
+        self._order_callbacks: List = []                   # [async_fn(order_data)]
 
     def start(self):
         if not KITE_TICKER_AVAILABLE:
@@ -78,11 +80,29 @@ class _UserTicker:
                         self._loop.call_soon_threadsafe(q.put_nowait, payload)
                     except Exception:
                         pass
+                # Fire per-token monitoring callbacks
+                token_int = payload["instrument_token"]
+                for cb in list(self._monitoring_callbacks.get(token_int, [])):
+                    try:
+                        asyncio.run_coroutine_threadsafe(cb(payload["last_price"]), self._loop)
+                    except Exception:
+                        pass
+
+        def on_order_update(ws, data):
+            for cb in list(self._order_callbacks):
+                try:
+                    asyncio.run_coroutine_threadsafe(cb(data), self._loop)
+                except Exception:
+                    pass
 
         def on_connect(ws, response):
             self._connected = True
             ws.subscribe(self.tokens)
             ws.set_mode(ws.MODE_FULL, self.tokens)
+            extra = [t for t in self._monitoring_callbacks if t not in self.tokens]
+            if extra:
+                ws.subscribe(extra)
+                ws.set_mode(ws.MODE_LTP, extra)
             logger.info(
                 f"[TickerService] Connected for {self.api_key[:8]}… "
                 f"subscribed to {self.tokens}"
@@ -101,12 +121,40 @@ class _UserTicker:
         self._kt.on_connect = on_connect
         self._kt.on_close = on_close
         self._kt.on_error = on_error
+        self._kt.on_order_update = on_order_update
 
         self._thread = threading.Thread(
             target=self._kt.connect, kwargs={"threaded": True}, daemon=True
         )
         self._thread.start()
         logger.info(f"[TickerService] Ticker thread started for {self.api_key[:8]}…")
+
+    def subscribe_monitoring(self, token: int, callback):
+        self._monitoring_callbacks.setdefault(token, []).append(callback)
+        # Dynamically add to subscription if already connected
+        if self._connected and self._kt:
+            if token not in self.tokens:
+                self.tokens.append(token)
+            self._kt.subscribe([token])
+            self._kt.set_mode(self._kt.MODE_LTP, [token])
+
+    def unsubscribe_monitoring(self, token: int, callback):
+        cbs = self._monitoring_callbacks.get(token, [])
+        try:
+            cbs.remove(callback)
+        except ValueError:
+            pass
+        if not cbs and self._connected and self._kt:
+            self._kt.unsubscribe([token])
+
+    def add_order_callback(self, callback):
+        self._order_callbacks.append(callback)
+
+    def remove_order_callback(self, callback):
+        try:
+            self._order_callbacks.remove(callback)
+        except ValueError:
+            pass
 
     def add_queue(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=200)
@@ -245,6 +293,45 @@ class TickerService:
         except Exception as e:
             logger.error(f"[TickerService] Snapshot failed: {e}")
             return {}
+
+
+    def subscribe_monitoring(
+        self,
+        api_key: str,
+        access_token: str,
+        token: int,
+        callback,
+        loop: asyncio.AbstractEventLoop,
+    ) -> bool:
+        """Subscribe to real-time tick callbacks for a specific instrument token."""
+        if not KITE_TICKER_AVAILABLE:
+            return False
+        # Ensure ticker is running (will include this token on connect)
+        self.start(api_key, access_token, tokens=WATCHLIST_TOKENS + [token])
+        ut = self._tickers.get(api_key)
+        if ut is None:
+            return False
+        ut.subscribe_monitoring(token, callback)
+        return True
+
+    def unsubscribe_monitoring(self, api_key: str, token: int, callback):
+        ut = self._tickers.get(api_key)
+        if ut:
+            ut.unsubscribe_monitoring(token, callback)
+
+    def add_order_callback(self, api_key: str, access_token: str, callback) -> bool:
+        if not KITE_TICKER_AVAILABLE:
+            return False
+        ut = self._tickers.get(api_key)
+        if ut is None:
+            return False
+        ut.add_order_callback(callback)
+        return True
+
+    def remove_order_callback(self, api_key: str, callback):
+        ut = self._tickers.get(api_key)
+        if ut:
+            ut.remove_order_callback(callback)
 
 
 ticker_service = TickerService()

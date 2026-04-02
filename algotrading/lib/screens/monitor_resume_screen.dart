@@ -17,14 +17,15 @@ class MonitorResumeScreen extends StatefulWidget {
 class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  final _symbolCtrl      = TextEditingController();
-  final _quantityCtrl    = TextEditingController();
-  final _fillPriceCtrl   = TextEditingController();
-  final _slOrderCtrl     = TextEditingController();
-  final _targetOrderCtrl = TextEditingController();
-  final _slTriggerCtrl   = TextEditingController();
-  final _slLimitCtrl     = TextEditingController();
-  final _targetPriceCtrl = TextEditingController();
+  final _symbolCtrl          = TextEditingController();
+  final _quantityCtrl        = TextEditingController();
+  final _fillPriceCtrl       = TextEditingController();
+  final _slOrderCtrl         = TextEditingController();
+  final _targetOrderCtrl     = TextEditingController();
+  final _slTriggerCtrl       = TextEditingController();
+  final _slLimitCtrl         = TextEditingController();
+  final _targetPriceCtrl     = TextEditingController();
+  final _instrumentTokenCtrl = TextEditingController();
 
   String _optionType = 'CE';
   bool _isLoading = false;
@@ -38,6 +39,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
     for (final c in [
       _symbolCtrl, _quantityCtrl, _fillPriceCtrl, _slOrderCtrl,
       _targetOrderCtrl, _slTriggerCtrl, _slLimitCtrl, _targetPriceCtrl,
+      _instrumentTokenCtrl,
     ]) { c.dispose(); }
     super.dispose();
   }
@@ -54,18 +56,20 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
     final analysisId = DateTime.now().millisecondsSinceEpoch.toString();
 
     try {
+      final tokenText = _instrumentTokenCtrl.text.trim();
       final body = jsonEncode({
-        'symbol':           _symbolCtrl.text.trim().toUpperCase(),
-        'option_type':      _optionType,
-        'quantity':         int.parse(_quantityCtrl.text.trim()),
-        'fill_price':       double.parse(_fillPriceCtrl.text.trim()),
-        'sl_order_id':      _slOrderCtrl.text.trim(),
-        'target_order_id':  _targetOrderCtrl.text.trim(),
-        'sl_trigger':       double.parse(_slTriggerCtrl.text.trim()),
-        'sl_limit':         double.parse(_slLimitCtrl.text.trim()),
-        'target_price':     double.parse(_targetPriceCtrl.text.trim()),
-        'api_key':          auth.user!.apiKey,
-        'access_token':     auth.user!.accessToken,
+        'symbol':            _symbolCtrl.text.trim().toUpperCase(),
+        'option_type':       _optionType,
+        'quantity':          int.parse(_quantityCtrl.text.trim()),
+        'fill_price':        double.parse(_fillPriceCtrl.text.trim()),
+        'sl_order_id':       _slOrderCtrl.text.trim(),
+        'target_order_id':   _targetOrderCtrl.text.trim(),
+        'sl_trigger':        double.parse(_slTriggerCtrl.text.trim()),
+        'sl_limit':          double.parse(_slLimitCtrl.text.trim()),
+        'target_price':      double.parse(_targetPriceCtrl.text.trim()),
+        'instrument_token':  tokenText.isNotEmpty ? int.tryParse(tokenText) ?? 0 : 0,
+        'api_key':           auth.user!.apiKey,
+        'access_token':      auth.user!.accessToken,
       });
 
       final resp = await http.post(
@@ -257,6 +261,17 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                 numeric: true,
                 validator: (v) =>
                     double.tryParse(v ?? '') == null ? 'Number' : null,
+              ),
+              const SizedBox(height: 20),
+
+              // ── WebSocket token (optional) ────────────────────────────
+              _section('WebSocket (optional)', Icons.wifi_outlined),
+              _field(
+                controller: _instrumentTokenCtrl,
+                label: 'Instrument Token',
+                hint: '10425858  (from Zerodha instruments list)',
+                numeric: true,
+                // Optional — 0 means fall back to REST polling
               ),
               const SizedBox(height: 28),
 

@@ -426,6 +426,7 @@ async def _execute_options_background(
                 target_order_id=str(result.get("target_order_id", "")),
                 api_key=api_key,
                 access_token=access_token,
+                instrument_token=trade.instrument_token,
             )
 
             async def monitoring_callback(event):
@@ -566,6 +567,7 @@ async def resume_monitoring(analysis_id: str, req: MonitorResumeRequest):
         target_order_id=req.target_order_id,
         api_key=req.api_key,
         access_token=req.access_token,
+        instrument_token=req.instrument_token,
     )
 
     async def monitoring_callback(event):
