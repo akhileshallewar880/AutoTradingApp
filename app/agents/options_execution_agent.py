@@ -5,12 +5,15 @@ Workflow for intraday options (MIS):
   1. Place BUY LIMIT order with market-protection price (entry + 2% slippage, rounded
      to NFO tick size 0.05) — Zerodha API rejects plain MARKET orders on NFO.
   2. Wait for fill — capture actual fill price (avg_price)
-  3. Place SL (stop-loss limit) SELL order: trigger=adjusted_sl, price=trigger-2%
-     SL-M is discontinued for F&O by the exchange.
-  4. Place LIMIT SELL order at target premium (take-profit leg).
-     GTT is not supported for MIS options — both SL and target orders are live
-     simultaneously; user must cancel the unfilled one after exit.
-  5. Return execution log with order IDs.
+  3. Place SL (stop-loss limit) SELL order: trigger=adjusted_sl, price=trigger-5%
+     SL-M is discontinued for F&O by the exchange. 5% gap chosen (not 2%) because
+     options can gap down sharply on fast moves, and a 2% limit often goes unfilled.
+  4. Do NOT place a simultaneous target SELL order.
+     Reason: Zerodha treats a second SELL as a new short position and charges short
+     margin, often rejecting it as "insufficient funds" even though you hold a long.
+     Target exits are handled exclusively by the monitoring agent (_check_target_hit
+     + _exit_position), which cancels the SL order before placing the exit SELL so
+     there is never more than one open SELL order at a time.
 
 No GTT is used here — Zerodha does NOT support GTT for MIS orders on options.
 Auto square-off at 3:15 PM is the backstop.
@@ -30,7 +33,9 @@ class OptionsExecutionAgent:
     FILL_POLL_INTERVAL = 3     # seconds between order status checks
     FILL_TIMEOUT = 60          # seconds — limit orders at market price fill fast
     NFO_TICK_SIZE = 0.05       # minimum price increment for NFO options
-    MARKET_PROTECTION_PCT = 0.02  # 2% above current premium for buy limit (ensures fill)
+    MARKET_PROTECTION_PCT = 0.02  # 2% above current premium for BUY LIMIT (ensures fill)
+    SL_LIMIT_GAP_PCT = 0.05       # 5% below SL trigger for the SL-L limit price
+                                   # (options gap down fast; 2% often goes unfilled)
     MAX_ENTRY_RETRIES = 3      # max times to retry a rejected entry order
 
     # Rejection reasons that can be fixed by fetching fresh LTP + recalculating price
@@ -177,25 +182,14 @@ class OptionsExecutionAgent:
             execution_log["sl_trigger"] = adjusted_sl
             execution_log["sl_limit"] = sl_limit_price
 
-            # ── Step 5: Place LIMIT SELL order at target ────────────────
-            # GTT is not supported for MIS options. Place a regular LIMIT SELL.
-            # WARNING: both SL and target orders are live simultaneously —
-            # whichever fills first, the other must be cancelled manually.
-            target_order_id = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.zs.kite.place_order(
-                    variety=self.zs.kite.VARIETY_REGULAR,
-                    exchange=self.zs.kite.EXCHANGE_NFO,
-                    tradingsymbol=option_symbol,
-                    transaction_type=self.zs.kite.TRANSACTION_TYPE_SELL,
-                    quantity=quantity,
-                    product=self.zs.kite.PRODUCT_MIS,
-                    order_type=self.zs.kite.ORDER_TYPE_LIMIT,
-                    price=adjusted_target,
-                ),
-            )
-
-            execution_log["target_order_id"] = target_order_id
+            # ── Step 5: Record target level — NO second SELL order placed ──
+            # Placing a simultaneous LIMIT SELL for the same qty while an SL SELL
+            # is already open causes Zerodha to treat it as a new short position and
+            # reject it for "insufficient funds" (short margin required).
+            # The monitoring agent handles target exits via _check_target_hit():
+            # it cancels the SL order first, then places a single LIMIT SELL, so
+            # there is never more than one open SELL order at any time.
+            execution_log["target_order_id"] = None   # managed by monitoring agent
             execution_log["target_price"] = adjusted_target
             execution_log["status"] = "COMPLETED"
             await self._send_update(
@@ -203,8 +197,8 @@ class OptionsExecutionAgent:
                 (
                     f"Trade active! Fill=₹{fill_price:.2f} | "
                     f"SL trigger=₹{adjusted_sl:.2f} limit=₹{sl_limit_price:.2f} (order {sl_order_id}) | "
-                    f"Target=₹{adjusted_target:.2f} limit sell placed (order {target_order_id}). "
-                    f"⚠️ Cancel whichever order doesn't hit. Auto square-off at 3:15 PM."
+                    f"Target=₹{adjusted_target:.2f} — monitored by AI agent (no second SELL placed). "
+                    f"Auto square-off at 3:15 PM."
                 ),
                 update_callback,
             )
@@ -237,11 +231,12 @@ class OptionsExecutionAgent:
 
     def _sl_limit_price(self, trigger: float) -> float:
         """
-        Return the limit price for an SL (stop-loss limit) SELL order.
-        Set 2% below the trigger, rounded down to the nearest NFO tick (0.05).
-        This ensures the order fills after the trigger is hit even with a gap.
+        Return the limit price for an SL-L (stop-loss limit) SELL order.
+        Set 5% below the trigger, rounded down to the nearest NFO tick (0.05).
+        Options can gap down sharply on fast moves; a 2% gap often goes unfilled.
+        5% gives a wider safety net while still bounding slippage.
         """
-        raw = trigger * (1 - self.MARKET_PROTECTION_PCT)
+        raw = trigger * (1 - self.SL_LIMIT_GAP_PCT)
         ticks = int(raw / self.NFO_TICK_SIZE)
         return round(ticks * self.NFO_TICK_SIZE, 2)
 

@@ -1,16 +1,20 @@
 """
 Options Trading API Routes
 
-GET  /options/expiries              — Available expiry dates for NIFTY/BANKNIFTY
-POST /options/analyze               — Run AI options analysis + generate trade recommendation
-POST /options/{id}/confirm          — Execute the recommended options trade
-GET  /options/{id}/status           — Execution status (polling)
-GET  /options/{id}/monitor          — Monitoring state + events (polling)
-POST /options/{id}/monitor/stop     — Stop monitoring for an analysis
-POST /options/{id}/monitor/resume   — Re-attach AI monitoring to an existing trade after restart
+GET  /options/expiries                      — Available expiry dates for NIFTY/BANKNIFTY
+POST /options/analyze                       — Run AI options analysis + generate trade recommendation
+POST /options/{id}/confirm                  — Execute the recommended options trade
+GET  /options/{id}/status                   — Execution status (polling)
+GET  /options/{id}/monitor                  — Monitoring state + events (polling, ~15s)
+GET  /options/{id}/pnl                      — Lightweight live P&L (polling, every 1s)
+GET  /options/{id}/pnl-stream               — SSE push stream, P&L every 1s (preferred)
+POST /options/{id}/monitor/stop             — Stop monitoring for an analysis
+POST /options/{id}/monitor/resume           — Re-attach AI monitoring to an existing trade after restart
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
+from fastapi.responses import StreamingResponse
+import json
 from app.models.options_models import (
     OptionsRequest,
     OptionsAnalysisResponse,
@@ -593,3 +597,142 @@ async def resume_monitoring(analysis_id: str, req: MonitorResumeRequest):
         "message": f"AI monitoring restarted for {req.symbol}. "
                    f"Fill=₹{req.fill_price} SL=₹{req.sl_trigger} Target=₹{req.target_price}",
     }
+
+
+# ── GET /options/{id}/pnl ────────────────────────────────────────────────────
+
+@router.get("/{analysis_id}/pnl")
+async def get_live_pnl(analysis_id: str):
+    """
+    Lightweight endpoint returning only live P&L data.
+    Poll this every 1 second while status=MONITORING for a Kite-like experience.
+    Prefer the SSE stream (/pnl-stream) if your client supports it.
+    """
+    s = options_monitoring_agent.get_session(analysis_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="No monitoring session found")
+
+    pnl = round((s.current_premium - s.entry_fill_price) * s.quantity, 2) if s.current_premium > 0 else 0.0
+    pnl_pct = round(
+        (s.current_premium - s.entry_fill_price) / s.entry_fill_price * 100, 2
+    ) if s.entry_fill_price > 0 and s.current_premium > 0 else 0.0
+
+    return {
+        "analysis_id": analysis_id,
+        "symbol": s.symbol,
+        "status": s.status,
+        "premium": round(s.current_premium, 2),
+        "entry": round(s.entry_fill_price, 2),
+        "pnl": pnl,
+        "pnl_pct": pnl_pct,
+        "sl_trigger": round(s.sl_trigger, 2),
+        "target_price": round(s.target_price, 2),
+        "peak_premium": round(s.peak_premium, 2),
+    }
+
+
+# ── GET /options/{id}/pnl-stream (SSE) ───────────────────────────────────────
+
+@router.get("/{analysis_id}/pnl-stream")
+async def pnl_stream(analysis_id: str):
+    """
+    Server-Sent Events stream — pushes live P&L every second.
+    The server reads current_premium (updated by KiteTicker or the fast price loop)
+    and pushes it to the client without the client needing to poll.
+
+    Flutter usage:
+      final request = http.Request('GET', Uri.parse('$baseUrl/options/$id/pnl-stream'));
+      final response = await httpClient.send(request);
+      response.stream.transform(utf8.decoder).transform(const LineSplitter())
+        .where((line) => line.startsWith('data: '))
+        .map((line) => jsonDecode(line.substring(6)))
+        .listen((data) { setState(() { pnl = data['pnl']; }); });
+
+    Stream closes automatically when the position is exited or the session ends.
+    """
+    s = options_monitoring_agent.get_session(analysis_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="No monitoring session found")
+
+    async def event_generator():
+        while True:
+            session = options_monitoring_agent.get_session(analysis_id)
+            if session is None:
+                yield f"data: {json.dumps({'status': 'STOPPED', 'closed': True})}\n\n"
+                break
+
+            pnl = round(
+                (session.current_premium - session.entry_fill_price) * session.quantity, 2
+            ) if session.current_premium > 0 else 0.0
+            pnl_pct = round(
+                (session.current_premium - session.entry_fill_price) / session.entry_fill_price * 100, 2
+            ) if session.entry_fill_price > 0 and session.current_premium > 0 else 0.0
+
+            payload = {
+                "symbol":        session.symbol,
+                "status":        session.status,
+                "premium":       round(session.current_premium, 2),
+                "entry":         round(session.entry_fill_price, 2),
+                "pnl":           pnl,
+                "pnl_pct":       pnl_pct,
+                "sl_trigger":    round(session.sl_trigger, 2),
+                "target_price":  round(session.target_price, 2),
+                "peak_premium":  round(session.peak_premium, 2),
+                "closed":        session.status != "MONITORING",
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+
+            if session.status != "MONITORING":
+                break
+
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",   # disable nginx response buffering
+        },
+    )
+
+
+# ── GET /options/{id}/commentary ─────────────────────────────────────────────
+
+@router.get("/{analysis_id}/commentary")
+async def get_options_commentary(analysis_id: str):
+    """
+    Fetch live commentary for an active options monitoring session.
+    Returns up to 100 entries, newest first.
+    Commentary language is set via POST /options/{id}/set-commentary-language.
+    """
+    commentary = options_monitoring_agent.get_commentary(analysis_id)
+    if commentary is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No monitoring session found for analysis_id={analysis_id}",
+        )
+    return {"analysis_id": analysis_id, "commentary": commentary, "count": len(commentary)}
+
+
+# ── POST /options/{id}/set-commentary-language ───────────────────────────────
+
+@router.post("/{analysis_id}/set-commentary-language")
+async def set_options_commentary_language(
+    analysis_id: str,
+    language: str = Query(..., description="'english' or 'hinglish'"),
+):
+    """
+    Switch commentary language for an active options monitoring session.
+    Options:
+      - "english"  — plain English
+      - "hinglish" — Hindi + English mix in Roman script
+    Change takes effect immediately for all future commentary entries.
+    """
+    if language not in ("english", "hinglish"):
+        raise HTTPException(status_code=400, detail="language must be 'english' or 'hinglish'")
+    result = options_monitoring_agent.set_commentary_language(analysis_id, language)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=404, detail=result["detail"])
+    return result

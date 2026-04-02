@@ -339,6 +339,7 @@ class AgentLog:
 
 class UserTradingAgent:
     MAX_LOGS = 200
+    MAX_COMMENTARY = 100
 
     def __init__(
         self,
@@ -373,6 +374,8 @@ class UserTradingAgent:
         self.starting_capital = 0.0
         self.daily_loss_limit_hit = False
         self.logs: List[AgentLog] = []
+        self.commentary: List[Dict] = []
+        self.commentary_language: str = "english"  # "english" | "hinglish"
         self.last_scan_at: Optional[str] = None
         self.started_at: Optional[str] = None
 
@@ -478,6 +481,24 @@ class UserTradingAgent:
         logger.info(f"[Agent:{self.user_id}][{event}] {message}")
         self._write_trade_log(event, message)
 
+    def _add_commentary(self, event: str, message_en: str, message_hi: str, symbol: str = None):
+        """Store a human-readable commentary entry in the configured language."""
+        text = message_hi if self.commentary_language == "hinglish" else message_en
+        entry = {
+            "event": event,
+            "text": text,
+            "symbol": symbol,
+            "timestamp": _ist_now().strftime("%H:%M:%S"),
+        }
+        self.commentary.insert(0, entry)
+        if len(self.commentary) > self.MAX_COMMENTARY:
+            self.commentary = self.commentary[: self.MAX_COMMENTARY]
+
+    def set_commentary_language(self, language: str):
+        """Switch commentary language. 'english' or 'hinglish'."""
+        if language in ("english", "hinglish"):
+            self.commentary_language = language
+
     def _get_kite(self) -> KiteConnect:
         kite = KiteConnect(api_key=self.api_key, timeout=15)
         kite.set_access_token(self.access_token)
@@ -506,6 +527,13 @@ class UserTradingAgent:
             f"Agent started in monitoring-only mode — max_positions={self.max_positions}, "
             f"max_trades={self.max_trades_per_day}, leverage={self.leverage}x. "
             f"Register positions via the app after placing trades manually.",
+        )
+        self._add_commentary(
+            "STARTED",
+            f"Agent is live! Monitoring up to {self.max_positions} position(s) with {self.leverage}x leverage. "
+            f"Place your trades on Zerodha and register them here.",
+            f"Agent live ho gaya! {self.max_positions} position(s) monitor karega {self.leverage}x leverage ke saath. "
+            f"Zerodha pe apni trades lagao aur yahan register karo.",
         )
 
         # Fetch starting capital
@@ -608,6 +636,13 @@ class UserTradingAgent:
             "STOPPED",
             f"Agent stopped — total P&L today: ₹{self.daily_pnl:+.2f}, "
             f"trades: {self.trade_count_today}",
+        )
+        self._add_commentary(
+            "STOPPED",
+            f"Agent stopped. Session summary — Total P&L: ₹{self.daily_pnl:+.2f}, "
+            f"Trades completed: {self.trade_count_today}.",
+            f"Agent band ho gaya. Session summary — Total P&L: ₹{self.daily_pnl:+.2f}, "
+            f"Trades: {self.trade_count_today}.",
         )
         self._close_trade_log()
 
@@ -1070,6 +1105,16 @@ class UserTradingAgent:
             f"Remaining={pos.remaining_quantity} shares | order_id={order_id}",
             symbol=symbol,
         )
+        self._add_commentary(
+            "TARGET_HIT",
+            f"{symbol}: {target_info['label']} hit at ₹{target_info['price']:.2f}! "
+            f"Exited {exit_qty} shares — partial P&L ₹{partial_pnl:+.2f}. "
+            f"{pos.remaining_quantity} shares still running.",
+            f"{symbol}: {target_info['label']} lag gaya ₹{target_info['price']:.2f} pe! "
+            f"{exit_qty} shares nikale — partial P&L ₹{partial_pnl:+.2f}. "
+            f"{pos.remaining_quantity} shares abhi bhi chal rahe hain.",
+            symbol=symbol,
+        )
 
         # If fully closed, clean up and return
         if pos.remaining_quantity <= 0:
@@ -1084,6 +1129,12 @@ class UserTradingAgent:
             self._price_cache.remove_symbol(symbol)
             self.positions.pop(symbol, None)
             self._log("POSITION_CLOSED", f"{symbol}: All targets hit — position fully closed", symbol=symbol)
+            self._add_commentary(
+                "POSITION_CLOSED",
+                f"{symbol}: All targets hit — position fully closed. Well done!",
+                f"{symbol}: Saare targets lag gaye — position poori tarah band. Shabaash!",
+                symbol=symbol,
+            )
             return
 
         # Move SL to new level (breakeven after T1, T1 price after T2)
@@ -1244,6 +1295,14 @@ class UserTradingAgent:
                     f"(limit was ₹{pending.limit_price:.2f}) — qty={qty}",
                     symbol=symbol,
                 )
+                self._add_commentary(
+                    "ORDER_FILLED",
+                    f"{symbol}: Your {pending.action} order just filled at ₹{avg_price:.2f} "
+                    f"({qty} shares). SL at ₹{pending.stop_loss:.2f}, target ₹{pending.target:.2f}. Now monitoring.",
+                    f"{symbol}: Aapka {pending.action} order ₹{avg_price:.2f} pe fill ho gaya "
+                    f"({qty} shares). SL ₹{pending.stop_loss:.2f}, target ₹{pending.target:.2f}. Ab monitoring shuru.",
+                    symbol=symbol,
+                )
 
                 # Build multi-target scaling plan
                 t1_qty = max(1, qty // 2)
@@ -1333,6 +1392,14 @@ class UserTradingAgent:
                 self._log(
                     "ORDER_CANCELLED",
                     f"{pending.symbol}: Order {oid} {zerodha_status} — removed from pending",
+                    symbol=pending.symbol,
+                )
+                self._add_commentary(
+                    "ORDER_CANCELLED",
+                    f"{pending.symbol}: Your {pending.action} order was {zerodha_status.lower()}. "
+                    f"No position was opened. You may place a new order if needed.",
+                    f"{pending.symbol}: Aapka {pending.action} order {zerodha_status.lower()} ho gaya. "
+                    f"Koi position open nahi hua. Zaroorat ho toh nayi order lagao.",
                     symbol=pending.symbol,
                 )
                 filled_ids.append(oid)
@@ -1426,6 +1493,13 @@ class UserTradingAgent:
                     self._log(
                         "SQUAREOFF",
                         f"3:10 PM auto-squareoff — closing {len(self.positions)} position(s): {pos_list}",
+                    )
+                    self._add_commentary(
+                        "SQUAREOFF",
+                        f"3:10 PM approaching — auto squaring off {len(self.positions)} position(s): {pos_list}. "
+                        f"All MIS trades must close before market ends.",
+                        f"3:10 PM aa gaya — {len(self.positions)} position(s) auto square off ho rahe hain: {pos_list}. "
+                        f"Saare MIS trades market band hone se pehle close hone chahiye.",
                     )
                     await self._force_squareoff()
                     continue
@@ -1585,6 +1659,16 @@ class UserTradingAgent:
                                     f"(peak: ₹{pos.watermark:.2f}, trail #{pos.trail_count})",
                                     symbol=symbol,
                                 )
+                                self._add_commentary(
+                                    "TRAIL_SL",
+                                    f"{symbol}: Stop-loss trailed up to ₹{new_sl:.2f} "
+                                    f"(was ₹{old_sl:.2f}). Price peaked at ₹{pos.watermark:.2f} — "
+                                    f"protecting profits. Trail #{pos.trail_count}.",
+                                    f"{symbol}: Stop-loss trail karke ₹{new_sl:.2f} pe aa gaya "
+                                    f"(pehle ₹{old_sl:.2f} tha). Price ₹{pos.watermark:.2f} tak gayi — "
+                                    f"profit protect ho raha hai. Trail #{pos.trail_count}.",
+                                    symbol=symbol,
+                                )
                     else:  # SELL (short)
                         # Update low watermark
                         if ltp < pos.watermark:
@@ -1602,6 +1686,16 @@ class UserTradingAgent:
                                     "TRAIL_SL",
                                     f"{symbol}: SL trailed ₹{old_sl:.2f} → ₹{new_sl:.2f} "
                                     f"(trough: ₹{pos.watermark:.2f}, trail #{pos.trail_count})",
+                                    symbol=symbol,
+                                )
+                                self._add_commentary(
+                                    "TRAIL_SL",
+                                    f"{symbol}: Stop-loss trailed down to ₹{new_sl:.2f} "
+                                    f"(was ₹{old_sl:.2f}). Short position trough ₹{pos.watermark:.2f} — "
+                                    f"protecting short profits. Trail #{pos.trail_count}.",
+                                    f"{symbol}: Short ka stop-loss trail karke ₹{new_sl:.2f} pe aa gaya "
+                                    f"(pehle ₹{old_sl:.2f} tha). Trough ₹{pos.watermark:.2f} — "
+                                    f"short ka profit protect ho raha hai. Trail #{pos.trail_count}.",
                                     symbol=symbol,
                                 )
 
@@ -1630,6 +1724,16 @@ class UserTradingAgent:
                                     f"(bearish reversal — price dropped ₹{reversal:.2f} from peak ₹{pos.watermark:.2f})",
                                     symbol=symbol,
                                 )
+                                self._add_commentary(
+                                    "TARGET_ADJ",
+                                    f"{symbol}: Target revised down to ₹{new_target:.2f} "
+                                    f"(was ₹{old_target:.2f}). Price reversed ₹{reversal:.2f} from peak — "
+                                    f"locking in profits before they shrink further.",
+                                    f"{symbol}: Target ghatake ₹{new_target:.2f} kar diya "
+                                    f"(pehle ₹{old_target:.2f} tha). Price peak se ₹{reversal:.2f} neeche aayi — "
+                                    f"profit lock karne ke liye target adjust kiya.",
+                                    symbol=symbol,
+                                )
                     else:  # SELL (short)
                         reversal = ltp - pos.watermark  # how far price has risen from trough
                         in_profit = ltp < pos.entry_price
@@ -1646,6 +1750,16 @@ class UserTradingAgent:
                                     "TARGET_ADJ",
                                     f"{symbol}: Target revised ₹{old_target:.2f} → ₹{new_target:.2f} "
                                     f"(bullish reversal on short — price rose ₹{reversal:.2f} from trough ₹{pos.watermark:.2f})",
+                                    symbol=symbol,
+                                )
+                                self._add_commentary(
+                                    "TARGET_ADJ",
+                                    f"{symbol}: Short target revised to ₹{new_target:.2f} "
+                                    f"(was ₹{old_target:.2f}). Bullish reversal of ₹{reversal:.2f} from trough — "
+                                    f"securing short profits while we can.",
+                                    f"{symbol}: Short ka target ₹{new_target:.2f} kar diya "
+                                    f"(pehle ₹{old_target:.2f} tha). Price trough se ₹{reversal:.2f} upar aayi — "
+                                    f"short ka profit abhi secure kar rahe hain.",
                                     symbol=symbol,
                                 )
 
@@ -1673,6 +1787,18 @@ class UserTradingAgent:
                         f"[Agent:{self.user_id}] {symbol} closed — "
                         f"P&L=₹{pos.current_pnl:+.2f}, daily_pnl=₹{self.daily_pnl:+.2f}"
                     )
+                    _closed_pnl = pos.current_pnl
+                    _closed_direction = "profit" if _closed_pnl >= 0 else "loss"
+                    self._add_commentary(
+                        "POSITION_CLOSED",
+                        f"{symbol}: Position closed via GTT (SL or target hit). "
+                        f"P&L: ₹{_closed_pnl:+.2f} — a {_closed_direction} of ₹{abs(_closed_pnl):.2f}. "
+                        f"Entry ₹{pos.entry_price:.2f}, exit ≈₹{ltp:.2f}.",
+                        f"{symbol}: Position GTT se band hua (SL ya target hit). "
+                        f"P&L: ₹{_closed_pnl:+.2f} — {'fayda' if _closed_pnl >= 0 else 'nuksan'} ₹{abs(_closed_pnl):.2f}. "
+                        f"Entry ₹{pos.entry_price:.2f}, exit ≈₹{ltp:.2f}.",
+                        symbol=symbol,
+                    )
                     filled_symbols.append(symbol)
                     continue
 
@@ -1685,6 +1811,13 @@ class UserTradingAgent:
                         self._log(
                             "DAILY_LIMIT",
                             f"Daily loss limit {self.max_daily_loss_pct}% hit — no more new trades today",
+                        )
+                        self._add_commentary(
+                            "DAILY_LIMIT",
+                            f"Daily loss limit of {self.max_daily_loss_pct}% has been reached. "
+                            f"No new positions will be opened today. Protect the remaining capital.",
+                            f"Aaj ka loss limit {self.max_daily_loss_pct}% ho gaya. "
+                            f"Aaj koi nayi position open nahi hogi. Bacha hua capital protect karo.",
                         )
 
             # Clean up closed positions and unsubscribe from ticker
@@ -1946,6 +2079,17 @@ class UserTradingAgent:
             f"GTT={gtt_id or 'none'}",
             symbol=symbol,
         )
+        _direction = "long" if action == "BUY" else "short"
+        self._add_commentary(
+            "POSITION_REGISTERED",
+            f"{symbol}: {action} position registered — {quantity} shares at ₹{entry_price:.2f}. "
+            f"Going {_direction}. Stop-loss ₹{stop_loss:.2f}, T1 ₹{t1_price:.2f}, T2 ₹{target:.2f}. "
+            f"Agent is now watching this trade.",
+            f"{symbol}: {action} position register hua — {quantity} shares ₹{entry_price:.2f} pe. "
+            f"{_direction.upper()} side pe hain. SL ₹{stop_loss:.2f}, T1 ₹{t1_price:.2f}, T2 ₹{target:.2f}. "
+            f"Agent ab is trade pe nazar rakh raha hai.",
+            symbol=symbol,
+        )
 
         # Connect KiteTicker now that we have a position to monitor
         if self._ticker_manager and not self._ticker_manager._started and _is_market_open():
@@ -1986,6 +2130,8 @@ class UserTradingAgent:
                 "leverage": self.leverage,
             },
             "recent_logs": [l.to_dict() for l in self.logs[:50]],
+            "commentary": self.commentary[:20],
+            "commentary_language": self.commentary_language,
         }
 
 
@@ -2074,6 +2220,17 @@ class AutonomousAgentManager:
 
     def is_running(self, user_id: str) -> bool:
         return user_id in self._agents and self._agents[user_id].is_running
+
+    def set_commentary_language(self, user_id: str, language: str) -> Dict:
+        if user_id not in self._agents:
+            return {"status": "error", "detail": "No active agent for this user"}
+        self._agents[user_id].set_commentary_language(language)
+        return {"status": "ok", "language": language}
+
+    def get_commentary(self, user_id: str) -> Optional[List[Dict]]:
+        if user_id not in self._agents:
+            return None
+        return self._agents[user_id].commentary
 
     def inject_pending_order(
         self,
