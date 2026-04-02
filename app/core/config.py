@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     DEFAULT_TIMEFRAME: str = "day"
     DEFAULT_RISK_PERCENT: float = 1.0
 
+    # Database Config
+    DB_SERVER: Optional[str] = None
+    DB_NAME: Optional[str] = None
+    DB_USER: Optional[str] = None
+    DB_PASSWORD: Optional[str] = None
+    DB_DRIVER: str = "ODBC Driver 18 for SQL Server"
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+
     # Admin Dashboard Config (kept for potential future use)
     ADMIN_JWT_SECRET: str = "your-secret-key-change-in-production"
 

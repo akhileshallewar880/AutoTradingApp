@@ -1456,43 +1456,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            // Resume Monitor button
-            Expanded(
-              child: Material(
-                color: Colors.orange[800],
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const MonitorResumeScreen(),
-                    ),
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 13),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.restore, color: Colors.white, size: 18),
-                        SizedBox(width: 6),
-                        Text(
-                          'Resume',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
             // Holdings button
             Expanded(
               child: Material(
@@ -1518,50 +1481,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           'Holdings',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            // View GTT Analysis button
-            Expanded(
-              child: Material(
-                color: hasGtts ? Colors.deepPurple[700] : Colors.grey[300],
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: hasGtts
-                      ? () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                GttPortfolioAnalysisScreen(gtts: gtts),
-                          ),
-                        )
-                      : null,
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.analytics_outlined,
-                          color: hasGtts ? Colors.white : Colors.grey[500],
-                          size: 18,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'GTT View',
-                          style: TextStyle(
-                            color: hasGtts ? Colors.white : Colors.grey[500],
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
                           ),

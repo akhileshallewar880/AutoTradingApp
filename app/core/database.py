@@ -6,7 +6,7 @@ Supports Azure SQL Server with connection pooling and automatic table creation.
 from sqlalchemy import create_engine, event, Engine
 from sqlalchemy.pool import QueuePool
 from sqlmodel import SQLModel, Session
-from typing import Generator
+from typing import Generator, Optional
 from app.core.config import get_settings
 from app.core.logging import logger
 
@@ -19,31 +19,46 @@ def get_database_url() -> str:
     Uses pyodbc DSN connection format which handles special characters better.
     For Azure SQL, username must include @servername suffix.
     """
-    # Extract server name without domain for @servername suffix
-    server_name = settings.DB_SERVER.split('.')[0]  # e.g., "vanyatradbserver"
+    if not settings.DB_SERVER:
+        raise RuntimeError("DB_SERVER is not configured. Set the DB_SERVER environment variable.")
 
-    # Format: Driver={driver};Server=server;Database=db;UID=user@server;PWD=password;
+    is_local = settings.DB_SERVER.lower() in ("localhost", "127.0.0.1", "::1")
+
+    # Local SQL Server uses self-signed cert — trust it automatically
+    # Azure SQL uses a valid cert — verify it
+    trust_cert = "yes" if is_local else "no"
+    encrypt = "yes"
+
+    # Azure SQL requires @servername suffix in UID; local SA login does not
+    uid = settings.DB_USER if is_local else f"{settings.DB_USER}@{settings.DB_SERVER.split('.')[0]}"
+
     connection_string = (
         f"mssql+pyodbc:///?odbc_connect="
         f"Driver={{{settings.DB_DRIVER}}};"
         f"Server={settings.DB_SERVER};"
         f"Database={settings.DB_NAME};"
-        f"UID={settings.DB_USER}@{server_name};"
+        f"UID={uid};"
         f"PWD={settings.DB_PASSWORD};"
-        f"Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
+        f"Encrypt={encrypt};TrustServerCertificate={trust_cert};Connection Timeout=30;"
     )
     return connection_string
 
-# Create SQLModel engine with connection pooling
-engine = create_engine(
-    get_database_url(),
-    echo=settings.DEBUG,  # Log SQL queries if DEBUG is True
-    poolclass=QueuePool,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-    pool_recycle=3600,  # Recycle connections after 1 hour
-    pool_pre_ping=True,  # Test connection before using from pool
-)
+
+def _create_engine():
+    if not settings.DB_SERVER:
+        return None
+    return create_engine(
+        get_database_url(),
+        echo=settings.DEBUG,
+        poolclass=QueuePool,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_recycle=3600,
+        pool_pre_ping=True,
+    )
+
+# Create SQLModel engine with connection pooling (None when DB not configured)
+engine = _create_engine()
 
 @event.listens_for(Engine, "connect")
 def receive_connect(dbapi_conn, connection_record):
@@ -58,15 +73,9 @@ def get_session() -> Generator[Session, None, None]:
     """
     FastAPI dependency for database sessions.
     Yields a SQLModel Session that is automatically closed after use.
-
-    Example:
-        from fastapi import Depends
-
-        @app.get("/users")
-        async def get_users(session: Session = Depends(get_session)):
-            users = session.query(User).all()
-            return users
     """
+    if engine is None:
+        raise RuntimeError("Database is not configured.")
     with Session(engine) as session:
         yield session
 
@@ -75,19 +84,11 @@ def init_db() -> None:
     """
     Initialize database by creating all tables defined in SQLModel models.
     Call this on application startup.
-
-    This function:
-    1. Imports all model definitions (triggers metadata registration)
-    2. Creates VanTrade-specific tables (only if they don't already exist)
-    3. Does NOT drop or modify tables from other apps using the same database
-    4. Logs success/failure
-
-    Note: Requires all models to be imported before calling this function.
-    Models are imported in __init__.py files.
     """
+    if engine is None:
+        logger.warning("Skipping DB init — DB_SERVER not configured.")
+        return
     try:
-        # Import all models to register them with SQLModel metadata
-        # This must be done before create_all()
         from app.models.db_models import (
             User, ApiCredential, Session as DbSession,
             Analysis, StockRecommendation, Signal,
@@ -97,8 +98,6 @@ def init_db() -> None:
             AuditLog, ApiCallLog, ErrorLog
         )
 
-        # Create tables only if they don't exist (checkfirst=True)
-        # This preserves other apps' tables in the same database
         logger.info("Creating VanTrade tables (if they don't exist)...")
         SQLModel.metadata.create_all(engine, checkfirst=True)
         logger.info("✓ Database initialized successfully - VanTrade tables created/verified")
@@ -111,8 +110,9 @@ def init_db() -> None:
 def close_db() -> None:
     """
     Close database connections on application shutdown.
-    Call this on application shutdown.
     """
+    if engine is None:
+        return
     try:
         engine.dispose()
         logger.info("✓ Database connections closed")
