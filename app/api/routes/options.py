@@ -7,6 +7,7 @@ POST /options/{id}/confirm          — Execute the recommended options trade
 GET  /options/{id}/status           — Execution status (polling)
 GET  /options/{id}/monitor          — Monitoring state + events (polling)
 POST /options/{id}/monitor/stop     — Stop monitoring for an analysis
+POST /options/{id}/monitor/resume   — Re-attach AI monitoring to an existing trade after restart
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
@@ -16,6 +17,7 @@ from app.models.options_models import (
     OptionsTrade,
     OptionsConfirmation,
     OptionsExpiriesResponse,
+    MonitorResumeRequest,
 )
 from app.models.analysis_models import ExecutionUpdate
 from app.services.options_service import options_service
@@ -403,6 +405,8 @@ async def _execute_options_background(
             api_key=api_key,
             access_token=access_token,
             update_callback=update_callback,
+            analysis_sl=trade.stop_loss_premium,
+            analysis_target=trade.target_premium,
         )
 
         if result["status"] == "COMPLETED" and result.get("fill_price"):
@@ -525,3 +529,65 @@ async def stop_monitoring(analysis_id: str):
         raise HTTPException(status_code=404, detail="No monitoring session found")
     options_monitoring_agent.stop_monitoring(analysis_id)
     return {"status": "STOPPED", "analysis_id": analysis_id}
+
+
+# ── POST /options/{id}/monitor/resume ─────────────────────────────────────────
+
+@router.post("/{analysis_id}/monitor/resume")
+async def resume_monitoring(analysis_id: str, req: MonitorResumeRequest):
+    """
+    Re-attach AI monitoring to an existing trade after a server restart.
+
+    The client provides position details from Zerodha's order book (fill price,
+    SL order ID, target order ID, current SL trigger/limit, target price).
+    A new MonitoringSession is created and the monitoring loop is restarted
+    from where it logically left off.
+
+    Returns 409 if a monitoring session for this analysis_id is already active.
+    """
+    existing = options_monitoring_agent.get_session(analysis_id)
+    if existing and existing.status == "MONITORING":
+        return {
+            "status": "ALREADY_MONITORING",
+            "analysis_id": analysis_id,
+            "message": "Monitoring is already active for this trade.",
+        }
+
+    session = MonitoringSession(
+        analysis_id=analysis_id,
+        symbol=req.symbol,
+        option_type=req.option_type.upper(),
+        quantity=req.quantity,
+        entry_fill_price=req.fill_price,
+        sl_trigger=req.sl_trigger,
+        sl_limit=req.sl_limit,
+        target_price=req.target_price,
+        sl_order_id=req.sl_order_id,
+        target_order_id=req.target_order_id,
+        api_key=req.api_key,
+        access_token=req.access_token,
+    )
+
+    async def monitoring_callback(event):
+        _options_monitoring_events.setdefault(analysis_id, []).append({
+            "timestamp": event.timestamp,
+            "event_type": event.event_type,
+            "message": event.message,
+            "data": event.data,
+            "alert_level": event.alert_level,
+        })
+
+    options_monitoring_agent.start_monitoring(session, monitoring_callback)
+
+    logger.info(
+        f"[Monitor-Resume] Reattached monitoring for {req.symbol} "
+        f"analysis_id={analysis_id} fill=₹{req.fill_price} sl=₹{req.sl_trigger}"
+    )
+
+    return {
+        "status": "MONITORING",
+        "analysis_id": analysis_id,
+        "symbol": req.symbol,
+        "message": f"AI monitoring restarted for {req.symbol}. "
+                   f"Fill=₹{req.fill_price} SL=₹{req.sl_trigger} Target=₹{req.target_price}",
+    }

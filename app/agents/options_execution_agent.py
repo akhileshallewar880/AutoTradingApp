@@ -47,6 +47,9 @@ class OptionsExecutionAgent:
         api_key: str,
         access_token: str,
         update_callback: Optional[Callable] = None,
+        # Preserve analysis-recommended levels for display continuity
+        analysis_sl: float = 0.0,
+        analysis_target: float = 0.0,
     ) -> Dict:
         """
         Execute a Nifty/BankNifty options trade:
@@ -123,13 +126,14 @@ class OptionsExecutionAgent:
                 update_callback,
             )
 
-            # ── Step 3: Recalculate SL relative to actual fill ──────────
-            # Scale SL proportionally to actual fill (handles slippage).
+            # ── Step 3: Derive SL from analysis-recommended levels ──────
+            # Prefer the analysis SL adjusted for actual fill slippage.
+            # This keeps the monitoring levels consistent with what the
+            # user saw on the analysis screen.
             if entry_premium > 0 and stop_loss_premium < entry_premium:
                 sl_ratio = stop_loss_premium / entry_premium
                 raw_sl = fill_price * sl_ratio
             else:
-                # Fallback: 25% below fill price
                 sl_ratio = 0.75
                 raw_sl = fill_price * 0.75
 
@@ -138,9 +142,27 @@ class OptionsExecutionAgent:
             raw_sl = min(raw_sl, fill_price * 0.97)
             adjusted_sl = self._snap_tick_down(raw_sl)
 
+            # Derive target: scale analysis target by same fill/entry ratio
+            # so it stays consistent with the R:R the user approved.
+            if entry_premium > 0 and analysis_target > entry_premium:
+                target_ratio = (analysis_target - entry_premium) / entry_premium
+                raw_target = fill_price * (1 + target_ratio)
+            else:
+                # Fallback: 2× the SL distance above fill
+                raw_target = fill_price + (fill_price - adjusted_sl) * 2.0
+            adjusted_target = self._round_to_tick(raw_target)
+
+            # Ensure target > fill > sl
+            if adjusted_target <= fill_price:
+                adjusted_target = self._round_to_tick(
+                    fill_price + (fill_price - adjusted_sl) * 2.0
+                )
+
             logger.info(
-                f"[OptionsExecution] SL calc: fill=₹{fill_price:.2f} "
-                f"sl_ratio={sl_ratio:.3f} raw=₹{raw_sl:.4f} snapped=₹{adjusted_sl:.2f}"
+                f"[OptionsExecution] Levels: fill=₹{fill_price:.2f} "
+                f"sl=₹{adjusted_sl:.2f} target=₹{adjusted_target:.2f} "
+                f"(analysis entry=₹{entry_premium:.2f} sl=₹{stop_loss_premium:.2f} "
+                f"target=₹{analysis_target:.2f})"
             )
 
             # ── Step 4: Place SL (Stop-Loss Limit) SELL order ──────────
@@ -166,11 +188,6 @@ class OptionsExecutionAgent:
             execution_log["sl_order_id"] = sl_order_id
             execution_log["sl_trigger"] = adjusted_sl
             execution_log["sl_limit"] = sl_limit_price
-            adjusted_target = round(
-                fill_price + (fill_price - adjusted_sl) * 2.0, 1
-            )
-            # Snap target to tick size
-            adjusted_target = self._round_to_tick(adjusted_target)
 
             # ── Step 5: Place LIMIT SELL order at target ────────────────
             # GTT is not supported for MIS options. Place a regular LIMIT SELL.

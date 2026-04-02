@@ -128,7 +128,11 @@ For your chosen option (CE or PE), specify:
 - Stop-loss premium: level to exit if trade goes wrong (25–30% below entry)
 - Target premium: level to take profit (minimum 2× the risk)
 - Lots to trade (can be less than {lots} if risk is too high)
-- Confidence score: 0.0 (no confidence) to 1.0 (very high confidence)
+- Confidence score: calibrated as follows — be honest, do NOT default to 0.8:
+    0.9–1.0 : 4–5 votes aligned, strong crossover, clear trend
+    0.7–0.89 : 3 votes, decent signal, moderate conviction
+    0.5–0.69 : 2 votes or mixed signals, marginal trade
+    < 0.5   : weak signal, consider returning NONE instead
 - Suggested hold minutes: how many minutes to hold before exiting if neither SL nor target is hit (15–90 min for intraday; shorter near end of day or on weak signals)
 - Hold reasoning: one sentence explaining why that hold duration (e.g. "momentum trade, exit by 11 AM before lunch drift")
 - Reasoning: detailed explanation of your decision

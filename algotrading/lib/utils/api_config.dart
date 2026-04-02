@@ -49,6 +49,7 @@ class ApiConfig {
   static String optionsStatusUrl(String id) => '$baseUrl/options/$id/status';
   static String optionsMonitorUrl(String id) => '$baseUrl/options/$id/monitor';
   static String optionsMonitorStopUrl(String id) => '$baseUrl/options/$id/monitor/stop';
+  static String optionsMonitorResumeUrl(String id) => '$baseUrl/options/$id/monitor/resume';
 
   // Portfolio endpoints (paid Kite API)
   static const String holdingsUrl = '$baseUrl/portfolio/holdings';

@@ -57,6 +57,9 @@ dependencies:
   # Audio playback for danger alerts
   audioplayers: ^6.0.0
 
+  # Android foreground service — keeps monitoring alive when app is backgrounded
+  flutter_foreground_task: ^8.15.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

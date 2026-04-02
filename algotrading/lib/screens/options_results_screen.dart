@@ -7,6 +7,7 @@ import 'package:audioplayers/audioplayers.dart';
 import '../providers/auth_provider.dart';
 import '../models/options_model.dart';
 import '../utils/api_config.dart';
+import '../services/monitoring_foreground_service.dart';
 
 class OptionsResultsScreen extends StatefulWidget {
   final OptionsAnalysis analysis;
@@ -36,9 +37,32 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
 
   @override
+  void initState() {
+    super.initState();
+    // Receive live updates forwarded from the background isolate
+    MonitoringForegroundService.addDataCallback(_onForegroundData);
+  }
+
+  @override
   void dispose() {
+    MonitoringForegroundService.removeDataCallback(_onForegroundData);
     _audioPlayer.dispose();
     super.dispose();
+  }
+
+  // Called by the foreground task isolate every 15 s with fresh monitor data
+  void _onForegroundData(Object data) {
+    if (!mounted || data is! Map) return;
+    final map = Map<String, dynamic>.from(data);
+    final hasAlert = map['has_human_alert'] == true;
+    setState(() {
+      _monitorState = map;
+    });
+    if (hasAlert && !_hasHumanAlert) {
+      setState(() => _hasHumanAlert = true);
+      _playDangerSound();
+      _showHumanAlertBanner(_monitorEvents);
+    }
   }
 
   // ── Execute trade ────────────────────────────────────────────────────────
@@ -302,6 +326,11 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
             });
             _polling = false;
             _startMonitoringPoll();
+            // Keep monitoring alive even when app is backgrounded / screen off
+            MonitoringForegroundService.startMonitoring(
+              monitorUrl: ApiConfig.optionsMonitorUrl(widget.analysis.analysisId),
+              symbol: widget.analysis.index,
+            );
             return;
           }
           if (status == 'COMPLETED' || status == 'FAILED') {
@@ -354,6 +383,7 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
           // Stop polling when monitoring ends
           if (status == 'EXITED' || status == 'STOPPED' || status == 'HUMAN_NEEDED') {
             setState(() => _monitoring = false);
+            MonitoringForegroundService.stopMonitoring();
             break;
           }
         }
@@ -401,6 +431,7 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
         Uri.parse(ApiConfig.optionsMonitorStopUrl(widget.analysis.analysisId)),
       ).timeout(const Duration(seconds: 10));
     } catch (_) {}
+    await MonitoringForegroundService.stopMonitoring();
     if (mounted) setState(() => _monitoring = false);
   }
 

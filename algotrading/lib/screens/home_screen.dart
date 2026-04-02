@@ -15,6 +15,7 @@ import 'backtest_screen.dart';
 import 'gtt_analysis_screen.dart';
 import 'gtt_portfolio_analysis_screen.dart';
 import 'options_input_screen.dart';
+import 'monitor_resume_screen.dart';
 import 'holdings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -1335,6 +1336,43 @@ class _HomeScreenState extends State<HomeScreen> {
                         SizedBox(width: 6),
                         Text(
                           'Options',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Resume Monitor button
+            Expanded(
+              child: Material(
+                color: Colors.orange[800],
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const MonitorResumeScreen(),
+                    ),
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 13),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.restore, color: Colors.white, size: 18),
+                        SizedBox(width: 6),
+                        Text(
+                          'Resume',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 13,

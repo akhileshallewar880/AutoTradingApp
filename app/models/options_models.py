@@ -67,3 +67,18 @@ class OptionsConfirmation(BaseModel):
 class OptionsExpiriesResponse(BaseModel):
     index: str
     expiries: list  # List of date strings YYYY-MM-DD
+
+
+class MonitorResumeRequest(BaseModel):
+    """Sent by the client to re-attach monitoring after a server restart."""
+    symbol: str = Field(..., description="Zerodha tradingsymbol e.g. NIFTY2640722200CE")
+    option_type: str = Field(..., description="CE or PE")
+    quantity: int = Field(..., gt=0)
+    fill_price: float = Field(..., gt=0, description="Actual fill price from execution")
+    sl_order_id: str = Field(..., description="Zerodha order ID of the active SL order")
+    target_order_id: str = Field(..., description="Zerodha order ID of the active target order")
+    sl_trigger: float = Field(..., gt=0, description="Current SL trigger price")
+    sl_limit: float = Field(..., gt=0, description="Current SL limit price")
+    target_price: float = Field(..., gt=0, description="Target premium price")
+    api_key: str
+    access_token: str
