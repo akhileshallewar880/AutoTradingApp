@@ -186,10 +186,12 @@ Respond ONLY with valid JSON:
             return self._validate_response(result, entry_premium_ce, entry_premium_pe, lots)
 
         except Exception as e:
-            logger.error(f"[OptionsLLMAgent] GPT call failed ({type(e).__name__}): {e}")
-            # Fallback: use engine signal directly
+            err_type = type(e).__name__
+            err_msg = str(e)[:200]
+            logger.error(f"[OptionsLLMAgent] GPT call failed ({err_type}): {e}")
             return self._fallback_response(
-                engine_signal, entry_premium_ce, entry_premium_pe, lots
+                engine_signal, entry_premium_ce, entry_premium_pe, lots,
+                error_info=f"{err_type}: {err_msg}",
             )
 
     def _validate_response(
@@ -249,9 +251,12 @@ Respond ONLY with valid JSON:
         premium_ce: float,
         premium_pe: float,
         max_lots: int,
+        error_info: str = "",
     ) -> Dict:
         """Fallback when GPT fails — use engine signal with default levels."""
         sig = engine_signal.get("signal", "NEUTRAL")
+        error_suffix = f" [AI error: {error_info}]" if error_info else ""
+
         if sig == "BUY_CE":
             opt_type = "CE"
             entry = premium_ce
@@ -266,7 +271,7 @@ Respond ONLY with valid JSON:
                 "target_premium": 0,
                 "lots_recommended": 0,
                 "confidence_score": 0.0,
-                "ai_reasoning": "No clear signal from technical indicators.",
+                "ai_reasoning": f"No clear signal from technical indicators.{error_suffix}",
             }
 
         sl = round(entry * 0.72, 1)
@@ -281,7 +286,7 @@ Respond ONLY with valid JSON:
             "suggested_hold_minutes": 30,
             "hold_reasoning": "Default hold — exit within 30 minutes if target/SL not hit.",
             "ai_reasoning": (
-                f"Fallback analysis (GPT unavailable). "
+                f"Fallback analysis (AI call failed{error_suffix}). "
                 f"Engine signal: {sig} with {engine_signal.get('strength', 0)}/5 votes. "
                 + "; ".join(engine_signal.get("reasons", []))
             ),
