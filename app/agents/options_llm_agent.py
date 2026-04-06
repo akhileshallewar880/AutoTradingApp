@@ -186,7 +186,7 @@ Respond ONLY with valid JSON:
             return self._validate_response(result, entry_premium_ce, entry_premium_pe, lots)
 
         except Exception as e:
-            logger.error(f"[OptionsLLMAgent] GPT call failed: {e}")
+            logger.error(f"[OptionsLLMAgent] GPT call failed ({type(e).__name__}): {e}")
             # Fallback: use engine signal directly
             return self._fallback_response(
                 engine_signal, entry_premium_ce, entry_premium_pe, lots

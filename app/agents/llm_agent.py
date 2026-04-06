@@ -150,7 +150,7 @@ Pre-Screened Market Data (sorted by composite_score descending — best signals 
             return data
 
         except Exception as e:
-            logger.error(f"LLM analysis failed: {e}")
+            logger.error(f"LLM analysis failed ({type(e).__name__}): {e}")
             # Emergency fallback: generate basic trades from pre-screened data
             return self._emergency_trade_fallback(market_data, num_stocks, hold_duration_days)
 

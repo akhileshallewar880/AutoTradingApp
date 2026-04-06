@@ -821,8 +821,8 @@ Respond ONLY with valid JSON:
             )
             return json.loads(resp.choices[0].message.content)
         except Exception as e:
-            logger.warning(f"[Monitor] GPT call failed: {e}")
-            return {"action": "HOLD", "new_sl": None, "reasoning": "GPT unavailable — holding."}
+            logger.error(f"[Monitor] GPT call failed ({type(e).__name__}): {e}")
+            return {"action": "HOLD", "new_sl": None, "reasoning": f"Holding (AI check skipped: {type(e).__name__})"}
 
     async def _act_on_gpt(
         self, s: MonitoringSession, cb: Callable, loop, decision: Dict, premium: float,

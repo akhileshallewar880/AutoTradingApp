@@ -30,6 +30,7 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
   double _riskPercent = 1.0;
   bool _isLoading = false;
   String? _error;
+  bool _isMarketDataError = false;  // true when error is "not enough candles"
 
   double _availableBalance = 0;
 
@@ -109,7 +110,7 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
       return;
     }
 
-    setState(() { _isLoading = true; _error = null; });
+    setState(() { _isLoading = true; _error = null; _isMarketDataError = false; });
 
     try {
       // user_id can be Zerodha string (e.g. "AB1234") or numeric VanTrade ID
@@ -150,14 +151,27 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
         );
       } else {
         String msg = 'Analysis failed';
+        bool isDataError = false;
         try {
           final body = jsonDecode(resp.body);
           msg = body['detail'] ?? msg;
+          if (msg.toLowerCase().contains('candle') ||
+              msg.toLowerCase().contains('historical data')) {
+            isDataError = true;
+          }
         } catch (_) {}
-        setState(() => _error = msg);
+        setState(() {
+          _error = msg;
+          _isMarketDataError = isDataError;
+        });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+      if (mounted) {
+        setState(() {
+          _error = e.toString().replaceFirst('Exception: ', '');
+          _isMarketDataError = false;
+        });
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -194,7 +208,10 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
                   _buildRiskPreviewCard(),
                   const SizedBox(height: 24),
                   _buildAnalyzeButton(),
-                  if (_error != null) _buildErrorBox(_error!),
+                  if (_error != null)
+                    _isMarketDataError
+                        ? _buildMarketDataErrorBox()
+                        : _buildErrorBox(_error!),
                   const SizedBox(height: 24),
                 ],
               ),
@@ -553,6 +570,71 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
         padding: const EdgeInsets.symmetric(vertical: 16),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarketDataErrorBox() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.orange[50],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.orange[300]!),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.bar_chart_outlined, color: Colors.orange[800], size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Market Data Unavailable',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange[800],
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Not enough 5-minute candle data from Zerodha. This usually happens when:',
+              style: TextStyle(color: Colors.orange[900], fontSize: 13),
+            ),
+            const SizedBox(height: 6),
+            ...const [
+              '• Market is not yet open (before 9:15 AM IST)',
+              '• It\'s a weekend or public holiday',
+              '• Zerodha historical data API is temporarily slow',
+            ].map((t) => Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: Text(t,
+                      style: TextStyle(
+                          color: Colors.orange[900], fontSize: 12)),
+                )),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _isLoading ? null : _handleAnalyze,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry Analysis'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.orange[800],
+                  side: BorderSide(color: Colors.orange[400]!),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -33,6 +33,10 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
   bool _hasHumanAlert = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
 
+  // ── Trade conclusion ──────────────────────────────────────────────────────
+  // Set when monitoring ends — drives the conclusion overlay.
+  Map<String, dynamic>? _conclusion;
+
   final _purple = const Color(0xFF7C3AED);
   final _indigo = const Color(0xFF4F46E5);
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
@@ -394,11 +398,28 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
             _showHumanAlertBanner(events);
           }
 
-          // Stop polling when monitoring ends
+          // Stop polling when monitoring ends → show conclusion screen
           if (status == 'EXITED' || status == 'STOPPED' || status == 'HUMAN_NEEDED') {
-            setState(() => _monitoring = false);
-            MonitoringForegroundService.stopMonitoring();
-            ActiveTradeStore.clear();
+            final finalPnl = (data['pnl'] as num?)?.toDouble();
+            final finalPremium = (data['current_premium'] as num?)?.toDouble();
+            final closeReason = _inferCloseReason(events, status);
+            setState(() {
+              _monitoring = false;
+              _conclusion = {
+                'status': status,
+                'pnl': finalPnl,
+                'pnl_pct': (data['pnl_pct'] as num?)?.toDouble(),
+                'exit_premium': finalPremium,
+                'entry_premium': (data['entry_fill_price'] as num?)?.toDouble()
+                    ?? widget.analysis.trade?.entryPremium,
+                'sl_trigger': (data['sl_trigger'] as num?)?.toDouble(),
+                'target_price': (data['target_price'] as num?)?.toDouble(),
+                'reason': closeReason,
+                'human_alert': status == 'HUMAN_NEEDED',
+              };
+            });
+            // Stop backend monitoring & foreground service
+            _stopMonitoringQuiet();
             break;
           }
         }
@@ -440,6 +461,42 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
     );
   }
 
+  /// Infer a human-readable close reason from the last POSITION_CLOSED event.
+  String _inferCloseReason(List<Map<String, dynamic>> events, String status) {
+    if (status == 'HUMAN_NEEDED') return 'Manual intervention required';
+    if (status == 'STOPPED') return 'Monitoring stopped manually';
+    // Walk events newest-first looking for a POSITION_CLOSED message
+    for (final e in events.reversed) {
+      final type = e['event_type'] as String? ?? '';
+      final msg  = (e['message'] as String? ?? '').toLowerCase();
+      if (type == 'POSITION_CLOSED') {
+        if (msg.contains('target')) return 'Target hit';
+        if (msg.contains('sl') || msg.contains('stop')) return 'Stop-loss hit';
+        if (msg.contains('manual')) return 'Manually closed on Zerodha';
+        if (msg.contains('time') || msg.contains('3:')) return '3 PM time exit';
+        return 'Position closed';
+      }
+      if (type == 'EXIT_PLACED') {
+        if (msg.contains('target')) return 'Target hit';
+        if (msg.contains('time')) return '3 PM time exit';
+        if (msg.contains('gpt') || msg.contains('ai')) return 'AI recommended exit';
+        return 'Exit placed';
+      }
+    }
+    return 'Position closed';
+  }
+
+  /// Stop backend + foreground service without flipping _monitoring (already false).
+  Future<void> _stopMonitoringQuiet() async {
+    try {
+      await http.post(
+        Uri.parse(ApiConfig.optionsMonitorStopUrl(widget.analysis.analysisId)),
+      ).timeout(const Duration(seconds: 10));
+    } catch (_) {}
+    await MonitoringForegroundService.stopMonitoring();
+    await ActiveTradeStore.clear();
+  }
+
   Future<void> _stopMonitoring() async {
     try {
       await http.post(
@@ -456,6 +513,11 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
   @override
   Widget build(BuildContext context) {
     final trade = widget.analysis.trade;
+
+    // Show conclusion overlay as soon as monitoring ends
+    if (_conclusion != null) {
+      return _buildConclusionScreen(_conclusion!);
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -498,6 +560,222 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
             const SizedBox(height: 32),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildConclusionScreen(Map<String, dynamic> c) {
+    final pnl         = (c['pnl'] as num?)?.toDouble() ?? 0.0;
+    final pnlPct      = (c['pnl_pct'] as num?)?.toDouble() ?? 0.0;
+    final exitPremium = (c['exit_premium'] as num?)?.toDouble();
+    final entryPremium= (c['entry_premium'] as num?)?.toDouble();
+    final slTrigger   = (c['sl_trigger'] as num?)?.toDouble();
+    final targetPrice = (c['target_price'] as num?)?.toDouble();
+    final reason      = c['reason'] as String? ?? 'Position closed';
+    final isHuman     = c['human_alert'] == true;
+    final isProfit    = pnl >= 0;
+
+    final bgGradient  = isHuman
+        ? [Colors.red[900]!, Colors.red[700]!]
+        : isProfit
+            ? [const Color(0xFF065F46), const Color(0xFF059669)]
+            : [const Color(0xFF7F1D1D), const Color(0xFFB91C1C)];
+
+    final resultLabel = isHuman ? 'Action Required' : isProfit ? 'Profit' : 'Loss';
+    final resultIcon  = isHuman
+        ? Icons.warning_rounded
+        : isProfit
+            ? Icons.trending_up_rounded
+            : Icons.trending_down_rounded;
+
+    return Scaffold(
+      backgroundColor: Colors.grey[100],
+      appBar: AppBar(
+        title: const Text('Trade Concluded'),
+        backgroundColor: _purple,
+        foregroundColor: Colors.white,
+        automaticallyImplyLeading: false,
+        actions: [
+          TextButton.icon(
+            onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
+            icon: const Icon(Icons.home_outlined, color: Colors.white, size: 18),
+            label: const Text('Home', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── Result hero card ────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: bgGradient,
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                children: [
+                  Icon(resultIcon, color: Colors.white, size: 52),
+                  const SizedBox(height: 12),
+                  Text(
+                    resultLabel,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '₹${pnl.toStringAsFixed(0)}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 48,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    '${pnlPct >= 0 ? '+' : ''}${pnlPct.toStringAsFixed(1)}%  on premium',
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      reason,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // ── Trade summary stats ─────────────────────────────────────
+            _card(
+              icon: Icons.receipt_long_outlined,
+              title: 'Trade Summary',
+              child: Column(
+                children: [
+                  _summaryRow('Symbol', widget.analysis.trade?.optionSymbol ?? widget.analysis.index),
+                  _summaryRow('Type', widget.analysis.trade?.optionType == 'CE' ? 'CALL (CE)' : 'PUT (PE)'),
+                  if (entryPremium != null)
+                    _summaryRow('Entry Premium', '₹${entryPremium.toStringAsFixed(2)}'),
+                  if (exitPremium != null)
+                    _summaryRow('Exit Premium', '₹${exitPremium.toStringAsFixed(2)}'),
+                  if (slTrigger != null)
+                    _summaryRow('Stop-Loss', '₹${slTrigger.toStringAsFixed(2)}'),
+                  if (targetPrice != null)
+                    _summaryRow('Target', '₹${targetPrice.toStringAsFixed(2)}'),
+                  const Divider(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Realised P&L',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      Text(
+                        '₹${pnl.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: isProfit ? Colors.green[700] : Colors.red[700],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // ── Human alert warning ─────────────────────────────────────
+            if (isHuman) ...[
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red[300]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: Colors.red[700], size: 22),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'AI monitoring stopped — manual intervention was required. '
+                        'Please check your Zerodha positions immediately.',
+                        style: TextStyle(color: Colors.red[800], fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // ── Actions ────────────────────────────────────────────────
+            ElevatedButton.icon(
+              onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
+              icon: const Icon(Icons.home_outlined),
+              label: const Text('Back to Dashboard',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _purple,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () {
+                // Pop back to the options input screen
+                Navigator.of(context).pop();
+              },
+              icon: const Icon(Icons.refresh),
+              label: const Text('Analyze Another Trade'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _purple,
+                side: BorderSide(color: _purple),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+            const SizedBox(height: 32),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+          Text(value,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        ],
       ),
     );
   }
