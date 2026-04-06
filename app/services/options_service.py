@@ -362,17 +362,34 @@ class OptionsService:
             f"(token={instrument_token})"
         )
 
-        now = datetime.now()
-        to_dt = now
-        # If market is closed (before 9:15 AM or after 3:30 PM or weekend),
-        # fetch from 2 trading days back so indicators always have enough candles.
-        market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
-        market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
-        if now < market_open or now > market_close or now.weekday() >= 5:
-            from_dt = (now - timedelta(days=3)).replace(hour=9, minute=15, second=0, microsecond=0)
-            to_dt = (now - timedelta(days=1)).replace(hour=15, minute=30, second=0, microsecond=0) if now < market_open else now
-        else:
+        # Always use IST — server may run in UTC so datetime.now() would give wrong
+        # market-hours comparison if we don't force the timezone.
+        import pytz
+        IST = pytz.timezone("Asia/Kolkata")
+        now_ist = datetime.now(IST).replace(tzinfo=None)  # naive IST datetime
+
+        market_open  = now_ist.replace(hour=9,  minute=15, second=0, microsecond=0)
+        market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+        is_weekend   = now_ist.weekday() >= 5  # Sat=5, Sun=6
+
+        if not is_weekend and market_open <= now_ist <= market_close:
+            # Market is live — fetch from today's open to now
             from_dt = market_open
+            to_dt   = now_ist
+        else:
+            # Market is closed (weekend or outside hours) — find the last trading day
+            # Walk back day by day until we land on Mon–Fri
+            last_trading = now_ist - timedelta(days=1)
+            while last_trading.weekday() >= 5:   # skip Sat / Sun
+                last_trading -= timedelta(days=1)
+
+            from_dt = last_trading.replace(hour=9,  minute=15, second=0, microsecond=0)
+            to_dt   = last_trading.replace(hour=15, minute=30, second=0, microsecond=0)
+
+        logger.info(
+            f"[OptionsService] Candle window: {from_dt.strftime('%Y-%m-%d %H:%M')} → "
+            f"{to_dt.strftime('%Y-%m-%d %H:%M')} IST"
+        )
 
         loop = asyncio.get_event_loop()
         try:
