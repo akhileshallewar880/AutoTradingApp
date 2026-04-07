@@ -28,6 +28,7 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
 
   int _lots = 1;
   double _riskPercent = 1.0;
+  double _leverageMultiplier = 1.0;
   bool _isLoading = false;
   String? _error;
   bool _isMarketDataError = false;  // true when error is "not enough candles"
@@ -125,6 +126,7 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
         'risk_percent': _riskPercent,
         'capital_to_use': capital,
         'lots': _lots,
+        'leverage_multiplier': _leverageMultiplier,
         'access_token': auth.user!.accessToken,
         'api_key': auth.user!.apiKey,
         'user_id': parsedUserId,
@@ -204,6 +206,8 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
                   _buildLotsCard(),
                   const SizedBox(height: 16),
                   _buildCapitalCard(),
+                  const SizedBox(height: 16),
+                  _buildLeverageCard(),
                   const SizedBox(height: 16),
                   _buildRiskPreviewCard(),
                   const SizedBox(height: 24),
@@ -486,9 +490,77 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
     );
   }
 
+  Widget _buildLeverageCard() {
+    final leverageLabel = _leverageMultiplier == 1.0
+        ? '1× (No leverage)'
+        : '${_leverageMultiplier.toStringAsFixed(1)}×';
+    final capital = double.tryParse(_capitalController.text.trim()) ?? 0;
+    final baseRisk = capital * _riskPercent / 100;
+    final effectiveRisk = baseRisk * _leverageMultiplier;
+    final color = _leverageMultiplier <= 1.0
+        ? Colors.green[700]!
+        : _leverageMultiplier <= 2.0
+            ? Colors.orange[700]!
+            : Colors.red[700]!;
+
+    return _card(
+      icon: Icons.speed_outlined,
+      title: 'Leverage',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Multiplies your risk budget',
+                style: TextStyle(color: Colors.grey[600], fontSize: 13),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  leverageLabel,
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: _leverageMultiplier,
+            min: 1.0,
+            max: 5.0,
+            divisions: 8,  // 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0
+            activeColor: color,
+            onChanged: (v) => setState(
+                () => _leverageMultiplier = double.parse(v.toStringAsFixed(1))),
+          ),
+          if (capital > 0)
+            Text(
+              'Base risk ₹${baseRisk.toStringAsFixed(0)}  →  '
+              'Effective risk ₹${effectiveRisk.toStringAsFixed(0)}',
+              style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500),
+            ),
+          if (_leverageMultiplier > 2.0)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                '⚠ High leverage increases both profit and loss potential significantly.',
+                style: TextStyle(fontSize: 11, color: Colors.red[700]),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildRiskPreviewCard() {
     final capital = double.tryParse(_capitalController.text.trim()) ?? 0;
-    final maxLoss = capital * _riskPercent / 100;
+    final maxLoss = capital * _riskPercent / 100 * _leverageMultiplier;
     final lotSize = _selectedIndex == 'NIFTY' ? 75 : 30;
     final totalUnits = _lots * lotSize;
     final maxSlPerUnit = totalUnits > 0 ? maxLoss / totalUnits : 0.0;

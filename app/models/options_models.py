@@ -12,6 +12,7 @@ class OptionsRequest(BaseModel):
     api_key: str = Field(..., description="User's Zerodha API key")
     user_id: Optional[Union[int, str]] = Field(None, description="User ID (numeric VanTrade ID or Zerodha string ID)")
     lots: int = Field(default=1, ge=1, le=50, description="Number of lots to trade")
+    leverage_multiplier: float = Field(default=1.0, ge=1.0, le=5.0, description="Risk multiplier: 1×=normal, 2×=double risk, up to 5×")
 
 
 class OptionsTrade(BaseModel):

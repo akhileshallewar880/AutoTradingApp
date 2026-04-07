@@ -199,7 +199,10 @@ async def analyze_options(request: OptionsRequest):
         )
 
         # ── Step 6: Pre-compute risk budget for LLM constraint ───────
-        max_risk_rupees = round(request.capital_to_use * request.risk_percent / 100, 2)
+        leverage = max(1.0, min(float(getattr(request, "leverage_multiplier", 1.0)), 5.0))
+        base_risk_rupees = round(request.capital_to_use * request.risk_percent / 100, 2)
+        max_risk_rupees = round(base_risk_rupees * leverage, 2)
+
         # Max SL distance per unit so that (entry-sl) × lot_size × lots ≤ max_risk
         max_sl_distance_per_unit = round(
             max_risk_rupees / (request.lots * lot_size), 2
@@ -207,7 +210,8 @@ async def analyze_options(request: OptionsRequest):
 
         logger.info(
             f"[Options-Analyze] Risk budget: capital=₹{request.capital_to_use} "
-            f"risk={request.risk_percent}% → max_loss=₹{max_risk_rupees} "
+            f"risk={request.risk_percent}% leverage={leverage}× "
+            f"→ base_loss=₹{base_risk_rupees} max_loss=₹{max_risk_rupees} "
             f"max_sl_dist_per_unit=₹{max_sl_distance_per_unit} "
             f"(lots={request.lots} lot_size={lot_size})"
         )
@@ -240,13 +244,13 @@ async def analyze_options(request: OptionsRequest):
             sl = float(llm_result["stop_loss_premium"])
             target = float(llm_result["target_premium"])
 
-            # ── Risk-based position sizing ─────────────────────────────
-            # Max rupee risk = capital × risk_percent / 100
+            # ── Risk-based position sizing (leverage-aware) ────────────
+            # Max rupee risk = capital × risk_percent / 100 × leverage
             # Risk per lot   = (entry - sl) × lot_size
             # Max safe lots  = floor(max_risk_rupees / risk_per_lot)
             # This is enforced regardless of what GPT recommended.
             risk_per_lot = (entry - sl) * lot_size
-            max_risk_rupees = request.capital_to_use * (request.risk_percent / 100)
+            max_risk_rupees = request.capital_to_use * (request.risk_percent / 100) * leverage
 
             if risk_per_lot > 0:
                 max_safe_lots = max(1, int(max_risk_rupees / risk_per_lot))
@@ -528,12 +532,15 @@ async def get_monitor_state(analysis_id: str):
 
 @router.post("/{analysis_id}/monitor/stop")
 async def stop_monitoring(analysis_id: str):
-    """Manually stop the monitoring agent (e.g. after manual exit on Zerodha)."""
+    """
+    Stop monitoring: cancel the open SL order, place a LIMIT SELL exit, then mark EXITED.
+    Pass ?force=true to skip exit order (e.g. position already closed manually on Zerodha).
+    """
     session = options_monitoring_agent.get_session(analysis_id)
     if not session:
         raise HTTPException(status_code=404, detail="No monitoring session found")
-    options_monitoring_agent.stop_monitoring(analysis_id)
-    return {"status": "STOPPED", "analysis_id": analysis_id}
+    await options_monitoring_agent.stop_and_exit(analysis_id)
+    return {"status": session.status, "analysis_id": analysis_id}
 
 
 # ── POST /options/{id}/monitor/resume ─────────────────────────────────────────

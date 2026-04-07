@@ -25,12 +25,25 @@ class OptionsLLMAgent:
 2. AVOID buying CE when RSI > 75 (overbought — reversal likely)
 3. AVOID buying PE when RSI < 25 (oversold — snap-back likely)
 4. PREFER ATM or 1-strike OTM options for best premium-to-risk ratio
-5. Minimum Risk:Reward = 1:2 for any options trade (target must be 2× the risk)
-6. STOP LOSS on premium = 25–30% of entry premium (e.g., entry ₹100 → SL ₹70–75)
-7. TARGET on premium = entry + 2× (entry - SL) (e.g., entry ₹100, SL ₹75 → target ₹150)
+5. Minimum Risk:Reward = 1:1.5 for any options trade
+6. STOP LOSS on premium = 30–40% of entry premium
+   - entry ₹50  → SL ₹30–35  (loss of ₹15–20)
+   - entry ₹100 → SL ₹60–70  (loss of ₹30–40)
+   - entry ₹150 → SL ₹90–105 (loss of ₹45–60)
+   Tighter SL = smaller lots needed, better capital efficiency
+7. TARGET on premium = entry + 1.5× to 2× (entry - SL)
+   - entry ₹100, SL ₹65 → risk=₹35 → target ₹152–₹170
+   - entry ₹150, SL ₹100 → risk=₹50 → target ₹225 MAX (do not exceed 50% gain)
+   - NEVER set target more than 50% above entry — it is unreachable intraday
+   - For weak signals (strength ≤ 3/5): cap target at 30% above entry
 8. Time filter: Never recommend buying options after 2:00 PM IST
 9. Expiry-day caution: On expiry day, avoid buying options after 1:30 PM (theta decay)
 10. Prefer strong signal (3+/5 indicator votes) — weak signals = gambling, not trading
+11. REALITY CHECK — typical intraday NIFTY/BANKNIFTY option moves:
+    - Small move (30–50 pts index): premium changes 10–25%
+    - Medium move (50–100 pts index): premium changes 25–50%
+    - Large move (100+ pts index): premium changes 50–100%
+    Calibrate your target to the signal strength. Do NOT expect 100% premium gain on a weak signal.
 """
 
     def __init__(self):
@@ -75,6 +88,14 @@ class OptionsLLMAgent:
         expiry_warning = engine_signal.get("expiry_warning", False)
 
         ind = indicators
+        candle_count = ind.get("candle_count", 0)
+        data_quality = ind.get("data_quality", "NORMAL")
+        data_quality_note = (
+            f"\n⚠️ LOW DATA QUALITY: Only {candle_count} candles available "
+            f"(need 35 for reliable MACD). MACD signal may be noisy — "
+            "reduce confidence score by 0.1–0.2 and prefer VWAP/RSI/EMA signals over MACD.\n"
+            if data_quality == "LOW" else ""
+        )
         expiry_warning_note = (
             "\n⚠️ EXPIRY DAY + after 1:30 PM: theta decay is very high — "
             "be extra conservative or avoid trade.\n"
@@ -97,7 +118,7 @@ class OptionsLLMAgent:
   → Total max loss = (entry - SL) × {lot_size} × {lots} ≤ ₹{max_risk_rupees:,.0f}
   → If you cannot place a meaningful SL within this budget, reduce lots_recommended or return NONE.
 
-## Technical Indicators (5-min candles)
+## Technical Indicators (5-min candles, {candle_count} candles){data_quality_note}
 - RSI(14): {ind.get('rsi', 50):.1f}
 - VWAP: ₹{ind.get('vwap', 0):.2f} → Price is {ind.get('price_vs_vwap', 'NEUTRAL')} VWAP
 - MACD Histogram: {ind.get('macd_histogram', 0):.4f}
@@ -210,21 +231,29 @@ Respond ONLY with valid JSON:
             return result
 
         entry = float(result.get("entry_premium", premium_ce if opt_type == "CE" else premium_pe))
-        sl = float(result.get("stop_loss_premium", entry * 0.70))
-        target = float(result.get("target_premium", entry + (entry - sl) * 2))
+        sl = float(result.get("stop_loss_premium", entry * 0.65))
+        target = float(result.get("target_premium", entry + (entry - sl) * 1.5))
         lots = int(result.get("lots_recommended", 1))
         confidence = float(result.get("confidence_score", 0.5))
 
         # Enforce: SL must be below entry for options BUY
         if sl >= entry:
-            sl = round(entry * 0.72, 1)
+            sl = round(entry * 0.65, 1)
             logger.warning(f"[OptionsLLMAgent] Auto-corrected SL to {sl} (was >= entry {entry})")
 
-        # Enforce minimum 1:2 R:R
-        rr = (target - entry) / (entry - sl) if entry > sl else 0
-        if rr < 2.0:
-            target = round(entry + (entry - sl) * 2.0, 1)
-            logger.warning(f"[OptionsLLMAgent] Auto-corrected target to {target} (1:2 R:R)")
+        risk = entry - sl
+
+        # Enforce minimum 1:1.5 R:R
+        rr = (target - entry) / risk if risk > 0 else 0
+        if rr < 1.5:
+            target = round(entry + risk * 1.5, 1)
+            logger.warning(f"[OptionsLLMAgent] Auto-corrected target to {target} (1:1.5 R:R)")
+
+        # Cap target at 50% above entry — anything higher is unrealistic intraday
+        max_target = round(entry * 1.50, 1)
+        if target > max_target:
+            target = max_target
+            logger.warning(f"[OptionsLLMAgent] Capped target to {target} (50% above entry {entry})")
 
         # Clamp lots
         lots = max(1, min(lots, max_lots))
@@ -274,8 +303,9 @@ Respond ONLY with valid JSON:
                 "ai_reasoning": f"No clear signal from technical indicators.{error_suffix}",
             }
 
-        sl = round(entry * 0.72, 1)
-        target = round(entry + (entry - sl) * 2, 1)
+        sl = round(entry * 0.65, 1)   # 35% SL — realistic intraday options stop
+        target = round(entry + (entry - sl) * 1.5, 1)  # 1:1.5 R:R, capped at 50%
+        target = min(target, round(entry * 1.50, 1))
         return {
             "option_type": opt_type,
             "entry_premium": entry,

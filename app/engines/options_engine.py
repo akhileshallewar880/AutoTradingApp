@@ -34,6 +34,15 @@ class OptionsEngine:
             )
             return None
 
+        # Data quality flag — MACD(26) needs 35 candles to fully converge.
+        # Below 35 candles the MACD signal is unreliable (EMA warmup period).
+        candle_count = len(candles)
+        if candle_count < 35:
+            logger.warning(
+                f"[OptionsEngine] Only {candle_count} candles — MACD not fully warmed up "
+                "(need 35 for reliable signal). Flagging low data quality."
+            )
+
         df = pd.DataFrame(candles)
         df.columns = [c.lower() for c in df.columns]  # normalise column names
         df = df.rename(columns={"date": "timestamp"})
@@ -137,7 +146,8 @@ class OptionsEngine:
             "ema_21": ema_21,
             "stoch_k": stoch_k,
             "stoch_d": stoch_d,
-            "candle_count": len(candles),
+            "candle_count": candle_count,
+            "data_quality": "LOW" if candle_count < 35 else "NORMAL",
         }
         vwap_label = "VWAP" if cum_vol.iloc[-1] > 0 else "SMA20(VWAP-proxy)"
         logger.info(

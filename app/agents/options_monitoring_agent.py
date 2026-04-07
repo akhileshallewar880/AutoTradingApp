@@ -40,10 +40,27 @@ settings = get_settings()
 # ── Constants ──────────────────────────────────────────────────────────────────
 POLL_INTERVAL_SECS = 30
 GPT_EVERY_N_POLLS = 5          # call GPT every 5 × 30s = 2.5 minutes
-TRAILING_SL_RATIO = 0.25       # trail SL at 25% of entry premium from peak
 MAX_RETRIES = 3
 FORCE_EXIT_TIME = dtime(15, 0) # 3:00 PM IST
 NFO_TICK = 0.05
+
+# ── Trailing SL tiers ──────────────────────────────────────────────────────────
+# Each tier defines: (min_gain_pct, trailing_distance_as_pct_of_peak)
+# When premium gain crosses the threshold, trailing tightens.
+# Example with entry=₹100:
+#   Gain <20%  (premium <120): trail 30% of peak  → SL at peak×0.70
+#   Gain 20–40% (₹120–₹140) : trail 25% of peak  → SL at peak×0.75
+#   Gain 40–75% (₹140–₹175) : trail 20% of peak  → SL at peak×0.80
+#   Gain 75%+  (premium>₹175): trail 15% of peak  → SL at peak×0.85
+# Additionally: once gain ≥ 10%, SL is locked at breakeven (entry price) minimum.
+TRAILING_TIERS = [
+    (0.75, 0.15),   # gain ≥ 75% → trail 15% from peak  (very tight, lock most profit)
+    (0.40, 0.20),   # gain ≥ 40% → trail 20% from peak
+    (0.20, 0.25),   # gain ≥ 20% → trail 25% from peak
+    (0.00, 0.30),   # gain <  20% → trail 30% from peak  (widest, don't stop out early)
+]
+BREAKEVEN_LOCK_PCT = 0.10   # lock SL at breakeven once gain reaches 10%
+MIN_TRAIL_STEP = 2.0        # minimum ₹ improvement before updating SL order (avoids API spam)
 
 
 # ── Data structures ────────────────────────────────────────────────────────────
@@ -76,8 +93,10 @@ class MonitoringSession:
 
     # Trailing SL tracking
     peak_premium: float = 0.0
-    initial_sl_distance: float = 0.0   # entry - sl_trigger
-    trailing_distance: float = 0.0     # same as initial_sl_distance
+    initial_sl_distance: float = 0.0   # entry - sl_trigger (for reference only)
+    trailing_distance: float = 0.0     # current trailing distance (shrinks as profit grows)
+    breakeven_locked: bool = False      # True once SL has been locked at breakeven
+    current_trail_tier: int = 0         # index into TRAILING_TIERS (0=widest)
 
     # State
     status: str = "MONITORING"  # MONITORING | EXITED | HUMAN_NEEDED | STOPPED
@@ -135,9 +154,31 @@ class OptionsMonitoringAgent:
         )
 
     def stop_monitoring(self, analysis_id: str):
+        """Mark session stopped (no exit order). Use stop_and_exit() for user-initiated stops."""
         session = self._sessions.get(analysis_id)
         if session:
             session.status = "STOPPED"
+
+    async def stop_and_exit(self, analysis_id: str):
+        """
+        Called when the user taps 'Stop Monitoring':
+          1. Cancel the open SL order on Zerodha
+          2. Place a LIMIT SELL to exit the position
+          3. Mark session as EXITED
+        """
+        session = self._sessions.get(analysis_id)
+        if not session:
+            return
+        if session.status != "MONITORING":
+            # Already exited/stopped — nothing to do
+            return
+
+        loop = asyncio.get_event_loop()
+
+        async def _noop_cb(event):
+            pass  # Events emitted during exit are stored on the session; no SSE push needed
+
+        await self._exit_position(session, _noop_cb, loop, reason="MANUAL_STOP")
 
     def get_session(self, analysis_id: str) -> Optional[MonitoringSession]:
         return self._sessions.get(analysis_id)
@@ -555,47 +596,106 @@ class OptionsMonitoringAgent:
         )
         await self._exit_position(s, cb, loop, reason="TARGET_HIT")
 
+    def _get_trail_pct(self, gain_pct: float) -> tuple:
+        """
+        Return (trail_pct, tier_index) for the current gain level.
+        Picks the tightest tier that applies (highest gain threshold first).
+        """
+        for i, (min_gain, trail_pct) in enumerate(TRAILING_TIERS):
+            if gain_pct >= min_gain:
+                return trail_pct, i
+        return TRAILING_TIERS[-1][1], len(TRAILING_TIERS) - 1
+
     async def _apply_trailing_sl(
         self, s: MonitoringSession, cb: Callable, loop, premium: float,
         sl_lock: Optional[asyncio.Lock] = None,
     ):
-        """Move SL up whenever premium makes a new peak."""
+        """
+        Tiered trailing SL:
+          - Trail distance tightens automatically as profit grows
+          - Locks SL at breakeven once gain ≥ 10%
+          - Minimum ₹2 step to avoid spamming the SL order API
+          - Never moves SL downward
+        """
+        # Only trail on new highs
         if premium <= s.peak_premium:
             return
 
         s.peak_premium = premium
-        new_trigger = round(
-            self._snap_tick(premium - s.trailing_distance), 2
-        )
-        new_trigger = max(new_trigger, s.sl_trigger)  # never move SL down
+        entry = s.entry_fill_price
 
-        if new_trigger <= s.sl_trigger:
-            return  # no improvement
+        # ── Determine trailing percentage based on gain tier ─────────────
+        gain_pct = (premium - entry) / entry if entry > 0 else 0.0
+        trail_pct, tier_idx = self._get_trail_pct(gain_pct)
+        trail_distance = self._snap_tick(premium * trail_pct)
+
+        # ── Compute new SL trigger ─────────────────────────────────────────
+        new_trigger = self._snap_tick(premium - trail_distance)
+
+        # ── Breakeven lock: SL must be ≥ entry once gain ≥ 10% ───────────
+        if gain_pct >= BREAKEVEN_LOCK_PCT:
+            new_trigger = max(new_trigger, self._snap_tick(entry))
+            if not s.breakeven_locked and new_trigger >= entry:
+                s.breakeven_locked = True
+                logger.info(
+                    f"[Monitor] {s.symbol} SL locked at breakeven ₹{entry:.2f} "
+                    f"(gain={gain_pct*100:.1f}%)"
+                )
+
+        # ── Never move SL down ────────────────────────────────────────────
+        new_trigger = max(new_trigger, s.sl_trigger)
+
+        # ── Minimum step filter — avoid API spam for tiny moves ──────────
+        if new_trigger - s.sl_trigger < MIN_TRAIL_STEP:
+            return
 
         new_limit = self._snap_tick(new_trigger * 0.98)
+
+        # ── Apply the SL modification ─────────────────────────────────────
         if sl_lock:
             async with sl_lock:
                 updated = await self._modify_sl_order(s, cb, loop, new_trigger, new_limit)
         else:
             updated = await self._modify_sl_order(s, cb, loop, new_trigger, new_limit)
+
         if updated:
             old_sl = s.sl_trigger
+            old_tier = s.current_trail_tier
             s.sl_trigger = new_trigger
             s.sl_limit = new_limit
-            locked_in = (new_trigger - s.entry_fill_price) * s.quantity
+            s.trailing_distance = trail_distance
+            s.current_trail_tier = tier_idx
+
+            locked_pnl = round((new_trigger - entry) * s.quantity, 2)
+            tier_changed = tier_idx < old_tier  # tier_idx lower = tighter tier
+
+            tier_labels = ["30%", "25%", "20%", "15%"]
+            tier_label = tier_labels[tier_idx] if tier_idx < len(tier_labels) else "15%"
+
+            # Build context-aware message
+            if s.breakeven_locked and old_sl < entry <= new_trigger:
+                action_note = "Breakeven locked — no loss possible"
+            elif tier_changed:
+                action_note = f"Trail tightened to {tier_label} (gain={gain_pct*100:.0f}%)"
+            else:
+                action_note = f"Trail={tier_label} of peak"
+
             await self._emit(s, cb, "TRAILING_SL",
-                f"Trailing SL moved ₹{old_sl:.2f} → ₹{new_trigger:.2f} "
-                f"(peak=₹{premium:.2f}, locked=₹{locked_in:+.0f})",
-                {"old_sl": old_sl, "new_sl": new_trigger,
-                 "peak": premium, "locked_pnl": round(locked_in, 2)}, "INFO")
+                f"Trailing SL ₹{old_sl:.2f} → ₹{new_trigger:.2f} "
+                f"({action_note}, peak=₹{premium:.2f}, locked=₹{locked_pnl:+.0f})",
+                {"old_sl": old_sl, "new_sl": new_trigger, "peak": premium,
+                 "locked_pnl": locked_pnl, "trail_pct": trail_pct,
+                 "breakeven_locked": s.breakeven_locked,
+                 "tier": tier_label}, "INFO")
+
             self._add_commentary(
                 s, "TRAILING_SL",
-                f"{s.symbol}: Trailing SL moved up to ₹{new_trigger:.2f} "
-                f"(was ₹{old_sl:.2f}). Premium peaked at ₹{premium:.2f} — "
-                f"₹{abs(locked_in):.0f} profit now protected.",
+                f"{s.symbol}: Trailing SL moved to ₹{new_trigger:.2f} "
+                f"(was ₹{old_sl:.2f}). {action_note}. "
+                f"₹{abs(locked_pnl):.0f} profit now protected.",
                 f"{s.symbol}: Trailing SL ₹{new_trigger:.2f} pe aa gaya "
-                f"(pehle ₹{old_sl:.2f} tha). Premium ₹{premium:.2f} tak gaya — "
-                f"₹{abs(locked_in):.0f} ka profit ab safe hai.",
+                f"(pehle ₹{old_sl:.2f} tha). {action_note}. "
+                f"₹{abs(locked_pnl):.0f} ka profit ab safe hai.",
             )
 
     async def _modify_sl_order(
@@ -732,6 +832,7 @@ class OptionsMonitoringAgent:
             _reason_label = {
                 "TIME_EXIT": "3:00 PM time exit",
                 "GPT_EXIT": "AI recommended exit",
+                "MANUAL_STOP": "Manual stop by user",
             }.get(reason, reason)
             self._add_commentary(
                 s, "EXIT_PLACED",

@@ -30,7 +30,9 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
   bool _monitoring = false;
   Map<String, dynamic>? _monitorState;
   List<Map<String, dynamic>> _monitorEvents = [];
+  List<Map<String, dynamic>> _commentary = [];
   bool _hasHumanAlert = false;
+  int _logTabIndex = 0; // 0 = Commentary, 1 = Raw Log
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   // ── Trade conclusion ──────────────────────────────────────────────────────
@@ -386,9 +388,23 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
               .cast<Map<String, dynamic>>();
           final hasAlert = data['has_human_alert'] == true;
 
+          // Fetch commentary in parallel with the monitor poll
+          List<Map<String, dynamic>> commentary = _commentary;
+          try {
+            final cResp = await http.get(
+              Uri.parse(ApiConfig.optionsCommentaryUrl(widget.analysis.analysisId)),
+            ).timeout(const Duration(seconds: 5));
+            if (cResp.statusCode == 200) {
+              final cData = jsonDecode(cResp.body) as Map<String, dynamic>;
+              commentary = (cData['commentary'] as List<dynamic>? ?? [])
+                  .cast<Map<String, dynamic>>();
+            }
+          } catch (_) {}
+
           setState(() {
             _monitorState = data;
             _monitorEvents = events;
+            _commentary = commentary;
           });
 
           // Danger alert — play sound and show banner
@@ -498,13 +514,22 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
   }
 
   Future<void> _stopMonitoring() async {
+    // Show a loading indicator while the backend cancels SL and exits the position
+    if (mounted) setState(() => _monitoring = true); // keep spinner visible
+
     try {
+      // Backend cancels SL order + places exit SELL — allow up to 20s for order ops
       await http.post(
         Uri.parse(ApiConfig.optionsMonitorStopUrl(widget.analysis.analysisId)),
-      ).timeout(const Duration(seconds: 10));
-    } catch (_) {}
+      ).timeout(const Duration(seconds: 20));
+    } catch (_) {
+      // If request fails/times out, still clean up locally
+    }
+
     await MonitoringForegroundService.stopMonitoring();
     await ActiveTradeStore.clear();
+
+    // Let _pollMonitor pick up the EXITED/STOPPED status and build conclusion screen
     if (mounted) setState(() => _monitoring = false);
   }
 
@@ -794,8 +819,8 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
     final pnlColor = (pnl ?? 0) >= 0 ? Colors.green[700]! : Colors.red[700]!;
     final isAlert = _hasHumanAlert;
 
-    // Latest events (newest first, up to 6)
-    final recentEvents = _monitorEvents.reversed.take(6).toList();
+    final allEvents = _monitorEvents.reversed.toList();
+    final allCommentary = _commentary; // already newest-first from backend
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -875,61 +900,218 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         ),
-        // ── Event log ────────────────────────────────────────────────────
-        if (recentEvents.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _card(
-            icon: Icons.timeline,
-            title: 'Monitor Log',
-            child: Column(
-              children: recentEvents.map((e) {
-                final level = e['alert_level'] as String? ?? 'INFO';
-                final type = e['event_type'] as String? ?? '';
-                final msg = e['message'] as String? ?? '';
-                final ts = e['timestamp'] as String? ?? '';
-                final timeStr = ts.length >= 19 ? ts.substring(11, 19) : ts;
+        // ── Commentary + Log tabs ────────────────────────────────────────
+        const SizedBox(height: 12),
+        _buildLogTabs(allCommentary, allEvents),
+      ],
+    );
+  }
 
-                Color dotColor;
-                switch (level) {
-                  case 'DANGER': dotColor = Colors.red[700]!; break;
-                  case 'WARNING': dotColor = Colors.orange[700]!; break;
-                  default: dotColor = Colors.green[600]!;
-                }
-
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 8, height: 8,
-                        margin: const EdgeInsets.only(top: 4, right: 8),
-                        decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-                      ),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '[$type] $msg',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: level == 'DANGER' ? Colors.red[700] : Colors.grey[800],
-                                fontWeight: level == 'DANGER' ? FontWeight.bold : FontWeight.normal,
-                              ),
-                            ),
-                            Text(timeStr, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
+  Widget _buildLogTabs(
+    List<Map<String, dynamic>> commentary,
+    List<Map<String, dynamic>> events,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── Tab bar ──────────────────────────────────────────────────
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+            ),
+            child: Row(
+              children: [
+                _logTab(0, Icons.record_voice_over_outlined,
+                    'Commentary (${commentary.length})'),
+                _logTab(1, Icons.timeline, 'Raw Log (${events.length})'),
+              ],
             ),
           ),
+          // ── Tab content ──────────────────────────────────────────────
+          SizedBox(
+            height: 280,
+            child: _logTabIndex == 0
+                ? _buildCommentaryList(commentary)
+                : _buildRawLogList(events),
+          ),
         ],
-      ],
+      ),
+    );
+  }
+
+  Widget _logTab(int index, IconData icon, String label) {
+    final selected = _logTabIndex == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _logTabIndex = index),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(index == 0 ? 14 : 0),
+              topRight: Radius.circular(index == 1 ? 14 : 0),
+            ),
+            border: selected
+                ? Border(bottom: BorderSide(color: _purple, width: 2))
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 14, color: selected ? _purple : Colors.grey[500]),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                  color: selected ? _purple : Colors.grey[500],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCommentaryList(List<Map<String, dynamic>> commentary) {
+    if (commentary.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.record_voice_over_outlined, color: Colors.grey[300], size: 36),
+            const SizedBox(height: 8),
+            Text('Commentary will appear here once monitoring starts.',
+                style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                textAlign: TextAlign.center),
+          ],
+        ),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.all(12),
+      itemCount: commentary.length,
+      separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey[100]),
+      itemBuilder: (_, i) {
+        final entry = commentary[i];
+        final event = entry['event'] as String? ?? '';
+        final text = entry['text'] as String? ?? '';
+        final ts = entry['timestamp'] as String? ?? '';
+
+        // Icon per event type
+        IconData icon;
+        Color iconColor;
+        switch (event) {
+          case 'TRAILING_SL':
+            icon = Icons.trending_up; iconColor = Colors.blue[600]!; break;
+          case 'POSITION_CLOSED':
+            icon = Icons.flag_rounded; iconColor = Colors.purple[600]!; break;
+          case 'EXIT_PLACED':
+            icon = Icons.logout; iconColor = Colors.orange[700]!; break;
+          case 'GPT_DECISION':
+            icon = Icons.psychology_outlined; iconColor = Colors.indigo[600]!; break;
+          case 'HUMAN_ALERT':
+            icon = Icons.warning_rounded; iconColor = Colors.red[700]!; break;
+          case 'STARTED':
+            icon = Icons.play_circle_outline; iconColor = Colors.green[600]!; break;
+          default:
+            icon = Icons.info_outline; iconColor = Colors.grey[500]!;
+        }
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, size: 18, color: iconColor),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(text,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: event == 'HUMAN_ALERT' ? Colors.red[700] : Colors.grey[850],
+                          fontWeight: event == 'HUMAN_ALERT' || event == 'POSITION_CLOSED'
+                              ? FontWeight.bold : FontWeight.normal,
+                        )),
+                    const SizedBox(height: 2),
+                    Text(ts, style: TextStyle(fontSize: 10, color: Colors.grey[400])),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildRawLogList(List<Map<String, dynamic>> events) {
+    if (events.isEmpty) {
+      return Center(
+        child: Text('No events yet.',
+            style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(10),
+      itemCount: events.length,
+      itemBuilder: (_, i) {
+        final e = events[i];
+        final level = e['alert_level'] as String? ?? 'INFO';
+        final type = e['event_type'] as String? ?? '';
+        final msg = e['message'] as String? ?? '';
+        final ts = e['timestamp'] as String? ?? '';
+        final timeStr = ts.length >= 19 ? ts.substring(11, 19) : ts;
+
+        Color dotColor;
+        switch (level) {
+          case 'DANGER': dotColor = Colors.red[700]!; break;
+          case 'WARNING': dotColor = Colors.orange[700]!; break;
+          default: dotColor = Colors.green[600]!;
+        }
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 7, height: 7,
+                margin: const EdgeInsets.only(top: 5, right: 8),
+                decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('[$type] $msg',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: level == 'DANGER' ? Colors.red[700] : Colors.grey[700],
+                          fontWeight: level == 'DANGER' ? FontWeight.bold : FontWeight.normal,
+                        )),
+                    Text(timeStr,
+                        style: TextStyle(fontSize: 10, color: Colors.grey[400])),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
