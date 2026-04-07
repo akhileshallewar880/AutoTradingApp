@@ -44,6 +44,7 @@ class ApiConfig {
 
   // Options trading endpoints
   static const String optionsExpiriesUrl = '$baseUrl/options/expiries';
+  static const String optionsPremiumQuoteUrl = '$baseUrl/options/premium-quote';
   static const String optionsAnalyzeUrl = '$baseUrl/options/analyze';
   static String optionsConfirmUrl(String id) => '$baseUrl/options/$id/confirm';
   static String optionsStatusUrl(String id) => '$baseUrl/options/$id/status';

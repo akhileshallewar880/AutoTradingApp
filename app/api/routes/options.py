@@ -2,6 +2,7 @@
 Options Trading API Routes
 
 GET  /options/expiries                      — Available expiry dates for NIFTY/BANKNIFTY
+GET  /options/premium-quote                 — Live ATM CE/PE premiums for a given index+expiry (input screen)
 POST /options/analyze                       — Run AI options analysis + generate trade recommendation
 POST /options/{id}/confirm                  — Execute the recommended options trade
 GET  /options/{id}/status                   — Execution status (polling)
@@ -72,6 +73,89 @@ async def get_expiries(
     except Exception as e:
         logger.error(f"[Options-Expiries] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to fetch expiries: {e}")
+
+
+# ── GET /options/premium-quote ───────────────────────────────────────────────
+
+@router.get("/premium-quote")
+async def get_premium_quote(
+    index: str = Query(..., description="NIFTY or BANKNIFTY"),
+    expiry_date: date = Query(..., description="Expiry date YYYY-MM-DD"),
+    api_key: str = Query(...),
+    access_token: str = Query(...),
+):
+    """
+    Lightweight endpoint for the input screen.
+    Returns current index price + live ATM CE and PE premiums.
+    Used to compute realistic max lots and leverage before running full analysis.
+    """
+    index = index.upper()
+    if index not in ("NIFTY", "BANKNIFTY"):
+        raise HTTPException(status_code=400, detail="index must be NIFTY or BANKNIFTY")
+
+    try:
+        loop = asyncio.get_event_loop()
+
+        # Step 1: live index price
+        current_price = await loop.run_in_executor(
+            None,
+            lambda: options_service.get_index_price(index, api_key, access_token),
+        )
+
+        # Step 2: ATM strike + CE/PE instruments
+        atm_data = await loop.run_in_executor(
+            None,
+            lambda: options_service.select_atm_strike(
+                index, expiry_date, current_price, api_key, access_token
+            ),
+        )
+        if not atm_data:
+            raise HTTPException(status_code=404, detail="No ATM contracts found for given expiry")
+
+        ce_inst = atm_data["ce"]
+        pe_inst = atm_data["pe"]
+        atm_strike = atm_data["atm_strike"]
+        lot_size = options_service.get_lot_size(index)
+
+        # Step 3: live premiums
+        premium_ce = await loop.run_in_executor(
+            None,
+            lambda: options_service.get_option_premium(
+                ce_inst["tradingsymbol"], api_key, access_token
+            ),
+        )
+        premium_pe = await loop.run_in_executor(
+            None,
+            lambda: options_service.get_option_premium(
+                pe_inst["tradingsymbol"], api_key, access_token
+            ),
+        )
+
+        # Use higher of CE/PE as conservative cost estimate (worst case for affordability)
+        est_premium = max(premium_ce, premium_pe)
+
+        logger.info(
+            f"[Options-PremiumQuote] {index} {expiry_date} "
+            f"price={current_price:.2f} strike={atm_strike} "
+            f"CE=₹{premium_ce:.2f} PE=₹{premium_pe:.2f}"
+        )
+
+        return {
+            "index": index,
+            "current_price": round(current_price, 2),
+            "atm_strike": atm_strike,
+            "expiry_date": str(expiry_date),
+            "premium_ce": round(premium_ce, 2),
+            "premium_pe": round(premium_pe, 2),
+            "est_premium": round(est_premium, 2),
+            "lot_size": lot_size,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Options-PremiumQuote] {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch premium quote: {e}")
 
 
 # ── POST /options/analyze ─────────────────────────────────────────────────────

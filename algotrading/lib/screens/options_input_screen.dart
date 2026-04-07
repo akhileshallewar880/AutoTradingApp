@@ -30,6 +30,34 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
   double _riskPercent = 1.0;
   double _leverageMultiplier = 1.0;
   bool _isLoading = false;
+
+  // Live ATM premium (fetched after expiry selected). null = not yet fetched.
+  double? _livePremiumCE;
+  double? _livePremiumPE;
+  bool _premiumLoading = false;
+
+  // Fallback estimates used only when live premium hasn't loaded yet
+  static const _estPremium = {'NIFTY': 100.0, 'BANKNIFTY': 150.0};
+
+  /// Max lots user can afford: floor(capital / (actual_or_est_premium × lot_size))
+  int get _maxLots {
+    final capital = double.tryParse(_capitalController.text.trim()) ?? 0;
+    if (capital <= 0) return 10;
+    final lotSize = _selectedIndex == 'NIFTY' ? 75 : 30;
+    // Use real live premium if available, otherwise fallback estimate
+    final livePremium = _livePremiumCE != null && _livePremiumPE != null
+        ? (_livePremiumCE! + _livePremiumPE!) / 2  // average of CE+PE
+        : (_estPremium[_selectedIndex] ?? 100.0);
+    final max = (capital / (livePremium * lotSize)).floor();
+    return max.clamp(1, 50);
+  }
+
+  /// Max leverage: risk% × leverage must not exceed 20% of capital
+  /// i.e., leverage ≤ 20 / risk_percent  (capped at 5)
+  double get _maxLeverage {
+    final maxRiskPct = 20.0; // never risk more than 20% of capital in one trade
+    return (maxRiskPct / _riskPercent).clamp(1.0, 5.0);
+  }
   String? _error;
   bool _isMarketDataError = false;  // true when error is "not enough candles"
 
@@ -41,6 +69,7 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
   @override
   void initState() {
     super.initState();
+    _capitalController.addListener(_onCapitalChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final balance =
           context.read<DashboardProvider>().dashboard?.availableBalance ?? 0;
@@ -50,8 +79,27 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
     });
   }
 
+  /// Whenever capital changes, clamp lots and leverage so they stay affordable.
+  void _onCapitalChanged() {
+    final maxL = _maxLots;
+    final maxLev = _maxLeverage;
+    if (_lots > maxL || _leverageMultiplier > maxLev) {
+      setState(() {
+        if (_lots > maxL) _lots = maxL.clamp(1, 50);
+        if (_leverageMultiplier > maxLev) {
+          // round down to nearest 0.5 step
+          _leverageMultiplier = (maxLev * 2).floor() / 2.0;
+          if (_leverageMultiplier < 1.0) _leverageMultiplier = 1.0;
+        }
+      });
+    } else {
+      setState(() {}); // refresh UI to update max labels
+    }
+  }
+
   @override
   void dispose() {
+    _capitalController.removeListener(_onCapitalChanged);
     _capitalController.dispose();
     super.dispose();
   }
@@ -81,7 +129,10 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
         setState(() {
           _expiries = list;
           _selectedExpiry = list.isNotEmpty ? list.first : null;
+          _livePremiumCE = null;
+          _livePremiumPE = null;
         });
+        _fetchPremiumQuote();
       } else {
         setState(() => _expiriesError = 'Could not load expiries');
       }
@@ -89,6 +140,45 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
       if (mounted) setState(() => _expiriesError = 'Failed: $e');
     } finally {
       if (mounted) setState(() => _expiriesLoading = false);
+    }
+  }
+
+  // ── Fetch live ATM premiums ─────────────────────────────────────────────
+  Future<void> _fetchPremiumQuote() async {
+    if (!mounted || _selectedExpiry == null) return;
+    final auth = context.read<AuthProvider>();
+    if (auth.user == null) return;
+
+    setState(() { _premiumLoading = true; });
+
+    try {
+      final uri = Uri.parse(ApiConfig.optionsPremiumQuoteUrl).replace(
+        queryParameters: {
+          'index': _selectedIndex,
+          'expiry_date': _selectedExpiry!,
+          'api_key': auth.user!.apiKey,
+          'access_token': auth.user!.accessToken,
+        },
+      );
+      final resp = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final ce = (data['premium_ce'] as num?)?.toDouble();
+        final pe = (data['premium_pe'] as num?)?.toDouble();
+        setState(() {
+          _livePremiumCE = ce;
+          _livePremiumPE = pe;
+          // Clamp lots/leverage now that we have real premiums
+          _onCapitalChanged();
+        });
+      }
+      // If it fails, keep using fallback estimates — no error shown to user
+    } catch (_) {
+      // Silently ignore — fallback estimates remain in use
+    } finally {
+      if (mounted) setState(() => _premiumLoading = false);
     }
   }
 
@@ -126,7 +216,7 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
         'risk_percent': _riskPercent,
         'capital_to_use': capital,
         'lots': _lots,
-        'leverage_multiplier': _leverageMultiplier,
+        'leverage_multiplier': _leverageMultiplier.clamp(1.0, _maxLeverage),
         'access_token': auth.user!.accessToken,
         'api_key': auth.user!.apiKey,
         'user_id': parsedUserId,
@@ -273,6 +363,8 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
                     _selectedIndex = idx;
                     _selectedExpiry = null;
                     _expiries = [];
+                    _livePremiumCE = null;
+                    _livePremiumPE = null;
                   });
                   _fetchExpiries();
                 },
@@ -347,7 +439,14 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
                         final selected = _selectedExpiry == exp;
                         final label = _formatExpiry(exp);
                         return GestureDetector(
-                          onTap: () => setState(() => _selectedExpiry = exp),
+                          onTap: () {
+                            setState(() {
+                              _selectedExpiry = exp;
+                              _livePremiumCE = null;
+                              _livePremiumPE = null;
+                            });
+                            _fetchPremiumQuote();
+                          },
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 150),
                             padding: const EdgeInsets.symmetric(
@@ -378,6 +477,14 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
   }
 
   Widget _buildLotsCard() {
+    final maxLots = _maxLots;
+    final lotSize = _selectedIndex == 'NIFTY' ? 75 : 30;
+    final hasLive = _livePremiumCE != null && _livePremiumPE != null;
+    final avgPremium = hasLive
+        ? (_livePremiumCE! + _livePremiumPE!) / 2
+        : (_estPremium[_selectedIndex] ?? 100.0);
+    final estCost = _lots * lotSize * avgPremium;
+
     return _card(
       icon: Icons.layers_outlined,
       title: 'Number of Lots',
@@ -388,36 +495,67 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                '$_lots lot${_lots > 1 ? 's' : ''} '
-                '(${_lots * (_selectedIndex == 'NIFTY' ? 75 : 30)} units)',
-                style:
-                    TextStyle(color: Colors.grey[600], fontSize: 13),
+                '$_lots lot${_lots > 1 ? 's' : ''} · ${_lots * lotSize} units',
+                style: TextStyle(color: Colors.grey[600], fontSize: 13),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
                   color: _purple,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  '$_lots',
+                  '$_lots / $maxLots max',
                   style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15),
+                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                 ),
               ),
             ],
           ),
           Slider(
-            value: _lots.toDouble(),
+            value: _lots.clamp(1, maxLots).toDouble(),
             min: 1,
-            max: 10,
-            divisions: 9,
+            max: maxLots.toDouble(),
+            divisions: (maxLots - 1).clamp(1, 49),
             activeColor: _purple,
             onChanged: (v) => setState(() => _lots = v.round()),
           ),
+          if (_premiumLoading)
+            Row(
+              children: [
+                SizedBox(
+                  width: 10, height: 10,
+                  child: CircularProgressIndicator(strokeWidth: 1.5, color: _purple),
+                ),
+                const SizedBox(width: 6),
+                Text('Fetching live ATM premiums…',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+              ],
+            )
+          else if (hasLive)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'CE ₹${_livePremiumCE!.toStringAsFixed(2)}  ·  '
+                  'PE ₹${_livePremiumPE!.toStringAsFixed(2)}  '
+                  '(live ATM premiums)',
+                  style: TextStyle(fontSize: 11, color: Colors.green[700], fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Est. cost for $_lots lot${_lots > 1 ? 's' : ''}: '
+                  '~₹${estCost.toStringAsFixed(0)}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                ),
+              ],
+            )
+          else
+            Text(
+              'Est. cost: ~₹${estCost.toStringAsFixed(0)} '
+              '(using ~₹${avgPremium.toStringAsFixed(0)} fallback premium)',
+              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+            ),
         ],
       ),
     );
@@ -491,17 +629,23 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
   }
 
   Widget _buildLeverageCard() {
-    final leverageLabel = _leverageMultiplier == 1.0
+    final maxLev = _maxLeverage;
+    final clampedLev = _leverageMultiplier.clamp(1.0, maxLev);
+    final leverageLabel = clampedLev == 1.0
         ? '1× (No leverage)'
-        : '${_leverageMultiplier.toStringAsFixed(1)}×';
+        : '${clampedLev.toStringAsFixed(1)}×';
     final capital = double.tryParse(_capitalController.text.trim()) ?? 0;
     final baseRisk = capital * _riskPercent / 100;
-    final effectiveRisk = baseRisk * _leverageMultiplier;
-    final color = _leverageMultiplier <= 1.0
+    final effectiveRisk = baseRisk * clampedLev;
+    final effectiveRiskPct = capital > 0 ? (effectiveRisk / capital * 100) : 0.0;
+    final color = clampedLev <= 1.0
         ? Colors.green[700]!
-        : _leverageMultiplier <= 2.0
+        : clampedLev <= 2.0
             ? Colors.orange[700]!
             : Colors.red[700]!;
+
+    // Number of slider steps within allowed range
+    final maxSteps = ((maxLev - 1.0) / 0.5).floor();
 
     return _card(
       icon: Icons.speed_outlined,
@@ -513,7 +657,7 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Multiplies your risk budget',
+                'Multiplies risk budget · max ${maxLev.toStringAsFixed(1)}×',
                 style: TextStyle(color: Colors.grey[600], fontSize: 13),
               ),
               Container(
@@ -531,10 +675,10 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
             ],
           ),
           Slider(
-            value: _leverageMultiplier,
+            value: clampedLev,
             min: 1.0,
-            max: 5.0,
-            divisions: 8,  // 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0
+            max: maxLev,
+            divisions: maxSteps.clamp(1, 8),
             activeColor: color,
             onChanged: (v) => setState(
                 () => _leverageMultiplier = double.parse(v.toStringAsFixed(1))),
@@ -542,15 +686,25 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
           if (capital > 0)
             Text(
               'Base risk ₹${baseRisk.toStringAsFixed(0)}  →  '
-              'Effective risk ₹${effectiveRisk.toStringAsFixed(0)}',
+              'Effective risk ₹${effectiveRisk.toStringAsFixed(0)} '
+              '(${effectiveRiskPct.toStringAsFixed(1)}% of capital)',
               style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500),
             ),
-          if (_leverageMultiplier > 2.0)
+          if (clampedLev > 2.0)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(
-                '⚠ High leverage increases both profit and loss potential significantly.',
+                '⚠ High leverage — loss can exceed ${effectiveRiskPct.toStringAsFixed(0)}% of capital.',
                 style: TextStyle(fontSize: 11, color: Colors.red[700]),
+              ),
+            ),
+          if (maxLev < 5.0)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Max leverage limited to ${maxLev.toStringAsFixed(1)}× '
+                'to keep total risk ≤ 20% of your capital.',
+                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
               ),
             ),
         ],
