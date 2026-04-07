@@ -1,6 +1,11 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import Optional
+from pathlib import Path
+
+# Resolve .env relative to the project root (3 levels up from app/core/config.py)
+# This works regardless of the working directory uvicorn is started from
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 class Settings(BaseSettings):
     # App Config
@@ -34,7 +39,7 @@ class Settings(BaseSettings):
     # Admin Dashboard Config (kept for potential future use)
     ADMIN_JWT_SECRET: str = "your-secret-key-change-in-production"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(_ENV_FILE), env_file_encoding="utf-8", extra="ignore")
 
 @lru_cache()
 def get_settings():
