@@ -19,7 +19,7 @@ async def get_login_url(api_key: str = Query(...)):
         return LoginUrlResponse(login_url=login_url)
     except Exception as e:
         logger.error(f"Failed to generate login URL: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate login URL")
+        raise HTTPException(status_code=500, detail="Failed to generate Zerodha login URL")
 
 @router.post("/session", response_model=SessionResponse)
 async def create_session(session_request: SessionRequest):
