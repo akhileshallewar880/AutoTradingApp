@@ -35,17 +35,36 @@ jobs:
     steps:
       - name: Deploy to VPS via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_PRODUCTION }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
+          envs: OPENAI_API_KEY
           script: |
             set -e
             cd ${{ secrets.VPS_APP_DIR }}
             git pull origin master
             source venv/bin/activate
             pip install -r requirements.txt --quiet
+
+            # ── Write env vars from GitHub Secrets into .env ─────────────────
+            echo "🔑 Updating .env with secrets from GitHub..."
+            sed -i "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$OPENAI_API_KEY|" .env
+            echo "✅ .env updated"
+
+            # ── Remove hardcoded env vars from systemd service file ──────────
+            # systemd Environment= lines take priority over .env — strip them
+            # so the app always reads secrets from .env (updated above)
+            SERVICE_FILE="/etc/systemd/system/${{ secrets.VPS_SERVICE_NAME }}.service"
+            if sudo grep -q "OPENAI_API_KEY" "$SERVICE_FILE" 2>/dev/null; then
+              echo "🔧 Removing OPENAI_API_KEY from systemd service file..."
+              sudo sed -i '/OPENAI_API_KEY/d' "$SERVICE_FILE"
+              sudo systemctl daemon-reload
+              echo "✅ Systemd service file cleaned"
+            fi
 
             # ── Run pending database migrations ─────────────────────────────
             echo "🗄️  Running database migrations..."
