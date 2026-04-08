@@ -1,11 +1,16 @@
+import 'dart:typed_data';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest_all.dart' as tz_data;
+import 'package:flutter_timezone/flutter_timezone.dart';
 
 /// Central notification service for all in-app and background push notifications.
 ///
-/// Three channels:
-/// - [_orderChannel]   — Order execution updates (ORDER_PLACED, GTT_CREATED, FAILED, etc.)
-/// - [_monitorChannel] — Live monitoring commentary events (DANGER, WARNING, INFO)
-/// - [_analysisChannel]— Analysis lifecycle (complete, no trades found)
+/// Four channels:
+/// - [_orderChannel]      — Order execution updates (ORDER_PLACED, GTT_CREATED, FAILED, etc.)
+/// - [_monitorChannel]    — Live monitoring commentary events (DANGER, WARNING, INFO)
+/// - [_analysisChannel]   — Analysis lifecycle (complete, no trades found)
+/// - [_opportunityChannel]— Auto-scanner alarm (fullScreenIntent, wakes screen + alarm sound)
 class NotificationService {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
@@ -13,14 +18,23 @@ class NotificationService {
   final _plugin = FlutterLocalNotificationsPlugin();
 
   // Channel IDs
-  static const _orderChannelId = 'vantrade_orders';
-  static const _monitorChannelId = 'vantrade_monitor';
-  static const _analysisChannelId = 'vantrade_analysis';
+  static const _orderChannelId       = 'vantrade_orders';
+  static const _monitorChannelId     = 'vantrade_monitor';
+  static const _analysisChannelId    = 'vantrade_analysis';
+  static const _opportunityChannelId = 'vantrade_opportunity';
+  static const _reminderChannelId    = 'vantrade_login_reminder';
 
   // Auto-incrementing ID counters per channel
-  int _orderId = 1000;
-  int _monitorId = 2000;
+  int _orderId    = 1000;
+  int _monitorId  = 2000;
   int _analysisId = 3000;
+
+  /// Must be called once (e.g. in main()) before scheduling reminders.
+  static Future<void> initializeTimezone() async {
+    tz_data.initializeTimeZones();
+    final String deviceTz = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(deviceTz));
+  }
 
   Future<void> initialize() async {
     const androidInit = AndroidInitializationSettings('@mipmap/launcher_icon');
@@ -55,6 +69,33 @@ class NotificationService {
       description: 'Analysis completion and results notifications.',
       importance: Importance.defaultImportance,
       playSound: false,
+    );
+
+    await _createChannel(
+      id: _reminderChannelId,
+      name: 'Login Reminder',
+      description: 'Daily weekday reminder to log in to VanTrade before market open.',
+      importance: Importance.high,
+      playSound: true,
+    );
+
+    // Opportunity alarm channel — max importance, custom sound, wakes screen
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _opportunityChannelId,
+        'Trade Opportunities',
+        description:
+            'Alarm notification when auto-scanner finds a trade opportunity. '
+            'Wakes screen even when phone is locked.',
+        importance: Importance.max,
+        playSound: true,
+        sound: RawResourceAndroidNotificationSound('opportunity_alarm'),
+        enableVibration: true,
+        showBadge: true,
+      ),
     );
 
     // Request permission on Android 13+
@@ -192,6 +233,108 @@ class NotificationService {
       importance: Importance.defaultImportance,
       priority: Priority.defaultPriority,
     );
+  }
+
+  // ── Opportunity alarm (auto-scanner) ──────────────────────────────────────
+
+  /// Fire a full-screen alarm notification when the auto-scanner finds a trade.
+  ///
+  /// Uses [fullScreenIntent] to wake the screen even when the device is locked.
+  /// Sound: opportunity_alarm.mp3 (res/raw). Vibration pattern: alarm-like pulse.
+  Future<void> showOpportunityAlarm({
+    required String mode,     // 'STOCKS', 'NIFTY', 'BANKNIFTY'
+    required String title,
+    required String body,
+  }) async {
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        _opportunityChannelId,
+        'Trade Opportunities',
+        importance: Importance.max,
+        priority: Priority.max,
+        fullScreenIntent: true,
+        playSound: true,
+        sound: const RawResourceAndroidNotificationSound('opportunity_alarm'),
+        enableVibration: true,
+        vibrationPattern: Int64List.fromList([0, 400, 200, 400, 200, 800]),
+        ticker: 'VanTrade — Trade Opportunity',
+        styleInformation: BigTextStyleInformation(body),
+        icon: '@mipmap/launcher_icon',
+        channelShowBadge: true,
+        autoCancel: true,
+      ),
+      iOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        interruptionLevel: InterruptionLevel.timeSensitive,
+      ),
+    );
+    // Fixed ID per mode so repeated alerts replace the previous one
+    final id = mode == 'NIFTY' ? 801 : mode == 'BANKNIFTY' ? 802 : 800;
+    await _plugin.show(id, title, body, details);
+  }
+
+  // ── Weekday login reminder (Mon–Fri 09:00) ────────────────────────────────
+
+  /// Schedules 5 weekly recurring notifications — one per weekday — at 09:00.
+  /// Safe to call multiple times; cancels previous reminders first.
+  Future<void> scheduleWeekdayLoginReminders() async {
+    // Cancel any previously scheduled reminders (IDs 900–904)
+    for (int i = 900; i <= 904; i++) {
+      await _plugin.cancel(i);
+    }
+
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        _reminderChannelId,
+        'Login Reminder',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/launcher_icon',
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+    );
+
+    // Monday=1 … Friday=5
+    final weekdays = [
+      DateTime.monday,
+      DateTime.tuesday,
+      DateTime.wednesday,
+      DateTime.thursday,
+      DateTime.friday,
+    ];
+
+    for (int i = 0; i < 5; i++) {
+      await _plugin.zonedSchedule(
+        900 + i,
+        '📈 Market opens soon!',
+        'Log in to VanTrade and check today\'s trade opportunities.',
+        _nextOccurrenceOf(weekdays[i], hour: 9),
+        details,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+      );
+    }
+  }
+
+  /// Returns the next [tz.TZDateTime] that falls on [weekday] at [hour]:00.
+  tz.TZDateTime _nextOccurrenceOf(int weekday, {required int hour}) {
+    final now = tz.TZDateTime.now(tz.local);
+    tz.TZDateTime candidate =
+        tz.TZDateTime(tz.local, now.year, now.month, now.day, hour);
+
+    // Advance day-by-day until we land on the right weekday in the future
+    while (candidate.weekday != weekday || !candidate.isAfter(now)) {
+      candidate = candidate.add(const Duration(days: 1));
+    }
+    return candidate;
   }
 
   // ── Internal helper ────────────────────────────────────────────────────────

@@ -60,6 +60,10 @@ dependencies:
   # Local push notifications for order events and live commentary
   flutter_local_notifications: ^18.0.0
 
+  # Timezone support for scheduled (zoned) notifications
+  timezone: ^0.9.4
+  flutter_timezone: ^1.0.4
+
   # Android foreground service — keeps monitoring alive when app is backgrounded
   flutter_foreground_task: ^8.15.0
 

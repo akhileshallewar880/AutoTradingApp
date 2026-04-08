@@ -11,14 +11,21 @@ import 'screens/api_settings_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/monitoring_foreground_service.dart';
 import 'services/notification_service.dart';
+import 'services/auto_scanner_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  // Initialize foreground task options (must run before startMonitoring)
+  // Initialize foreground task options (must run before startMonitoring / scanner)
   MonitoringForegroundService.init();
-  // Initialize local push notifications
+  // Initialize timezone data (required before any zonedSchedule calls)
+  await NotificationService.initializeTimezone();
+  // Initialize local push notifications (including opportunity alarm channel)
   await NotificationService.instance.initialize();
+  // Schedule weekday (Mon–Fri) 09:00 login reminders
+  await NotificationService.instance.scheduleWeekdayLoginReminders();
+  // Restore scanner toggle state from previous session
+  await AutoScannerService.instance.loadState();
   runApp(const AlgoTradingApp());
 }
 

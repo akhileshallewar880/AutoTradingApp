@@ -18,7 +18,9 @@ import 'options_input_screen.dart';
 import 'monitor_resume_screen.dart';
 import 'active_monitor_screen.dart';
 import 'holdings_screen.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../services/active_trade_store.dart';
+import '../services/auto_scanner_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -41,9 +43,15 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Active options trade (persisted across app restarts) ───────────────
   ActiveTrade? _activeTrade;
 
+  // ── Auto-scanner state ────────────────────────────────────────────────
+  final _scanner = AutoScannerService.instance;
+
   @override
   void initState() {
     super.initState();
+    _scanner.loadState();
+    _scanner.addListener(_onScannerChanged);
+    FlutterForegroundTask.addTaskDataCallback(_onScannerTaskData);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initDashboard();
       _checkActiveTrade();
@@ -53,6 +61,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _indexRefreshTimer?.cancel();
+    _scanner.removeListener(_onScannerChanged);
+    FlutterForegroundTask.removeTaskDataCallback(_onScannerTaskData);
     context.read<DashboardProvider>().stopAutoRefresh();
     super.dispose();
   }
@@ -78,6 +88,34 @@ class _HomeScreenState extends State<HomeScreen> {
     final trade = await ActiveTradeStore.load();
     if (trade == null || !mounted) return;
     setState(() => _activeTrade = trade);
+  }
+
+  // ── Scanner callbacks ─────────────────────────────────────────────────────
+
+  /// Rebuild when scanner toggle state changes.
+  void _onScannerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Receive opportunity events from the background isolate.
+  void _onScannerTaskData(Object data) {
+    if (data is! Map) return;
+    if (data['event'] != 'OPPORTUNITY') return;
+    final mode = data['mode'] as String? ?? '';
+    _scanner.onOpportunityReceived(mode);
+  }
+
+  /// Build credentials from current auth + dashboard state.
+  ScanCreds _scanCreds() {
+    final auth = context.read<AuthProvider>();
+    final dash = context.read<DashboardProvider>();
+    final capital = (dash.dashboard?.availableBalance ?? 10000).clamp(1000, double.infinity);
+    return ScanCreds(
+      apiKey:      auth.user?.apiKey      ?? '',
+      accessToken: auth.user?.accessToken ?? '',
+      capital:     capital.toDouble(),
+      riskPercent: 2.0,
+    );
   }
 
   Future<void> _fetchIndexPrices() async {
@@ -334,6 +372,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (!auth.isDemoMode && _indexPrices.isNotEmpty)
                         const SizedBox(height: 12),
 
+                      // ── Auto-scanner toggle bar ───────────────────────────────
+                      if (!auth.isDemoMode)
+                        _buildScannerBar(),
+                      if (!auth.isDemoMode)
+                        const SizedBox(height: 12),
+
                       // ── Dashboard content ────────────────────────────────────
                       if (dash.error != null && dash.dashboard == null)
                         _buildErrorCard(dash.error!)
@@ -497,6 +541,198 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  // ── Auto-scanner bar ─────────────────────────────────────────────────────
+  Widget _buildScannerBar() {
+    final isOpen = _isMarketCurrentlyOpen();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Row(
+            children: [
+              Icon(Icons.radar, size: 16, color: Colors.green[700]),
+              const SizedBox(width: 6),
+              Text(
+                'Auto Scanner',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey[800],
+                ),
+              ),
+              const Spacer(),
+              if (_scanner.anyEnabled)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Pulsing green dot
+                    TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0.4, end: 1.0),
+                      duration: const Duration(milliseconds: 900),
+                      builder: (_, v, child) => Opacity(opacity: v, child: child),
+                      onEnd: () => setState(() {}),
+                      child: Container(
+                        width: 7, height: 7,
+                        decoration: const BoxDecoration(
+                          color: Colors.green, shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      isOpen ? 'Scanning every 3 min' : 'Market closed',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isOpen ? Colors.green[700] : Colors.orange[700],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Text(
+                  'Off — tap to enable',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                ),
+            ],
+          ),
+
+          const SizedBox(height: 10),
+
+          // Toggle buttons row
+          Row(
+            children: [
+              _scanToggle(
+                label: 'Stocks',
+                icon: Icons.show_chart,
+                active: _scanner.stocksEnabled,
+                onTap: () async {
+                  final creds = _scanCreds();
+                  if (creds.apiKey.isEmpty) return;
+                  await _scanner.toggleStocks(!_scanner.stocksEnabled, creds: creds);
+                },
+              ),
+              const SizedBox(width: 8),
+              _scanToggle(
+                label: 'NIFTY',
+                icon: Icons.trending_up,
+                active: _scanner.niftyEnabled,
+                onTap: () async {
+                  final creds = _scanCreds();
+                  if (creds.apiKey.isEmpty) return;
+                  await _scanner.toggleNifty(!_scanner.niftyEnabled, creds: creds);
+                },
+              ),
+              const SizedBox(width: 8),
+              _scanToggle(
+                label: 'BANKNIFTY',
+                icon: Icons.account_balance,
+                active: _scanner.bankniftyEnabled,
+                onTap: () async {
+                  final creds = _scanCreds();
+                  if (creds.apiKey.isEmpty) return;
+                  await _scanner.toggleBanknifty(!_scanner.bankniftyEnabled, creds: creds);
+                },
+              ),
+            ],
+          ),
+
+          // Last opportunity hint
+          if (_scanner.lastOpportunityTime != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green[200]!),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.notifications_active, size: 14, color: Colors.green[700]),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Opportunity found in ${_scanner.lastOpportunityMode} — check analysis',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.green[800],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _scanToggle({
+    required String label,
+    required IconData icon,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: active ? Colors.green[700] : Colors.grey[100],
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: active ? Colors.green[700]! : Colors.grey[300]!,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: active ? Colors.white : Colors.grey[500],
+              ),
+              const SizedBox(height: 3),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: active ? Colors.white : Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _isMarketCurrentlyOpen() {
+    final now = DateTime.now();
+    if (now.weekday >= 6) return false;
+    final t = now.hour * 60 + now.minute;
+    return t >= 555 && t <= 930;
   }
 
   // ── Active trade banner ──────────────────────────────────────────────────
