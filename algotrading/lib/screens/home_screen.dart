@@ -21,6 +21,7 @@ import 'holdings_screen.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../services/active_trade_store.dart';
 import '../services/auto_scanner_service.dart';
+import 'opportunity_execute_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -102,7 +103,17 @@ class _HomeScreenState extends State<HomeScreen> {
     if (data is! Map) return;
     if (data['event'] != 'OPPORTUNITY') return;
     final mode = data['mode'] as String? ?? '';
-    _scanner.onOpportunityReceived(mode);
+    final stocks = (data['stocks'] as List?)
+        ?.map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    final optionsTrade = data['trade'] != null
+        ? Map<String, dynamic>.from(data['trade'] as Map)
+        : null;
+    _scanner.onOpportunityReceived(mode,
+        stocks: stocks,
+        optionsTrade: optionsTrade,
+        expiryDate: data['expiry_date'] as String?,
+        analysisId: data['analysis_id'] as String?);
   }
 
   /// Build credentials from current auth + dashboard state.
@@ -654,29 +665,62 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
 
-          // Last opportunity hint
+          // Last opportunity — actionable banner with execute button
           if (_scanner.lastOpportunityTime != null) ...[
             const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.green[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green[200]!),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.notifications_active, size: 14, color: Colors.green[700]),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Opportunity found in ${_scanner.lastOpportunityMode} — check analysis',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.green[800],
-                      fontWeight: FontWeight.w500,
+            GestureDetector(
+              onTap: () => _openOpportunitySheet(context),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.green[50],
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.green[400]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.notifications_active, size: 16, color: Colors.green[700]),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Opportunity — ${_scanner.lastOpportunityMode}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green[900],
+                            ),
+                          ),
+                          if (_scanner.lastOpportunityStocks.isNotEmpty)
+                            Text(
+                              _scanner.lastOpportunityStocks
+                                  .map((s) => s['stock_symbol'] as String? ?? '')
+                                  .take(3)
+                                  .join(', '),
+                              style: TextStyle(fontSize: 11, color: Colors.green[700]),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                    ElevatedButton(
+                      onPressed: () => _openOpportunitySheet(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green[700],
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: const Text('Review & Execute',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -724,6 +768,21 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  void _openOpportunitySheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => OpportunityExecuteSheet(
+        mode:         _scanner.lastOpportunityMode,
+        stocks:       _scanner.lastOpportunityStocks,
+        optionsTrade: _scanner.lastOpportunityOptionsTrade,
+        expiryDate:   _scanner.lastOpportunityExpiryDate,
+        analysisId:   _scanner.lastOpportunityAnalysisId,
       ),
     );
   }
@@ -1599,10 +1658,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Fixed bottom bar ──────────────────────────────────────────────────
   Widget _buildFixedBottomBar(BuildContext context) {
-    final dash = context.watch<DashboardProvider>();
-    final gtts = dash.dashboard?.gtts ?? [];
-    final hasGtts = gtts.isNotEmpty;
-
     return SafeArea(
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),

@@ -270,8 +270,17 @@ class LoginScreen extends StatelessWidget {
             ),
           );
         } else {
+          final msg = e.toString().contains('TimeoutException') ||
+                  e.toString().contains('Connection refused') ||
+                  e.toString().contains('SocketException')
+              ? 'Could not reach the server. Please check your internet connection and try again.'
+              : 'Login failed: $e';
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Login failed: $e')),
+            SnackBar(
+              content: Text(msg),
+              backgroundColor: Colors.red[700],
+              duration: const Duration(seconds: 5),
+            ),
           );
         }
       }

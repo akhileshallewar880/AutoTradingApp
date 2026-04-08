@@ -12,7 +12,7 @@ class ApiService {
     final uri = Uri.parse(ApiConfig.loginUrl).replace(
       queryParameters: {'api_key': apiKey},
     );
-    final response = await http.get(uri).timeout(ApiConfig.timeout);
+    final response = await http.get(uri).timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -35,7 +35,7 @@ class ApiService {
         'api_key': apiKey,
         'api_secret': apiSecret,
       }),
-    ).timeout(ApiConfig.timeout);
+    ).timeout(const Duration(seconds: 20));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);

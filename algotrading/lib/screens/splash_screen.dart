@@ -111,7 +111,11 @@ class _SplashScreenState extends State<SplashScreen>
       // Validate that the Zerodha token is still alive (expires after ~24h).
       // Skip validation in demo mode — no real token to check.
       if (!authProvider.isDemoMode) {
-        final tokenValid = await authProvider.validateSession();
+        // Cap at 6 s — if backend is unreachable we assume token is still valid
+        // and let the home screen handle any real 401 errors.
+        final tokenValid = await authProvider
+            .validateSession()
+            .timeout(const Duration(seconds: 6), onTimeout: () => true);
         if (!mounted) return;
         if (!tokenValid) {
           // Token expired — clear session and send back to login

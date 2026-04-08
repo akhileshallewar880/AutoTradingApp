@@ -18,15 +18,25 @@ void main() async {
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   // Initialize foreground task options (must run before startMonitoring / scanner)
   MonitoringForegroundService.init();
-  // Initialize timezone data (required before any zonedSchedule calls)
-  await NotificationService.initializeTimezone();
-  // Initialize local push notifications (including opportunity alarm channel)
-  await NotificationService.instance.initialize();
-  // Schedule weekday (Mon–Fri) 09:00 login reminders
-  await NotificationService.instance.scheduleWeekdayLoginReminders();
   // Restore scanner toggle state from previous session
   await AutoScannerService.instance.loadState();
+
+  // runApp FIRST so the permission dialog appears over a real screen, not a blank one
   runApp(const AlgoTradingApp());
+
+  // Notification setup is non-critical — runs after the app is already rendered
+  _initNotifications();
+}
+
+/// Initialise push-notification channels and schedule weekday reminders.
+/// Called after runApp() so the Android POST_NOTIFICATIONS permission dialog
+/// appears over the splash screen instead of a blank screen.
+void _initNotifications() {
+  NotificationService.instance.initialize().then((_) {
+    NotificationService.initializeTimezone().then((_) {
+      NotificationService.instance.scheduleWeekdayLoginReminders();
+    }).catchError((_) {});
+  }).catchError((_) {});
 }
 
 class AlgoTradingApp extends StatelessWidget {

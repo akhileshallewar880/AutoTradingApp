@@ -151,13 +151,14 @@ class ScannerTaskHandler extends TaskHandler {
           await _fireAlarm(
             id: 700,
             title: '📈 Stock Opportunity — $action',
-            body: '$symbols ${good.length > 1 ? "(+${good.length - 1} more)" : ""} • Tap to view analysis',
+            body: '$symbols ${good.length > 1 ? "(+${good.length - 1} more)" : ""} • Tap to execute',
           );
           FlutterForegroundTask.sendDataToMain({
             'event': 'OPPORTUNITY',
             'mode': 'STOCKS',
             'symbols': symbols,
             'count': good.length,
+            'stocks': good, // full stock data for execution
           });
         }
       }
@@ -221,13 +222,16 @@ class ScannerTaskHandler extends TaskHandler {
           id: index == 'NIFTY' ? 701 : 702,
           title: '🔔 $index $optType — ${signal.replaceAll('_', ' ')}',
           body: 'Strike $strike • Entry ₹${entryPrem.toStringAsFixed(1)} • '
-                'Confidence $confPct% • Tap to open',
+                'Confidence $confPct% • Tap to execute',
         );
         FlutterForegroundTask.sendDataToMain({
           'event': 'OPPORTUNITY',
           'mode': index,
           'signal': signal,
           'confidence': conf,
+          'trade': trade, // full options trade data
+          'analysis_id': data['analysis_id'] as String? ?? '',
+          'expiry_date': data['expiry_date'] as String? ?? expiry,
         });
       }
     } catch (_) {
@@ -293,6 +297,12 @@ class AutoScannerService extends ChangeNotifier {
   String lastOpportunityMode = '';
 
   bool get anyEnabled => stocksEnabled || niftyEnabled || bankniftyEnabled;
+
+  // Full opportunity data for execution sheet
+  List<Map<String, dynamic>> lastOpportunityStocks = []; // STOCKS mode
+  Map<String, dynamic>? lastOpportunityOptionsTrade;     // NIFTY/BANKNIFTY mode
+  String lastOpportunityExpiryDate = '';                 // options expiry pre-fill
+  String lastOpportunityAnalysisId = '';                 // options analysis_id
 
   // ── Persistence ─────────────────────────────────────────────────────────────
   Future<void> loadState() async {
@@ -398,9 +408,18 @@ class AutoScannerService extends ChangeNotifier {
   }
 
   // ── Called by home screen to handle opportunity events from task ─────────────
-  void onOpportunityReceived(String mode) {
+  void onOpportunityReceived(String mode, {
+    List<Map<String, dynamic>>? stocks,
+    Map<String, dynamic>? optionsTrade,
+    String? expiryDate,
+    String? analysisId,
+  }) {
     lastOpportunityTime = DateTime.now();
     lastOpportunityMode = mode;
+    if (stocks != null) lastOpportunityStocks = stocks;
+    if (optionsTrade != null) lastOpportunityOptionsTrade = optionsTrade;
+    if (expiryDate != null && expiryDate.isNotEmpty) lastOpportunityExpiryDate = expiryDate;
+    if (analysisId != null && analysisId.isNotEmpty) lastOpportunityAnalysisId = analysisId;
     notifyListeners();
   }
 }

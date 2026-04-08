@@ -32,8 +32,8 @@ class NotificationService {
   /// Must be called once (e.g. in main()) before scheduling reminders.
   static Future<void> initializeTimezone() async {
     tz_data.initializeTimeZones();
-    final String deviceTz = await FlutterTimezone.getLocalTimezone();
-    tz.setLocalLocation(tz.getLocation(deviceTz));
+    final tzInfo = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(tzInfo.identifier));
   }
 
   Future<void> initialize() async {
@@ -310,13 +310,22 @@ class NotificationService {
     ];
 
     for (int i = 0; i < 5; i++) {
+      // Use exact alarms if permitted (Android 13+ requires user to grant in
+      // Settings > Special app access > Alarms & reminders), else inexact.
+      final canExact = await _plugin
+              .resolvePlatformSpecificImplementation<
+                  AndroidFlutterLocalNotificationsPlugin>()
+              ?.canScheduleExactNotifications() ??
+          false;
       await _plugin.zonedSchedule(
         900 + i,
         '📈 Market opens soon!',
         'Log in to VanTrade and check today\'s trade opportunities.',
         _nextOccurrenceOf(weekdays[i], hour: 9),
         details,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        androidScheduleMode: canExact
+            ? AndroidScheduleMode.exactAllowWhileIdle
+            : AndroidScheduleMode.inexact,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
