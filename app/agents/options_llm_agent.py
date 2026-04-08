@@ -25,24 +25,27 @@ class OptionsLLMAgent:
 2. AVOID buying CE when RSI > 75 (overbought — reversal likely)
 3. AVOID buying PE when RSI < 25 (oversold — snap-back likely)
 4. PREFER ATM or 1-strike OTM options for best premium-to-risk ratio
-5. Minimum Risk:Reward = 1:1.5 for any options trade
-6. STOP LOSS on premium = 30–40% of entry premium
-   - entry ₹50  → SL ₹30–35  (loss of ₹15–20)
-   - entry ₹100 → SL ₹60–70  (loss of ₹30–40)
-   - entry ₹150 → SL ₹90–105 (loss of ₹45–60)
-   Tighter SL = smaller lots needed, better capital efficiency
-7. TARGET on premium = entry + 1.5× to 2× (entry - SL)
-   - entry ₹100, SL ₹65 → risk=₹35 → target ₹152–₹170
-   - entry ₹150, SL ₹100 → risk=₹50 → target ₹225 MAX (do not exceed 50% gain)
-   - NEVER set target more than 50% above entry — it is unreachable intraday
-   - For weak signals (strength ≤ 3/5): cap target at 30% above entry
+5. Minimum Risk:Reward = 1:1.2 for any options trade (options need wider SL, so R:R of 1.5 is unrealistic)
+6. STOP LOSS on premium = 40–50% below entry premium — DO NOT USE TIGHTER STOPS
+   - NSE intraday noise alone moves ATM premiums 20–30%; a 25–30% SL gets hit by normal swings
+   - entry ₹50  → SL ₹25–30  (loss of ₹20–25) — SL at 50–60% of entry
+   - entry ₹100 → SL ₹50–60  (loss of ₹40–50) — SL at 50–60% of entry
+   - entry ₹150 → SL ₹75–90  (loss of ₹60–75) — SL at 50–60% of entry
+   Wide SL = fewer noise-triggered exits = better trade outcomes
+7. TARGET on premium = entry + 1.2× to 2× (entry - SL)
+   - entry ₹100, SL ₹55 → risk=₹45 → target ₹154–₹190
+   - entry ₹150, SL ₹82 → risk=₹68 → target ₹232 MAX (do not exceed 65% gain)
+   - NEVER set target more than 65% above entry — calibrate to signal strength
+   - For weak signals (strength ≤ 3/5): cap target at 40% above entry
 8. Time filter: Never recommend buying options after 2:00 PM IST
 9. Expiry-day caution: On expiry day, avoid buying options after 1:30 PM (theta decay)
 10. Prefer strong signal (3+/5 indicator votes) — weak signals = gambling, not trading
 11. REALITY CHECK — typical intraday NIFTY/BANKNIFTY option moves:
-    - Small move (30–50 pts index): premium changes 10–25%
-    - Medium move (50–100 pts index): premium changes 25–50%
-    - Large move (100+ pts index): premium changes 50–100%
+    - Normal intraday noise (±20–30 pts): premium swings 10–25% WITHOUT a real trend
+    - Small directional move (30–50 pts): premium changes 15–30%
+    - Medium move (50–100 pts): premium changes 30–55%
+    - Large move (100+ pts): premium changes 55–100%
+    A 25–30% SL gets triggered by NOISE alone on BankNifty — always use ≥40% SL.
     Calibrate your target to the signal strength. Do NOT expect 100% premium gain on a weak signal.
 """
 
@@ -146,7 +149,7 @@ Based on the above data, decide whether to:
 
 For your chosen option (CE or PE), specify:
 - Entry premium: exact premium to buy at
-- Stop-loss premium: level to exit if trade goes wrong (25–30% below entry)
+- Stop-loss premium: level to exit if trade goes wrong (40–50% below entry — NEVER tighter than 35%; NSE intraday noise will trigger it)
 - Target premium: level to take profit (minimum 2× the risk)
 - Lots to trade (can be less than {lots} if risk is too high)
 - Confidence score: calibrated as follows — be honest, do NOT default to 0.8:
@@ -231,29 +234,37 @@ Respond ONLY with valid JSON:
             return result
 
         entry = float(result.get("entry_premium", premium_ce if opt_type == "CE" else premium_pe))
-        sl = float(result.get("stop_loss_premium", entry * 0.65))
-        target = float(result.get("target_premium", entry + (entry - sl) * 1.5))
+        sl = float(result.get("stop_loss_premium", entry * 0.55))   # default: 45% below entry
+        target = float(result.get("target_premium", entry + (entry - sl) * 1.2))
         lots = int(result.get("lots_recommended", 1))
         confidence = float(result.get("confidence_score", 0.5))
 
         # Enforce: SL must be below entry for options BUY
         if sl >= entry:
-            sl = round(entry * 0.65, 1)
+            sl = round(entry * 0.55, 1)   # auto-fix: 45% below entry
             logger.warning(f"[OptionsLLMAgent] Auto-corrected SL to {sl} (was >= entry {entry})")
+
+        # Enforce: SL must not be tighter than 35% below entry (noise protection)
+        min_sl = round(entry * 0.65, 1)   # tightest allowed: 35% below entry
+        if sl > min_sl:
+            sl = min_sl
+            logger.warning(
+                f"[OptionsLLMAgent] SL too tight ({sl} > {min_sl}) — widened to 35% below entry"
+            )
 
         risk = entry - sl
 
-        # Enforce minimum 1:1.5 R:R
+        # Enforce minimum 1:1.2 R:R (1.5 is unrealistic with wide SL + 65% target cap)
         rr = (target - entry) / risk if risk > 0 else 0
-        if rr < 1.5:
-            target = round(entry + risk * 1.5, 1)
-            logger.warning(f"[OptionsLLMAgent] Auto-corrected target to {target} (1:1.5 R:R)")
+        if rr < 1.2:
+            target = round(entry + risk * 1.2, 1)
+            logger.warning(f"[OptionsLLMAgent] Auto-corrected target to {target} (1:1.2 R:R)")
 
-        # Cap target at 50% above entry — anything higher is unrealistic intraday
-        max_target = round(entry * 1.50, 1)
+        # Cap target at 65% above entry (achievable on strong 100+ pt index moves)
+        max_target = round(entry * 1.65, 1)
         if target > max_target:
             target = max_target
-            logger.warning(f"[OptionsLLMAgent] Capped target to {target} (50% above entry {entry})")
+            logger.warning(f"[OptionsLLMAgent] Capped target to {target} (65% above entry {entry})")
 
         # Clamp lots
         lots = max(1, min(lots, max_lots))
@@ -303,9 +314,9 @@ Respond ONLY with valid JSON:
                 "ai_reasoning": f"No clear signal from technical indicators.{error_suffix}",
             }
 
-        sl = round(entry * 0.65, 1)   # 35% SL — realistic intraday options stop
-        target = round(entry + (entry - sl) * 1.5, 1)  # 1:1.5 R:R, capped at 50%
-        target = min(target, round(entry * 1.50, 1))
+        sl = round(entry * 0.55, 1)   # 45% below entry — wide enough to survive NSE noise
+        target = round(entry + (entry - sl) * 1.2, 1)  # 1:1.2 R:R, capped at 65%
+        target = min(target, round(entry * 1.65, 1))
         return {
             "option_type": opt_type,
             "entry_premium": entry,
