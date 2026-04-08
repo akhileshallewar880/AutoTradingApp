@@ -115,7 +115,8 @@ async def get_premium_quote(
         ce_inst = atm_data["ce"]
         pe_inst = atm_data["pe"]
         atm_strike = atm_data["atm_strike"]
-        lot_size = options_service.get_lot_size(index)
+        # Read actual lot_size from Zerodha instrument data (auto-updates with SEBI changes)
+        lot_size = int(ce_inst.get("lot_size") or options_service.get_lot_size(index))
 
         # Step 3: live premiums
         premium_ce = await loop.run_in_executor(

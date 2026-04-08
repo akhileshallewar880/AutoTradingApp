@@ -385,7 +385,7 @@ class StrategyEngine:
           - price BELOW VWAP → suppress all BUY votes
 
         SL / Target:
-          - hard % based: default sl_pct=0.75%, target_pct=1.5% (2:1 RR)
+          - hard % based: default sl_pct=2.0%, target_pct=4.0% (2:1 RR)
 
         Returns strict JSON-compatible dict:
           action, reason, entry_price, stop_loss, target,
@@ -402,8 +402,8 @@ class StrategyEngine:
         avg_volume       = indicators.get("avg_volume", 1.0)
         market_structure = indicators.get("market_structure", "UNKNOWN")
         candle_pattern   = indicators.get("candle_pattern", "NONE")
-        sl_pct           = indicators.get("sl_pct", 0.75)
-        target_pct       = indicators.get("target_pct", 1.5)
+        sl_pct           = indicators.get("sl_pct", 2.0)
+        target_pct       = indicators.get("target_pct", 4.0)
 
         vol_ratio = volume / avg_volume if avg_volume > 0 else 1.0
 

@@ -175,7 +175,25 @@ class OptionsEngine:
           reasons  : list of explanation strings
           score    : numeric confidence (0–100)
         """
-        now = datetime.now()
+        import pytz
+        IST = pytz.timezone("Asia/Kolkata")
+        now = datetime.now(IST).replace(tzinfo=None)
+
+        # ── Hard gate: no new entries after 2:00 PM IST ─────────────────
+        if now.hour >= 14:
+            logger.warning("[OptionsEngine] After 2:00 PM IST — blocking new options entry")
+            return {
+                "signal": "NEUTRAL",
+                "strength": 0,
+                "reasons": [
+                    "Time: After 2:00 PM IST — no new options entries. "
+                    "Insufficient time for recovery + theta decay accelerates."
+                ],
+                "score": 0,
+                "bullish_votes": 0,
+                "bearish_votes": 0,
+                "expiry_warning": False,
+            }
 
         # ── Expiry-day theta decay warning ───────────────────────────────
         expiry_warning = False
@@ -323,12 +341,12 @@ class OptionsEngine:
         rr_ratio: float = 2.0,
     ) -> Dict:
         """
+        [UNUSED — premium levels are set by OptionsLLMAgent and validated in _validate_response]
+
         Calculate stop-loss and target premium levels.
-
-        Stop-loss = entry - (entry × atr_pct)    [25% of premium, adjustable]
-        Target     = entry + (entry × atr_pct × rr_ratio)  [2× the risk]
-
-        For options: minimum SL = 30% below entry (never lose more than 30%)
+        Stop-loss = entry × (1 - atr_pct)    default: 25% below entry
+        Target     = entry + risk × rr_ratio  default: 2× risk
+        SL floor   = entry × 0.30            (never below 30% of entry)
         """
         sl_distance = entry_premium * atr_pct
         tp_distance = sl_distance * rr_ratio

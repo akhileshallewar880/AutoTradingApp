@@ -10,12 +10,15 @@ import 'screens/login_screen.dart';
 import 'screens/api_settings_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/monitoring_foreground_service.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   // Initialize foreground task options (must run before startMonitoring)
   MonitoringForegroundService.init();
+  // Initialize local push notifications
+  await NotificationService.instance.initialize();
   runApp(const AlgoTradingApp());
 }
 

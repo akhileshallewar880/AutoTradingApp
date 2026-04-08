@@ -6,6 +6,7 @@ import '../providers/auth_provider.dart';
 import '../providers/analysis_provider.dart';
 import '../models/analysis_model.dart';
 import '../widgets/animated_completion_widget.dart';
+import '../services/notification_service.dart';
 
 class ExecutionTrackingScreen extends StatefulWidget {
   final String analysisId;
@@ -22,6 +23,10 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
   final _scrollController = ScrollController();
+
+  // Track how many updates have already been notified to avoid duplicates
+  int _notifiedUpdateCount = 0;
+  bool _completionNotified = false;
 
   @override
   void initState() {
@@ -56,10 +61,40 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
     await analysisProvider.loadExecutionStatus(
         widget.analysisId, authProvider.user!.accessToken);
 
-    final status = analysisProvider.executionStatus?.overallStatus;
-    if (status == 'COMPLETED' || status == 'FAILED' || status == 'MARKET_CLOSED') {
+    final execStatus = analysisProvider.executionStatus;
+    final overallStatus = execStatus?.overallStatus;
+
+    if (overallStatus == 'COMPLETED' || overallStatus == 'FAILED' || overallStatus == 'MARKET_CLOSED') {
       _pollTimer?.cancel();
       _pulseController.stop();
+    }
+
+    // Fire notifications for each new execution update
+    if (execStatus != null) {
+      final updates = execStatus.updates;
+      if (updates.length > _notifiedUpdateCount) {
+        final newUpdates = updates.sublist(_notifiedUpdateCount);
+        for (final update in newUpdates) {
+          await NotificationService.instance.showOrderUpdate(
+            stockSymbol: update.stockSymbol,
+            message: update.message,
+            updateType: update.updateType,
+          );
+        }
+        _notifiedUpdateCount = updates.length;
+      }
+
+      // Fire a summary notification once when execution finishes
+      if (!_completionNotified &&
+          (overallStatus == 'COMPLETED' ||
+              overallStatus == 'FAILED' ||
+              overallStatus == 'GTT_FAILED')) {
+        _completionNotified = true;
+        await NotificationService.instance.showExecutionComplete(
+          completedCount: execStatus.completedStocks,
+          failedCount: execStatus.failedStocks,
+        );
+      }
     }
 
     // Auto-scroll to bottom on new updates

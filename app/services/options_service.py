@@ -112,12 +112,15 @@ class OptionsService:
         api_key: str,
         access_token: str,
         otm_offset: int = 0,
+        direction: str = "CE",
     ) -> Optional[Dict]:
         """
         Find the ATM (or slightly OTM) strike for the given index and expiry.
 
         otm_offset=0  → ATM strike (closest to current price)
-        otm_offset=1  → 1 strike OTM (slightly cheaper premium, better R:R)
+        otm_offset=1  → 1 strike OTM for the given direction:
+                         CE (bullish): higher strike → OTM call
+                         PE (bearish): lower strike  → OTM put
 
         Returns:
           {
@@ -139,8 +142,15 @@ class OptionsService:
         # Find nearest strike to current index price
         atm_idx = min(range(len(strikes)), key=lambda i: abs(strikes[i] - current_price))
 
-        # Apply OTM offset if requested (move away from current price by offset steps)
-        selected_idx = min(atm_idx + otm_offset, len(strikes) - 1)
+        # Apply OTM offset in the correct direction:
+        # CE OTM = higher strike (increment index), PE OTM = lower strike (decrement index)
+        if otm_offset > 0:
+            if direction.upper() == "PE":
+                selected_idx = max(atm_idx - otm_offset, 0)
+            else:
+                selected_idx = min(atm_idx + otm_offset, len(strikes) - 1)
+        else:
+            selected_idx = atm_idx
         selected_strike = strikes[selected_idx]
 
         contracts = strikes_map.get(selected_strike, {})

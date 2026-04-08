@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../services/active_trade_store.dart';
 import '../services/monitoring_foreground_service.dart';
+import '../services/notification_service.dart';
 import '../utils/api_config.dart';
 
 /// Standalone screen shown when the user reopens the app with an active trade.
@@ -24,6 +25,10 @@ class _ActiveMonitorScreenState extends State<ActiveMonitorScreen> {
   List<Map<String, dynamic>> _events = [];
   bool _hasAlert = false;
   bool _monitoring = true;
+
+  // Notification tracking
+  int _notifiedEventCount = 0;
+  bool _closedNotified = false;
 
   final _audio = AudioPlayer();
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
@@ -62,9 +67,52 @@ class _ActiveMonitorScreenState extends State<ActiveMonitorScreen> {
       _showAlertBanner();
     }
     final status = data['status'] as String? ?? 'MONITORING';
+
+    // Fire push notifications for each new monitor event
+    _notifyNewEvents(events, status, data);
+
     if (status == 'EXITED' || status == 'STOPPED' || status == 'HUMAN_NEEDED') {
       setState(() => _monitoring = false);
       _clearAndStop();
+    }
+  }
+
+  void _notifyNewEvents(
+    List<Map<String, dynamic>> events,
+    String status,
+    Map<String, dynamic> data,
+  ) {
+    // Notify for every new event since last check
+    if (events.length > _notifiedEventCount) {
+      final newEvents = events.sublist(_notifiedEventCount);
+      for (final e in newEvents) {
+        final level = e['alert_level'] as String? ?? 'INFO';
+        final type = e['event_type'] as String? ?? '';
+        final msg = e['message'] as String? ?? '';
+        if (msg.isNotEmpty) {
+          NotificationService.instance.showMonitorEvent(
+            symbol: widget.trade.symbol,
+            message: msg,
+            alertLevel: level,
+            eventType: type,
+          );
+        }
+      }
+      _notifiedEventCount = events.length;
+    }
+
+    // Fire a single position-closed notification
+    if (!_closedNotified &&
+        (status == 'EXITED' ||
+            status == 'STOPPED' ||
+            status == 'HUMAN_NEEDED')) {
+      _closedNotified = true;
+      final pnl = (data['pnl'] as num?)?.toDouble();
+      NotificationService.instance.showPositionClosed(
+        symbol: widget.trade.symbol,
+        status: status,
+        pnl: pnl,
+      );
     }
   }
 

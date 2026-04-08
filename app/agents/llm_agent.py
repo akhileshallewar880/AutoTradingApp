@@ -33,7 +33,7 @@ class LLMAgent:
 4. PREFER stocks near their VWAP (within 0.5%) for mean-reversion plays — best R:R
 5. DO NOT enter a BUY when RSI > 75 (overbought — likely reversal coming)
 6. DO NOT enter a SELL when RSI < 25 (oversold — likely snap-back coming)
-7. ALWAYS set stop_loss within 1× ATR of entry (never wider) — wider stops = more losers
+7. ALWAYS set stop_loss between 1.5–2× ATR of entry — 1× ATR is too tight for NSE intraday noise and will be triggered by normal price swings
 8. Minimum Risk:Reward = 1:2.0 required for ANY trade (was causing losses at 1:1.5)
 9. For SHORT positions: only short with at least 2 confirming bearish signals (VWAP below + MACD negative + RSI falling)
 10. Time of day: Avoid new entries after 2:45 PM IST — insufficient time to reach target
@@ -192,8 +192,8 @@ Pre-Screened Market Data (sorted by composite_score descending — best signals 
             # Fix price ordering
             if action == "BUY":
                 if stop >= entry:
-                    # Stop is wrong — set to entry − 1× ATR (fallback 1.5%)
-                    stop = round(entry * 0.985, 2)
+                    # Stop is wrong — set to entry − 2% (fallback for tight/missing ATR)
+                    stop = round(entry * 0.980, 2)
                     s["stop_loss"] = stop
                     logger.info(f"Fixed stop_loss for BUY {s.get('stock_symbol')}: {stop}")
                 if target <= entry:
@@ -205,7 +205,7 @@ Pre-Screened Market Data (sorted by composite_score descending — best signals 
 
             elif action == "SELL":
                 if stop <= entry:
-                    stop = round(entry * 1.015, 2)
+                    stop = round(entry * 1.020, 2)
                     s["stop_loss"] = stop
                     logger.info(f"Fixed stop_loss for SELL {s.get('stock_symbol')}: {stop}")
                 if target >= entry:
@@ -282,15 +282,17 @@ Pre-Screened Market Data (sorted by composite_score descending — best signals 
             s1 = float(indicators.get("s1", entry * 0.98) or entry * 0.98)
 
             if signal == "BUY":
-                stop = round(max(entry - 1.0 * atr, entry * 0.985), 2)
-                target = round(min(r1, entry + 2.0 * atr), 2)
+                # min() → take the LOWER stop to give price more room below entry
+                stop = round(min(entry - 1.5 * atr, entry * 0.980), 2)
+                target = round(min(r1, entry + 3.0 * atr), 2)
                 if target <= entry:
-                    target = round(entry + 2.0 * atr, 2)
+                    target = round(entry + 3.0 * atr, 2)
             else:
-                stop = round(min(entry + 1.0 * atr, entry * 1.015), 2)
-                target = round(max(s1, entry - 2.0 * atr), 2)
+                # max() → take the HIGHER stop to give price more room above entry
+                stop = round(max(entry + 1.5 * atr, entry * 1.020), 2)
+                target = round(max(s1, entry - 3.0 * atr), 2)
                 if target >= entry:
-                    target = round(entry - 2.0 * atr, 2)
+                    target = round(entry - 3.0 * atr, 2)
 
             reasons = stock.get("signal_reasons", [f"Auto-generated: {signal} signal"])
             reasoning = "; ".join(reasons[:2]) if reasons else f"{signal} signal from technical indicators"
@@ -349,10 +351,11 @@ For SELL :  target_price < entry_price < stop_loss    ← ALWAYS
 ## Entry Price
 - entry_price = current last_price (market order at this price)
 
-## Stop Loss — TIGHTER than before
-- BUY  : stop_loss = entry − 1.0 × ATR (max 1.5 × ATR; keep tight)
-- SELL : stop_loss = entry + 1.0 × ATR (max 1.5 × ATR)
-- Tight stops = better R:R and fewer large losses
+## Stop Loss — Give Price Room to Breathe
+- BUY  : stop_loss = entry − 1.5 × ATR (max 2.0 × ATR) — 1× ATR is too tight for NSE intraday noise
+- SELL : stop_loss = entry + 1.5 × ATR (max 2.0 × ATR)
+- Stops below key support (BUY) or above key resistance (SELL) are preferred over pure ATR
+- Never set stop < 1.5% from entry (use whichever gives more room)
 
 ## Target Price — Minimum 2× Risk Required
 - BUY  : target = entry + min(R1 pivot, 2.5 × ATR)
@@ -435,7 +438,7 @@ Select EXACTLY {num_stocks} stocks. DO NOT return fewer unless the market is com
             f"INTRADAY MODE: Select EXACTLY {num_stocks} stocks (BUY or SELL/short). "
             f"Prefer signal_strength ≥ 2 but accept ≥ 1 if composite_score is high. "
             f"Use VWAP, MACD crossover/histogram, BB position, EMA alignment, and Stochastic "
-            f"to find the strongest setups. Set stop_loss = 1× ATR, target = 2× ATR minimum. "
+            f"to find the strongest setups. Set stop_loss = 1.5× ATR (min 1.5% from entry), target = 3× ATR minimum. "
             f"Enforce strict price ordering: BUY → stop < entry < target; SELL → target < entry < stop. "
             f"Minimum R:R = 1:2.0. All days_to_target = 0. YOU MUST RETURN {num_stocks} TRADES."
         )
