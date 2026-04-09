@@ -148,17 +148,24 @@ class ScannerTaskHandler extends TaskHandler {
           final symbols = good.map((s) => s['stock_symbol'] as String).join(', ');
           final action  = good.first['action'] as String? ?? 'TRADE';
           _setLastAlerted('STOCKS');
+          // Save to SharedPreferences BEFORE firing notification so the main
+          // isolate can read it when the app comes to foreground.
+          await _savePendingOpportunity({
+            'mode': 'STOCKS',
+            'stocks': good,
+            'options_trade': null,
+            'expiry_date': '',
+            'analysis_id': '',
+          });
           await _fireAlarm(
-            id: 700,
+            id: 800,
             title: '📈 Stock Opportunity — $action',
             body: '$symbols ${good.length > 1 ? "(+${good.length - 1} more)" : ""} • Tap to execute',
           );
           FlutterForegroundTask.sendDataToMain({
             'event': 'OPPORTUNITY',
             'mode': 'STOCKS',
-            'symbols': symbols,
-            'count': good.length,
-            'stocks': good, // full stock data for execution
+            'stocks': good,
           });
         }
       }
@@ -217,9 +224,20 @@ class ScannerTaskHandler extends TaskHandler {
         final entryPrem  = (trade['entry_premium'] as num?)?.toDouble() ?? 0;
         final confPct    = (conf * 100).toStringAsFixed(0);
 
+        final analysisId = data['analysis_id'] as String? ?? '';
+        final expiryOut  = data['expiry_date'] as String? ?? expiry;
+
         _setLastAlerted(index);
+        // Save to SharedPreferences BEFORE firing notification.
+        await _savePendingOpportunity({
+          'mode': index,
+          'stocks': [],
+          'options_trade': trade,
+          'expiry_date': expiryOut,
+          'analysis_id': analysisId,
+        });
         await _fireAlarm(
-          id: index == 'NIFTY' ? 701 : 702,
+          id: index == 'NIFTY' ? 801 : 802,
           title: '🔔 $index $optType — ${signal.replaceAll('_', ' ')}',
           body: 'Strike $strike • Entry ₹${entryPrem.toStringAsFixed(1)} • '
                 'Confidence $confPct% • Tap to execute',
@@ -227,16 +245,20 @@ class ScannerTaskHandler extends TaskHandler {
         FlutterForegroundTask.sendDataToMain({
           'event': 'OPPORTUNITY',
           'mode': index,
-          'signal': signal,
-          'confidence': conf,
-          'trade': trade, // full options trade data
-          'analysis_id': data['analysis_id'] as String? ?? '',
-          'expiry_date': data['expiry_date'] as String? ?? expiry,
+          'trade': trade,
+          'analysis_id': analysisId,
+          'expiry_date': expiryOut,
         });
       }
     } catch (_) {
       // Swallow — keep service alive
     }
+  }
+
+  // ── Persist opportunity so main isolate picks it up on resume ─────────────
+  Future<void> _savePendingOpportunity(Map<String, dynamic> payload) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('pending_opportunity', jsonEncode(payload));
   }
 
   // ── Alarm notification (wakes screen, plays alarm sound) ──────────────────

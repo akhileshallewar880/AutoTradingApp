@@ -185,6 +185,7 @@ class AnalysisProvider with ChangeNotifier {
     String? notes,
     required String accessToken,
     required String apiKey,
+    String? userId,
     int? holdDurationDays,
   }) async {
     _isLoading = true;
@@ -209,6 +210,7 @@ class AnalysisProvider with ChangeNotifier {
           notes: notes,
           accessToken: accessToken,
           apiKey: apiKey,
+          userId: userId,
           holdDurationDays: holdDurationDays ?? _holdDurationDays,
           stockOverrides: overrides,
         );

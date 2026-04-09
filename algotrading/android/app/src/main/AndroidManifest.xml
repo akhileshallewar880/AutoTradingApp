@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <!-- Exact alarm for Android 12+ (lets foreground service wake on schedule) -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!-- Android 13+ alternative that doesn't require user to go to settings -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <application
         android:label="VanTrade"
         android:name="${applicationName}"

@@ -116,11 +116,9 @@ class _ActiveMonitorScreenState extends State<ActiveMonitorScreen> {
     }
   }
 
-  // Main HTTP poll loop (supplements WebSocket foreground data)
+  // Main HTTP poll loop — polls immediately on open, then every 15 s
   Future<void> _poll() async {
     while (mounted && _monitoring) {
-      await Future.delayed(const Duration(seconds: 15));
-      if (!mounted) return;
       try {
         final resp = await http
             .get(Uri.parse(ApiConfig.optionsMonitorUrl(widget.trade.analysisId)))
@@ -129,11 +127,13 @@ class _ActiveMonitorScreenState extends State<ActiveMonitorScreen> {
         if (resp.statusCode == 200) {
           _applyState(jsonDecode(resp.body) as Map<String, dynamic>);
         } else if (resp.statusCode == 404) {
-          // Session gone from server (server restart without foreground service)
           setState(() => _monitoring = false);
           await _clearAndStop();
+          return;
         }
       } catch (_) {}
+      // Wait before next poll (skipped on first pass above)
+      await Future.delayed(const Duration(seconds: 15));
     }
   }
 

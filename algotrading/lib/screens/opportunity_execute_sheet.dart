@@ -63,6 +63,8 @@ class OpportunityExecuteSheet extends StatefulWidget {
   final Map<String, dynamic>? optionsTrade;
   final String expiryDate;   // pre-filled from scanner (options)
   final String analysisId;   // pre-filled from scanner (options)
+  /// When true, the scanner's trade data is used directly — no re-analysis step.
+  final bool preAnalyzed;
 
   const OpportunityExecuteSheet({
     super.key,
@@ -71,6 +73,7 @@ class OpportunityExecuteSheet extends StatefulWidget {
     this.optionsTrade,
     this.expiryDate  = '',
     this.analysisId  = '',
+    this.preAnalyzed = false,
   });
 
   @override
@@ -131,7 +134,28 @@ class _OpportunityExecuteSheetState extends State<OpportunityExecuteSheet> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final balance = context.read<DashboardProvider>().dashboard?.availableBalance ?? 0;
       _capitalCtrl.text = balance > 0 ? balance.floor().toString() : '';
-      if (_isOptions) _fetchExpiries();
+      if (_isOptions) {
+        if (widget.preAnalyzed && widget.optionsTrade != null) {
+          // Use the scanner's trade data directly — skip re-analysis.
+          // Patch the raw map so fromJson fills all required fields.
+          final t = Map<String, dynamic>.from(widget.optionsTrade!);
+          t['index']       ??= widget.mode;
+          t['expiry_date'] ??= widget.expiryDate;
+          _selectedExpiry = t['expiry_date'] as String? ?? widget.expiryDate;
+          _freshAnalysis = OptionsAnalysis(
+            analysisId:        widget.analysisId,
+            index:             widget.mode,
+            currentIndexPrice: (t['current_index_price'] as num?)?.toDouble() ?? 0,
+            expiryDate:        _selectedExpiry ?? widget.expiryDate,
+            trade:             OptionsTrade.fromJson(t),
+            indexIndicators:   {},
+            status:            'PENDING_CONFIRMATION',
+            createdAt:         DateTime.now(),
+          );
+        } else {
+          _fetchExpiries();
+        }
+      }
     });
   }
 
@@ -323,6 +347,13 @@ class _OpportunityExecuteSheetState extends State<OpportunityExecuteSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.of(context).viewInsets.bottom;
+    // When opened as a full-screen page (from alarm approve), wrap in Scaffold
+    if (widget.preAnalyzed) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(child: _buildBody(context, bottomPad, null)),
+      );
+    }
     return DraggableScrollableSheet(
       initialChildSize: 0.92,
       minChildSize:     0.5,
@@ -332,19 +363,26 @@ class _OpportunityExecuteSheetState extends State<OpportunityExecuteSheet> {
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        child: Column(
+        child: _buildBody(context, bottomPad, scrollCtrl),
+      ),
+    );
+  }
+
+  Widget _buildBody(BuildContext context, double bottomPad, ScrollController? scrollCtrl) {
+    return Column(
           children: [
-            // drag handle
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Container(
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
+            // drag handle (hidden in full-screen mode)
+            if (!widget.preAnalyzed)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
-            ),
             // Header
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
@@ -471,28 +509,30 @@ class _OpportunityExecuteSheetState extends State<OpportunityExecuteSheet> {
                         ),
                       ),
                   ] else ...[
-                    // OPTIONS: analyze first, then confirm
+                    // OPTIONS: if pre-analyzed skip straight to confirm, else analyze first
                     if (_confirmSuccess == null) ...[
-                      _analyzing
-                          ? const Center(child: CircularProgressIndicator())
-                          : SizedBox(
-                              width: double.infinity,
-                              height: 52,
-                              child: ElevatedButton.icon(
-                                onPressed: _runOptionsAnalysis,
-                                icon: const Icon(Icons.search),
-                                label: const Text('Get Live Quote & Analyze',
-                                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF7C3AED),
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      if (!widget.preAnalyzed) ...[
+                        _analyzing
+                            ? const Center(child: CircularProgressIndicator())
+                            : SizedBox(
+                                width: double.infinity,
+                                height: 52,
+                                child: ElevatedButton.icon(
+                                  onPressed: _runOptionsAnalysis,
+                                  icon: const Icon(Icons.search),
+                                  label: const Text('Get Live Quote & Analyze',
+                                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF7C3AED),
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                  ),
                                 ),
                               ),
-                            ),
-                      if (_analyzeError != null) ...[
-                        const SizedBox(height: 8),
-                        _buildErrorBanner(_analyzeError!),
+                        if (_analyzeError != null) ...[
+                          const SizedBox(height: 8),
+                          _buildErrorBanner(_analyzeError!),
+                        ],
                       ],
                       if (_freshAnalysis?.trade != null) ...[
                         const SizedBox(height: 10),
@@ -558,9 +598,7 @@ class _OpportunityExecuteSheetState extends State<OpportunityExecuteSheet> {
               ),
             ),
           ],
-        ),
-      ),
-    );
+        );
   }
 
   // ── Global parameters card ─────────────────────────────────────────────────

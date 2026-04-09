@@ -833,6 +833,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
         confirmed: true,
         accessToken: authProvider.user!.accessToken,
         apiKey: authProvider.user!.apiKey,
+        userId: authProvider.user!.userId,
         holdDurationDays: analysisProvider.holdDurationDays,
       );
 

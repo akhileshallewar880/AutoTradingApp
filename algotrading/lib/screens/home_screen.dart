@@ -13,14 +13,15 @@ import '../utils/api_config.dart';
 import 'analysis_input_screen.dart';
 import 'backtest_screen.dart';
 import 'gtt_analysis_screen.dart';
-import 'gtt_portfolio_analysis_screen.dart';
 import 'options_input_screen.dart';
-import 'monitor_resume_screen.dart';
 import 'active_monitor_screen.dart';
 import 'holdings_screen.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../services/active_trade_store.dart';
 import '../services/auto_scanner_service.dart';
+import '../services/notification_service.dart';
+import '../services/alarm_permission_service.dart';
+import 'alarm_permission_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'opportunity_execute_sheet.dart';
 import 'opportunity_alarm_screen.dart';
@@ -33,7 +34,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with RouteAware {
+class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBindingObserver {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
 
   Map<String, dynamic>? _perfData;
@@ -50,9 +51,16 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   // ── Auto-scanner state ────────────────────────────────────────────────
   final _scanner = AutoScannerService.instance;
 
+  // Guard: prevent pushing alarm screen twice for the same opportunity
+  bool _alarmScreenVisible = false;
+
+  // Alarm permission status — drives the setup banner in the scanner card
+  AlarmPermissionStatus? _alarmPermStatus;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scanner.loadState();
     _scanner.addListener(_onScannerChanged);
     FlutterForegroundTask.addTaskDataCallback(_onScannerTaskData);
@@ -60,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       _initDashboard();
       _checkActiveTrade();
       _checkPendingOpportunity();
-      // Subscribe so didPopNext fires whenever this screen regains focus
+      _checkAlarmPermissions();
       routeObserver.subscribe(this, ModalRoute.of(context)!);
     });
   }
@@ -74,7 +82,28 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      // If a test alarm was armed, schedule it NOW (2 min from when app closes)
+      _scheduleArmedTestAlarm();
+    }
+    // When the app comes back to foreground, check if a trade alarm is pending
+    if (state == AppLifecycleState.resumed) {
+      _checkActiveTrade();
+      _checkPendingOpportunity();
+    }
+  }
+
+  Future<void> _scheduleArmedTestAlarm() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('test_alarm_armed') != true) return;
+    await prefs.remove('test_alarm_armed');
+    await NotificationService.instance.scheduleTestAlarm(delaySeconds: 120);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     routeObserver.unsubscribe(this);
     _indexRefreshTimer?.cancel();
     _scanner.removeListener(_onScannerChanged);
@@ -102,7 +131,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
   Future<void> _checkActiveTrade() async {
     final trade = await ActiveTradeStore.load();
-    if (trade == null || !mounted) return;
+    if (!mounted) return;
     setState(() => _activeTrade = trade);
   }
 
@@ -114,6 +143,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   }
 
   /// Receive opportunity events from the background isolate.
+  /// SharedPreferences are already written by the background isolate before
+  /// this fires — just update in-memory state and show the alarm.
   void _onScannerTaskData(Object data) {
     if (data is! Map) return;
     if (data['event'] != 'OPPORTUNITY') return;
@@ -129,44 +160,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         optionsTrade: optionsTrade,
         expiryDate: data['expiry_date'] as String?,
         analysisId: data['analysis_id'] as String?);
-    // Save to prefs and push alarm screen
-    _saveAndShowAlarm(
-      mode: mode,
-      stocks: stocks ?? [],
-      optionsTrade: optionsTrade,
-      expiryDate: data['expiry_date'] as String? ?? '',
-      analysisId: data['analysis_id'] as String? ?? '',
-    );
-  }
-
-  /// Persists the opportunity to SharedPreferences so it survives
-  /// app-backgrounding, then pushes the full-screen alarm.
-  Future<void> _saveAndShowAlarm({
-    required String mode,
-    required List<Map<String, dynamic>> stocks,
-    Map<String, dynamic>? optionsTrade,
-    required String expiryDate,
-    required String analysisId,
-  }) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      'pending_opportunity',
-      jsonEncode({
-        'mode': mode,
-        'stocks': stocks,
-        'options_trade': optionsTrade,
-        'expiry_date': expiryDate,
-        'analysis_id': analysisId,
-      }),
-    );
-    if (!mounted) return;
-    _pushAlarmScreen(
-      mode: mode,
-      stocks: stocks,
-      optionsTrade: optionsTrade,
-      expiryDate: expiryDate,
-      analysisId: analysisId,
-    );
+    // Prefs already saved by background isolate — just show the alarm.
+    _checkPendingOpportunity();
   }
 
   /// Checks SharedPreferences for a pending alarm (e.g. app opened from
@@ -206,6 +201,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     required String expiryDate,
     required String analysisId,
   }) {
+    if (_alarmScreenVisible) return; // already showing
+    _alarmScreenVisible = true;
     Navigator.of(context).push(
       MaterialPageRoute(
         fullscreenDialog: true,
@@ -217,7 +214,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           analysisId:   analysisId,
         ),
       ),
-    );
+    ).then((_) => _alarmScreenVisible = false);
   }
 
   /// Build credentials from current auth + dashboard state.
@@ -769,6 +766,41 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
             ],
           ),
 
+          // Alarm permission warning banner
+          if (_alarmPermStatus != null && !_alarmPermStatus!.allGranted) ...[
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: () async {
+                await Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const AlarmPermissionScreen(fromSettings: true),
+                ));
+                _checkAlarmPermissions();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.orange[300]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: Colors.orange[700], size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Alarm permissions not set up — tap to fix so trade alerts wake your screen.',
+                        style: TextStyle(fontSize: 12, color: Colors.orange[900], fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: Colors.orange[700], size: 18),
+                  ],
+                ),
+              ),
+            ),
+          ],
+
+
           // Last opportunity — actionable banner with execute button
           if (_scanner.lastOpportunityTime != null) ...[
             const SizedBox(height: 8),
@@ -874,6 +906,28 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         ),
       ),
     );
+  }
+
+
+  /// Checks alarm permissions and auto-shows setup screen on first encounter.
+  Future<void> _checkAlarmPermissions() async {
+    final status = await AlarmPermissionService.instance.checkAll();
+    if (!mounted) return;
+    setState(() => _alarmPermStatus = status);
+
+    // Auto-show the setup screen once if permissions are missing
+    if (!status.allGranted) {
+      final prefs = await SharedPreferences.getInstance();
+      final shown = prefs.getBool('alarm_perm_screen_shown') ?? false;
+      if (!shown && mounted) {
+        await prefs.setBool('alarm_perm_screen_shown', true);
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => const AlarmPermissionScreen(),
+        ));
+        // Re-check after returning
+        if (mounted) _checkAlarmPermissions();
+      }
+    }
   }
 
   void _openOpportunitySheet(BuildContext context) {

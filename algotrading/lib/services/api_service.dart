@@ -122,6 +122,7 @@ class ApiService {
     String? notes,
     required String accessToken,
     required String apiKey,
+    String? userId,
     int holdDurationDays = 0,
     List<Map<String, dynamic>>? stockOverrides,
   }) async {
@@ -136,6 +137,7 @@ class ApiService {
         'access_token': accessToken,
         'api_key': apiKey,
         'user_notes': notes,
+        'user_id': userId,
         'hold_duration_days': holdDurationDays,
         'stock_overrides': ?stockOverrides,
       }),

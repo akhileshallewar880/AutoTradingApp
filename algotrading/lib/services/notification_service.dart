@@ -4,6 +4,24 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:flutter_timezone/flutter_timezone.dart';
 
+// Opportunity alarm notification IDs (one per mode)
+const _kAlarmIds = {799, 800, 801, 802};
+
+/// Foreground tap handler — called when user taps a notification while app is open.
+void _onNotificationTap(NotificationResponse response) {
+  if (_kAlarmIds.contains(response.id)) {
+    NotificationService.onAlarmTap?.call();
+  }
+}
+
+/// Background / terminated tap handler — must be a top-level @pragma function.
+@pragma('vm:entry-point')
+void _onBgNotificationTap(NotificationResponse response) {
+  if (_kAlarmIds.contains(response.id)) {
+    NotificationService.onAlarmTap?.call();
+  }
+}
+
 /// Central notification service for all in-app and background push notifications.
 ///
 /// Four channels:
@@ -14,6 +32,9 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 class NotificationService {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
+
+  /// Set this in main() to handle opportunity-alarm notification taps.
+  static Future<void> Function()? onAlarmTap;
 
   final _plugin = FlutterLocalNotificationsPlugin();
 
@@ -46,7 +67,19 @@ class NotificationService {
 
     await _plugin.initialize(
       const InitializationSettings(android: androidInit, iOS: iosInit),
+      onDidReceiveNotificationResponse: _onNotificationTap,
+      onDidReceiveBackgroundNotificationResponse: _onBgNotificationTap,
     );
+
+    // If the app was launched by tapping an alarm notification (cold start),
+    // getNotificationAppLaunchDetails fires here — treat it the same as a tap.
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    if (launchDetails != null &&
+        launchDetails.didNotificationLaunchApp &&
+        launchDetails.notificationResponse != null &&
+        _kAlarmIds.contains(launchDetails.notificationResponse!.id)) {
+      onAlarmTap?.call();
+    }
 
     // Create Android notification channels
     await _createChannel(
@@ -79,11 +112,13 @@ class NotificationService {
       playSound: true,
     );
 
-    // Opportunity alarm channel — max importance, custom sound, wakes screen
-    final androidPlugin = _plugin
+    // Reuse one plugin reference for all remaining Android-specific setup
+    final android = _plugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.createNotificationChannel(
+
+    // Opportunity alarm channel — max importance, custom sound, wakes screen
+    await android?.createNotificationChannel(
       const AndroidNotificationChannel(
         _opportunityChannelId,
         'Trade Opportunities',
@@ -98,11 +133,22 @@ class NotificationService {
       ),
     );
 
-    // Request permission on Android 13+
-    await _plugin
+    // POST_NOTIFICATIONS permission (Android 13+)
+    await android?.requestNotificationsPermission();
+
+    // USE_FULL_SCREEN_INTENT permission (Android 14+, API 34+).
+    // Without this the alarm notification fires but does NOT wake the screen
+    // when it is locked/off — it sits silently in the notification shade.
+    await android?.requestFullScreenIntentPermission();
+  }
+
+  /// Returns true if the app has the USE_FULL_SCREEN_INTENT permission granted.
+  /// Always returns true on Android < 14 (permission not required there).
+  Future<bool> hasFullScreenIntentPermission() async {
+    final androidPlugin = _plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+            AndroidFlutterLocalNotificationsPlugin>();
+    return await androidPlugin?.canScheduleExactNotifications() ?? true;
   }
 
   Future<void> _createChannel({
@@ -273,6 +319,58 @@ class NotificationService {
     // Fixed ID per mode so repeated alerts replace the previous one
     final id = mode == 'NIFTY' ? 801 : mode == 'BANKNIFTY' ? 802 : 800;
     await _plugin.show(id, title, body, details);
+  }
+
+  // ── Test alarm (development / market-closed testing) ─────────────────────
+
+  /// Schedules a full-screen alarm notification [delaySeconds] from now.
+  /// The notification tap calls [onAlarmTap], which reads pending_opportunity
+  /// from SharedPreferences and shows OpportunityAlarmScreen.
+  Future<void> scheduleTestAlarm({int delaySeconds = 120}) async {
+    // Cancel any previous test alarm
+    await _plugin.cancel(799);
+
+    final fireAt = tz.TZDateTime.now(tz.local)
+        .add(Duration(seconds: delaySeconds));
+
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        _opportunityChannelId,
+        'Trade Opportunities',
+        importance: Importance.max,
+        priority: Priority.max,
+        fullScreenIntent: true,
+        playSound: true,
+        sound: const RawResourceAndroidNotificationSound('opportunity_alarm'),
+        enableVibration: true,
+        vibrationPattern: Int64List.fromList([0, 400, 200, 400, 200, 800]),
+        ticker: 'VanTrade — Test Trade Opportunity',
+        styleInformation: const BigTextStyleInformation(
+            'RELIANCE BUY ₹2845 • INFY BUY ₹1620 • Tap to review & execute'),
+        icon: '@mipmap/launcher_icon',
+        channelShowBadge: true,
+        autoCancel: true,
+      ),
+    );
+
+    final canExact = await _plugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.canScheduleExactNotifications() ??
+        false;
+
+    await _plugin.zonedSchedule(
+      799, // fixed test alarm ID — also in _kAlarmIds
+      '📈 TEST — Stock Opportunity Found',
+      'RELIANCE BUY ₹2845 • INFY BUY ₹1620 • Tap to review & execute',
+      fireAt,
+      details,
+      androidScheduleMode: canExact
+          ? AndroidScheduleMode.exactAllowWhileIdle
+          : AndroidScheduleMode.inexact,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
   }
 
   // ── Weekday login reminder (Mon–Fri 09:00) ────────────────────────────────
