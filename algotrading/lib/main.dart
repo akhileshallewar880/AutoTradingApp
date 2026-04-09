@@ -13,6 +13,11 @@ import 'services/monitoring_foreground_service.dart';
 import 'services/notification_service.dart';
 import 'services/auto_scanner_service.dart';
 
+/// Global route observer — imported by HomeScreen to detect when it becomes
+/// the top screen again (e.g. after popping back from live commentary).
+final RouteObserver<ModalRoute<void>> routeObserver =
+    RouteObserver<ModalRoute<void>>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -53,6 +58,7 @@ class AlgoTradingApp extends StatelessWidget {
       child: MaterialApp(
         title: 'VanTrade',
         debugShowCheckedModeBanner: false,
+        navigatorObservers: [routeObserver],
         theme: ThemeData(
           primarySwatch: Colors.green,
           colorScheme: ColorScheme.fromSeed(

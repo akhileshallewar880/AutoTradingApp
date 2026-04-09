@@ -21,7 +21,10 @@ import 'holdings_screen.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../services/active_trade_store.dart';
 import '../services/auto_scanner_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'opportunity_execute_sheet.dart';
+import 'opportunity_alarm_screen.dart';
+import '../main.dart' show routeObserver;
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -30,7 +33,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
 
   Map<String, dynamic>? _perfData;
@@ -56,11 +59,23 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initDashboard();
       _checkActiveTrade();
+      _checkPendingOpportunity();
+      // Subscribe so didPopNext fires whenever this screen regains focus
+      routeObserver.subscribe(this, ModalRoute.of(context)!);
     });
   }
 
   @override
+  void didPopNext() {
+    // Called when user pops back to HomeScreen from any screen on top of it
+    // (e.g. live commentary, options results, active monitor)
+    _checkActiveTrade();
+    _checkPendingOpportunity();
+  }
+
+  @override
   void dispose() {
+    routeObserver.unsubscribe(this);
     _indexRefreshTimer?.cancel();
     _scanner.removeListener(_onScannerChanged);
     FlutterForegroundTask.removeTaskDataCallback(_onScannerTaskData);
@@ -114,6 +129,95 @@ class _HomeScreenState extends State<HomeScreen> {
         optionsTrade: optionsTrade,
         expiryDate: data['expiry_date'] as String?,
         analysisId: data['analysis_id'] as String?);
+    // Save to prefs and push alarm screen
+    _saveAndShowAlarm(
+      mode: mode,
+      stocks: stocks ?? [],
+      optionsTrade: optionsTrade,
+      expiryDate: data['expiry_date'] as String? ?? '',
+      analysisId: data['analysis_id'] as String? ?? '',
+    );
+  }
+
+  /// Persists the opportunity to SharedPreferences so it survives
+  /// app-backgrounding, then pushes the full-screen alarm.
+  Future<void> _saveAndShowAlarm({
+    required String mode,
+    required List<Map<String, dynamic>> stocks,
+    Map<String, dynamic>? optionsTrade,
+    required String expiryDate,
+    required String analysisId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'pending_opportunity',
+      jsonEncode({
+        'mode': mode,
+        'stocks': stocks,
+        'options_trade': optionsTrade,
+        'expiry_date': expiryDate,
+        'analysis_id': analysisId,
+      }),
+    );
+    if (!mounted) return;
+    _pushAlarmScreen(
+      mode: mode,
+      stocks: stocks,
+      optionsTrade: optionsTrade,
+      expiryDate: expiryDate,
+      analysisId: analysisId,
+    );
+  }
+
+  /// Checks SharedPreferences for a pending alarm (e.g. app opened from
+  /// notification tap while already dismissed from home, or after restart).
+  Future<void> _checkPendingOpportunity() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('pending_opportunity');
+    if (raw == null || !mounted) return;
+    try {
+      final payload = jsonDecode(raw) as Map<String, dynamic>;
+      final mode = payload['mode'] as String? ?? '';
+      final stocks = (payload['stocks'] as List?)
+          ?.map((e) => Map<String, dynamic>.from(e as Map))
+          .toList() ?? [];
+      final optionsTrade = payload['options_trade'] != null
+          ? Map<String, dynamic>.from(payload['options_trade'] as Map)
+          : null;
+      final expiryDate = payload['expiry_date'] as String? ?? '';
+      final analysisId = payload['analysis_id'] as String? ?? '';
+      _pushAlarmScreen(
+        mode: mode,
+        stocks: stocks,
+        optionsTrade: optionsTrade,
+        expiryDate: expiryDate,
+        analysisId: analysisId,
+      );
+    } catch (_) {
+      // Corrupted payload — discard
+      await prefs.remove('pending_opportunity');
+    }
+  }
+
+  void _pushAlarmScreen({
+    required String mode,
+    required List<Map<String, dynamic>> stocks,
+    Map<String, dynamic>? optionsTrade,
+    required String expiryDate,
+    required String analysisId,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => OpportunityAlarmScreen(
+          mode:         mode,
+          stocks:       stocks,
+          optionsTrade: optionsTrade,
+          expiryDate:   expiryDate,
+          analysisId:   analysisId,
+        ),
+      ),
+    );
   }
 
   /// Build credentials from current auth + dashboard state.
