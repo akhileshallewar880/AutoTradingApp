@@ -39,6 +39,9 @@ class ExecutionAgent:
         hold_duration_days: int = 0,
         action: str = "BUY",
         sl_only: bool = False,
+        user_id: str = "",
+        partial_exit_level: float = 0.0,
+        atr: float = 0.0,
     ) -> Dict:
         """
         sl_only=True  → place single-leg SL-only GTT (used with multi-target strategy
@@ -393,6 +396,34 @@ class ExecutionAgent:
                 f"Trade execution completed — {stock_symbol} {entry_label} {product}",
                 update_callback,
             )
+
+            # ── Auto-register with autonomous agent for partial exit monitoring ──
+            if user_id and is_intraday:
+                try:
+                    from app.agents.autonomous_agent import autonomous_agent_manager
+                    if autonomous_agent_manager.is_running(user_id):
+                        await autonomous_agent_manager.register_position(
+                            user_id=user_id,
+                            symbol=stock_symbol,
+                            action=action,
+                            quantity=quantity,
+                            entry_price=actual_fill,
+                            stop_loss=gtt_stop_loss,
+                            target=gtt_target,
+                            gtt_id=str(execution_log.get("gtt_order_id") or ""),
+                            entry_order_id=str(entry_order_id),
+                            atr=atr,
+                            partial_exit_level=partial_exit_level,
+                        )
+                        logger.info(
+                            f"[ExecutionAgent] Auto-registered {stock_symbol} with "
+                            f"autonomous agent (partial_exit_level=₹{partial_exit_level:.2f})"
+                        )
+                except Exception as reg_err:
+                    logger.warning(
+                        f"[ExecutionAgent] Failed to register {stock_symbol} with "
+                        f"autonomous agent: {reg_err}"
+                    )
 
             return execution_log
 

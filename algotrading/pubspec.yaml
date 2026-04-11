@@ -70,6 +70,12 @@ dependencies:
   # Opens specific Android system settings pages (alarm permission, full-screen intent, etc.)
   android_intent_plus: ^5.1.0
 
+  # Keep screen on during alarm (wakelock)
+  wakelock_plus: ^1.2.8
+
+  # Vibration pattern for alarm
+  vibration: ^2.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

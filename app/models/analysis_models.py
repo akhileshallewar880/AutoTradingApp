@@ -68,6 +68,7 @@ class OrderConfirmation(BaseModel):
     access_token: str  # User's Zerodha access token for executing trades
     api_key: str       # User's Zerodha API key (must match the access_token)
     user_notes: Optional[str] = None
+    user_id: Optional[str] = None  # VanTrade user ID (for autonomous agent registration)
     hold_duration_days: int = Field(
         default=0,
         description="Hold duration in days passed from the app"

@@ -424,4 +424,170 @@ class OptionsService:
             return []
 
 
+    async def get_prev_day_ohlc(
+        self,
+        index: str,
+        api_key: str,
+        access_token: str,
+    ) -> dict:
+        """
+        Fetch previous trading day's OHLC for the given index.
+        Returns {"high": float, "low": float, "open": float, "close": float}
+        or {"high": 0.0, "low": 0.0, ...} on failure (caller treats 0 as unavailable).
+        """
+        zero = {"high": 0.0, "low": 0.0, "open": 0.0, "close": 0.0}
+        try:
+            zerodha_service.set_credentials(api_key, access_token)
+            index_upper      = index.upper()
+            instrument_token = self.INDEX_TOKENS.get(index_upper)
+            if not instrument_token:
+                return zero
+
+            import pytz
+            IST = pytz.timezone("Asia/Kolkata")
+            today   = datetime.now(IST).replace(tzinfo=None).date()
+
+            # Walk back to find previous weekday
+            prev_day = today - timedelta(days=1)
+            while prev_day.weekday() >= 5:      # skip Sat/Sun
+                prev_day -= timedelta(days=1)
+
+            from_dt = datetime.combine(prev_day, datetime.min.time()).replace(hour=9, minute=15)
+            to_dt   = datetime.combine(prev_day, datetime.min.time()).replace(hour=15, minute=30)
+
+            loop = asyncio.get_event_loop()
+            candles = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    zerodha_service.kite.historical_data,
+                    instrument_token,
+                    from_dt,
+                    to_dt,
+                    "day",
+                    continuous=False,
+                    oi=False,
+                ),
+            )
+            if candles:
+                c = candles[-1]  # last (most recent) daily candle
+                result = {
+                    "high":  float(c.get("high",  0)),
+                    "low":   float(c.get("low",   0)),
+                    "open":  float(c.get("open",  0)),
+                    "close": float(c.get("close", 0)),
+                }
+                logger.info(
+                    f"[OptionsService] {index} prev-day OHLC: "
+                    f"H={result['high']:.2f} L={result['low']:.2f}"
+                )
+                return result
+        except Exception as e:
+            logger.warning(f"[OptionsService] prev-day OHLC fetch failed for {index}: {e}")
+        return zero
+
+    async def get_fut_volume_ratio(
+        self,
+        index: str,
+        api_key: str,
+        access_token: str,
+    ) -> float:
+        """
+        Find the near-month futures contract for the index, fetch today's 5-min candles,
+        and return last_candle_volume / avg_volume_of_last_10_candles.
+        Returns 0.0 on any failure so the engine skips the check gracefully.
+        """
+        try:
+            zerodha_service.set_credentials(api_key, access_token)
+            loop = asyncio.get_event_loop()
+
+            instruments = await loop.run_in_executor(
+                None,
+                lambda: self._get_instruments(api_key, access_token),
+            )
+            today = date.today()
+            index_upper = index.upper()
+            fut_instruments = [
+                i for i in instruments
+                if i.get("name") == index_upper
+                and i.get("instrument_type") == "FUT"
+                and i.get("expiry") and i["expiry"] >= today
+            ]
+            if not fut_instruments:
+                logger.warning(f"[OptionsService] No futures found for {index}")
+                return 0.0
+
+            fut_instruments.sort(key=lambda x: x["expiry"])
+            near_fut = fut_instruments[0]
+            token = near_fut["instrument_token"]
+            logger.info(
+                f"[OptionsService] {index} FUT: {near_fut.get('tradingsymbol')} "
+                f"expiry={near_fut['expiry']}"
+            )
+
+            import pytz
+            IST = pytz.timezone("Asia/Kolkata")
+            now_ist = datetime.now(IST).replace(tzinfo=None)
+            market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+
+            candles = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    zerodha_service.kite.historical_data,
+                    token,
+                    market_open,
+                    now_ist,
+                    "5minute",
+                    continuous=False,
+                    oi=False,
+                ),
+            )
+            if len(candles) < 3:
+                return 0.0
+
+            volumes = [float(c.get("volume", 0) or 0) for c in candles]
+            last_vol = volumes[-1]
+            lookback = volumes[max(0, len(volumes) - 11): len(volumes) - 1]
+            avg_vol = sum(lookback) / len(lookback) if lookback else 0.0
+            if avg_vol <= 0:
+                return 0.0
+
+            ratio = round(last_vol / avg_vol, 2)
+            logger.info(
+                f"[OptionsService] {index} FUT vol ratio: {ratio:.2f}× "
+                f"(last={last_vol:.0f} avg={avg_vol:.0f})"
+            )
+            return ratio
+
+        except Exception as e:
+            logger.warning(f"[OptionsService] get_fut_volume_ratio failed for {index}: {e}")
+            return 0.0
+
+    def get_index_candles_sync(
+        self,
+        index: str,
+        api_key: str,
+        access_token: str,
+        limit_minutes: int = 20,
+    ) -> List[Dict]:
+        """
+        Synchronous fetch of the last N minutes of 5-min index candles.
+        Called via loop.run_in_executor in the monitoring agent for structure trailing SL.
+        """
+        try:
+            zerodha_service.set_credentials(api_key, access_token)
+            import pytz
+            IST = pytz.timezone("Asia/Kolkata")
+            now_ist = datetime.now(IST).replace(tzinfo=None)
+            from_dt = now_ist - timedelta(minutes=limit_minutes)
+            token = self.INDEX_TOKENS.get(index.upper())
+            if not token:
+                return []
+            return zerodha_service.kite.historical_data(
+                token, from_dt, now_ist, "5minute", continuous=False, oi=False
+            )
+        except Exception as e:
+            logger.warning(f"[OptionsService] get_index_candles_sync failed for {index}: {e}")
+            return []
+
+
 options_service = OptionsService()

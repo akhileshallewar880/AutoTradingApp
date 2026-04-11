@@ -28,6 +28,9 @@ from app.core.config import get_settings
 from app.core.logging import logger
 from app.services.zerodha_service import zerodha_service
 from app.services.ticker_service import ticker_service
+from app.engines.options_engine import options_engine, ATM_DELTA
+from app.services.options_service import options_service
+from app.storage.database import db
 
 try:
     from kiteconnect import KiteTicker as _KiteTickerCheck
@@ -89,7 +92,9 @@ class MonitoringSession:
     target_order_id: str
     api_key: str
     access_token: str
-    instrument_token: int = 0   # Zerodha instrument token for WebSocket subscription
+    instrument_token: int = 0    # Zerodha instrument token for WebSocket subscription
+    index: str = ""              # NIFTY or BANKNIFTY — for anti-overtrading guard
+    entry_index_price: float = 0.0  # index price at trade entry — for structure trailing SL
 
     # Trailing SL tracking
     peak_premium: float = 0.0
@@ -258,6 +263,9 @@ class OptionsMonitoringAgent:
                 except Exception as e:
                     logger.warning(f"[Monitor] Cancel target after SL fill failed: {e}")
                 s.status = "EXITED"
+                if s.index:
+                    options_engine.record_trade_outcome(s.index, was_loss=True)
+                await db.close_options_trade(s.analysis_id, "SL_HIT", avg, pnl, 0.0)
 
             elif s.target_order_id and oid == str(s.target_order_id) and status == "COMPLETE":
                 s.current_premium = avg
@@ -281,6 +289,9 @@ class OptionsMonitoringAgent:
                 except Exception as e:
                     logger.warning(f"[Monitor] Cancel SL after target fill failed: {e}")
                 s.status = "EXITED"
+                if s.index:
+                    options_engine.record_trade_outcome(s.index, was_loss=False)
+                await db.close_options_trade(s.analysis_id, "TARGET_HIT", avg, pnl, 0.0)
 
         # ── Subscribe to WebSocket if instrument_token is available ──────────────
         ws_active = False
@@ -340,6 +351,9 @@ class OptionsMonitoringAgent:
                                 f"Exit ₹{s.current_premium:.2f} | P&L: ₹{pnl:+.0f}.",
                             )
                             s.status = "EXITED"
+                            if s.index:
+                                options_engine.record_trade_outcome(s.index, was_loss=pnl < 0)
+                            await db.close_options_trade(s.analysis_id, reason, s.current_premium, pnl, 0.0)
                     except Exception:
                         pass
         else:
@@ -351,7 +365,8 @@ class OptionsMonitoringAgent:
             logger.info(f"[Monitor] Using REST poll fallback for {s.symbol} (fast+slow split)")
 
             async def fast_price_loop():
-                """Update current_premium every 2 seconds via kite.ltp()."""
+                """Update current_premium every 2 seconds via kite.ltp() / kite.quote()."""
+                zerodha_service.set_credentials(s.api_key, s.access_token)
                 while s.status == "MONITORING":
                     await asyncio.sleep(2)
                     if s.status != "MONITORING":
@@ -388,6 +403,9 @@ class OptionsMonitoringAgent:
                                 f"Exit ₹{s.current_premium:.2f} | P&L: ₹{pnl:+.0f}.",
                             )
                             s.status = "EXITED"
+                            if s.index:
+                                options_engine.record_trade_outcome(s.index, was_loss=pnl < 0)
+                            await db.close_options_trade(s.analysis_id, close_reason, s.current_premium, pnl, 0.0)
                             break
 
                         premium = s.current_premium  # already kept fresh by fast_price_loop
@@ -422,6 +440,9 @@ class OptionsMonitoringAgent:
 
                         async with sl_lock:
                             await self._apply_trailing_sl(s, cb, loop, premium, sl_lock)
+
+                        # Structure-based trailing SL (index swing low/high → premium)
+                        await self._apply_structure_trailing_sl(s, cb, loop, sl_lock)
 
                     except kite_exc.PermissionException as e:
                         await self._human_alert(s, cb,
@@ -526,47 +547,84 @@ class OptionsMonitoringAgent:
     async def _fetch_ltp_only(self, option_symbol: str) -> Optional[float]:
         """
         Lightweight single-attempt LTP fetch — used by the fast price loop (every 2s).
-        No retries, no logging on failure. Falls back silently so the loop keeps running.
+        Tries kite.ltp() first (requires paid subscription); falls back to kite.quote()
+        which works on all Zerodha plans.
         """
+        nfo_key = f"NFO:{option_symbol}"
+        loop = asyncio.get_event_loop()
+
+        # Attempt 1: kite.ltp() — lightweight, paid plan
         try:
-            loop = asyncio.get_event_loop()
-            nfo_key = f"NFO:{option_symbol}"
             ltp_data = await loop.run_in_executor(
                 None, lambda: zerodha_service.kite.ltp([nfo_key])
             )
             ltp = ltp_data.get(nfo_key, {}).get("last_price", 0.0)
-            return float(ltp) if ltp else None
+            if ltp and ltp > 0:
+                return float(ltp)
         except Exception:
-            return None
+            pass
+
+        # Attempt 2: kite.quote() — works on all plans, slightly heavier
+        try:
+            quote_data = await loop.run_in_executor(
+                None, lambda: zerodha_service.kite.quote([nfo_key])
+            )
+            ltp = quote_data.get(nfo_key, {}).get("last_price", 0.0)
+            if ltp and ltp > 0:
+                return float(ltp)
+        except Exception:
+            pass
+
+        return None
 
     async def _fetch_live_premium(
         self, s: MonitoringSession, loop
     ) -> Optional[float]:
-        """Fetch LTP for the option. Retries up to MAX_RETRIES on transient errors."""
+        """Fetch LTP for the option. Tries kite.ltp() then kite.quote(); retries on transient errors."""
+        nfo_key = f"NFO:{s.symbol}"
+
         for attempt in range(1, MAX_RETRIES + 1):
+            # Try kite.ltp() first (lighter), fall back to kite.quote() on same attempt
+            price = None
             try:
-                nfo_key = f"NFO:{s.symbol}"
                 ltp_data = await loop.run_in_executor(
                     None, lambda: zerodha_service.kite.ltp([nfo_key])
                 )
-                key = list(ltp_data.keys())[0]
-                return float(ltp_data[key]["last_price"])
-            except (ConnectionError, TimeoutError, OSError) as e:
-                if attempt == MAX_RETRIES:
-                    await self._human_alert(s, None,
-                        f"Network error fetching premium after {MAX_RETRIES} retries: {e}",
-                        {"error": str(e), "action_needed": "Check internet connectivity on server"})
+                ltp = ltp_data.get(nfo_key, {}).get("last_price", 0.0)
+                if ltp and ltp > 0:
+                    price = float(ltp)
+            except Exception:
+                pass
+
+            if not price:
+                try:
+                    quote_data = await loop.run_in_executor(
+                        None, lambda: zerodha_service.kite.quote([nfo_key])
+                    )
+                    ltp = quote_data.get(nfo_key, {}).get("last_price", 0.0)
+                    if ltp and ltp > 0:
+                        price = float(ltp)
+                except (ConnectionError, TimeoutError, OSError) as e:
+                    if attempt == MAX_RETRIES:
+                        await self._human_alert(s, None,
+                            f"Network error fetching premium after {MAX_RETRIES} retries: {e}",
+                            {"error": str(e), "action_needed": "Check internet connectivity on server"})
+                        return None
+                    await asyncio.sleep(5 * attempt)
+                    continue
+                except kite_exc.DataException as e:
+                    logger.warning(f"[Monitor] DataException on premium fetch: {e}")
                     return None
-                await asyncio.sleep(5 * attempt)
-            except kite_exc.DataException as e:
-                # Transient data error — skip this poll
-                logger.warning(f"[Monitor] DataException on premium fetch: {e}")
-                return None
-            except Exception as e:
-                logger.warning(f"[Monitor] premium fetch attempt {attempt} failed: {e}")
-                if attempt == MAX_RETRIES:
-                    return None
-                await asyncio.sleep(5)
+                except Exception as e:
+                    logger.warning(f"[Monitor] premium fetch attempt {attempt} failed: {e}")
+                    if attempt == MAX_RETRIES:
+                        return None
+                    await asyncio.sleep(5)
+                    continue
+
+            if price:
+                return price
+
         return None
 
     async def _check_target_hit(
@@ -697,6 +755,89 @@ class OptionsMonitoringAgent:
                 f"(pehle ₹{old_sl:.2f} tha). {action_note}. "
                 f"₹{abs(locked_pnl):.0f} ka profit ab safe hai.",
             )
+
+    async def _apply_structure_trailing_sl(
+        self,
+        s: MonitoringSession,
+        cb: Callable,
+        loop,
+        sl_lock: Optional[asyncio.Lock] = None,
+    ):
+        """
+        Structure-based trailing SL update (runs every 30s in the slow loop).
+
+        Fetches the last 20 minutes of index candles and computes the structural SL:
+          CE: SL index level = min(low of last 2 candles) → protection at demand zone
+          PE: SL index level = max(high of last 2 candles) → protection at supply zone
+
+        Converts index SL to premium SL via ATM delta approximation (≈ 0.5):
+          premium_sl = entry_premium - (entry_index - struct_sl_index) × ATM_DELTA
+
+        As the index trends in our direction, the structural SL rises — locking profit
+        at the latest swing structure rather than a fixed percentage trail.
+        """
+        if not s.index or s.entry_index_price <= 0:
+            return
+
+        try:
+            recent_candles = await loop.run_in_executor(
+                None,
+                lambda: options_service.get_index_candles_sync(
+                    s.index, s.api_key, s.access_token, limit_minutes=20
+                ),
+            )
+            if len(recent_candles) < 2:
+                return
+
+            if s.option_type == "CE":
+                struct_sl_index = min(float(c["low"]) for c in recent_candles[-2:])
+                # CE: if index held above swing low, premium SL = entry - drop × delta
+                index_displacement = s.entry_index_price - struct_sl_index
+            else:  # PE
+                struct_sl_index = max(float(c["high"]) for c in recent_candles[-2:])
+                # PE: if index held below swing high, premium SL = entry - rise × delta
+                index_displacement = struct_sl_index - s.entry_index_price
+
+            new_struct_sl = round(s.entry_fill_price - index_displacement * ATM_DELTA, 2)
+            new_struct_sl = self._snap_tick(new_struct_sl)
+
+            # Never move SL down; only improve it
+            if new_struct_sl <= s.sl_trigger:
+                return
+            # Require a minimum step to avoid API spam
+            if new_struct_sl - s.sl_trigger < MIN_TRAIL_STEP:
+                return
+
+            new_limit = self._snap_tick(new_struct_sl * 0.98)
+            if sl_lock:
+                async with sl_lock:
+                    updated = await self._modify_sl_order(s, cb, loop, new_struct_sl, new_limit)
+            else:
+                updated = await self._modify_sl_order(s, cb, loop, new_struct_sl, new_limit)
+
+            if updated:
+                old_sl = s.sl_trigger
+                s.sl_trigger = new_struct_sl
+                s.sl_limit   = new_limit
+                locked_pnl   = round((new_struct_sl - s.entry_fill_price) * s.quantity, 2)
+                await self._emit(s, cb, "TRAILING_SL",
+                    f"Structure SL ₹{old_sl:.2f} → ₹{new_struct_sl:.2f} "
+                    f"(index swing {s.option_type}={'low' if s.option_type=='CE' else 'high'} "
+                    f"₹{struct_sl_index:.2f}, locked=₹{locked_pnl:+.0f})",
+                    {"old_sl": old_sl, "new_sl": new_struct_sl,
+                     "struct_sl_index": struct_sl_index,
+                     "locked_pnl": locked_pnl, "method": "structure"}, "INFO")
+                self._add_commentary(
+                    s, "TRAILING_SL",
+                    f"{s.symbol}: Structure SL moved to ₹{new_struct_sl:.2f} "
+                    f"(index swing level ₹{struct_sl_index:.2f}). "
+                    f"₹{abs(locked_pnl):.0f} profit now protected.",
+                    f"{s.symbol}: Structure SL ₹{new_struct_sl:.2f} pe aa gaya "
+                    f"(index swing ₹{struct_sl_index:.2f}). "
+                    f"₹{abs(locked_pnl):.0f} ka profit safe hai.",
+                )
+        except Exception as e:
+            logger.debug(f"[Monitor] Structure trailing SL update failed: {e}")
 
     async def _modify_sl_order(
         self, s: MonitoringSession, cb: Optional[Callable], loop,
@@ -842,6 +983,9 @@ class OptionsMonitoringAgent:
                 f"Estimated P&L: ₹{pnl:+.0f}.",
             )
             s.status = "EXITED"
+            if s.index:
+                options_engine.record_trade_outcome(s.index, was_loss=pnl < 0)
+            await db.close_options_trade(s.analysis_id, reason, exit_price, round(pnl, 2), 0.0)
         except Exception as e:
             await self._human_alert(s, cb,
                 f"CRITICAL: Cannot place exit order: {e}. Close position manually NOW.",

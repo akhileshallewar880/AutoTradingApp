@@ -27,16 +27,29 @@ class LLMAgent:
     # Accuracy-boosting lessons learned from historical tradebook losses
     TRADEBOOK_LESSONS = """
 ## Lessons From Historical Losses (MANDATORY — apply to every pick)
-1. AVOID stocks with a gap-down > 3% from previous close (they keep falling) — do NOT trade IEX-style drops
+1. AVOID stocks with a gap-down > 3% from previous close — they keep falling, do NOT trade IEX-style drops
 2. AVOID stocks outside the price band ₹10–₹15,000 (illiquid extremes)
 3. PREFER stocks where day_change_pct is between -1.5% and +4% (not in extreme moves)
 4. PREFER stocks near their VWAP (within 0.5%) for mean-reversion plays — best R:R
 5. DO NOT enter a BUY when RSI > 75 (overbought — likely reversal coming)
 6. DO NOT enter a SELL when RSI < 25 (oversold — likely snap-back coming)
-7. ALWAYS set stop_loss between 1.5–2× ATR of entry — 1× ATR is too tight for NSE intraday noise and will be triggered by normal price swings
-8. Minimum Risk:Reward = 1:2.0 required for ANY trade (was causing losses at 1:1.5)
-9. For SHORT positions: only short with at least 2 confirming bearish signals (VWAP below + MACD negative + RSI falling)
-10. Time of day: Avoid new entries after 2:45 PM IST — insufficient time to reach target
+7. STOP LOSS: ALWAYS set 2× ATR minimum — 1.5× ATR is too tight for NSE 5-min candle noise and WILL be triggered by routine wicks
+8. Minimum Risk:Reward = 1:2.5 MANDATORY — 1:2.0 still causes losses on winning trades that reverse before target
+9. TARGET: Use R2 pivot level (not R1). R1 is the first resistance — price touches R1 and reverses. R2 is where price goes IF the move is real.
+   - BUY target = max(entry + 3× ATR, R2 pivot). If R2 is not in data, use 3× ATR.
+   - SELL target = min(entry − 3× ATR, S2 pivot). If S2 is not in data, use 3× ATR down.
+10. PARTIAL EXIT LEVEL: Set partial_exit_level = entry ± 1× risk (1:1 R:R level).
+    At this level the agent will automatically exit 50% of the position and move SL to breakeven.
+    This locks in profit on winning trades and prevents the ₹3000+ reversals we experienced.
+11. SL FLOOR: Never set stop_loss within less than 2% of entry — minimum 2% distance regardless of ATR
+12. For SHORT positions: only short with at least 3 confirming bearish signals (VWAP below + MACD negative + RSI falling)
+13. CONFIDENCE GATE: Only trade if confidence_score ≥ 0.70. Do NOT return trades below 0.70.
+14. QUALITY OVER QUANTITY: It is better to return 0 trades than to return weak setups.
+    If no stock passes all the above gates, return an empty stocks list with reasoning.
+15. VOLUME CONFIRMATION: volume_ratio must be ≥ 1.3× for any trade. Volume below 1.3× = no institutional interest = skip.
+16. SIGNAL STRENGTH: Only trade stocks where signal_strength ≥ 3 (at least 3 of 5 indicator combos agree).
+17. Time of day: Avoid new entries after 2:45 PM IST — insufficient time to reach target
+18. NEVER force a trade to meet the requested count. Zero trades on a bad day = correct behavior.
 """
 
     def __init__(self):
@@ -165,10 +178,16 @@ Pre-Screened Market Data (sorted by composite_score descending — best signals 
         """
         After LLM response:
         1. Enforce price ordering (stop < entry < target for BUY; target < entry < stop for SELL)
-        2. Fix trades where R:R < 1.5 by recalculating target
-        3. Remove trades where confidence_score < 0.60
-        4. If 0 trades remain → force-generate from top pre-screened stocks
+        2. Enforce SL floor (≥ 2% from entry)
+        3. Fix trades where R:R < 2.5 by recalculating target
+        4. Remove trades where confidence_score < 0.70
+        5. Add partial_exit_level at 1:1 R:R (50% exit point for autonomous agent)
+        6. If 0 trades remain → return 0 trades (quality over quantity)
         """
+        MIN_CONFIDENCE = 0.70
+        MIN_RR = 2.5
+        MIN_SL_PCT = 0.02   # SL must be at least 2% from entry
+
         stocks = data.get("stocks", [])
         valid = []
 
@@ -183,38 +202,50 @@ Pre-Screened Market Data (sorted by composite_score descending — best signals 
                 logger.warning(f"Rejecting trade {s.get('stock_symbol')} — zero entry price")
                 continue
 
-            if confidence < 0.60:
+            if confidence < MIN_CONFIDENCE:
                 logger.warning(
-                    f"Rejecting {s.get('stock_symbol')} — low confidence {confidence:.2f} < 0.60"
+                    f"Rejecting {s.get('stock_symbol')} — low confidence {confidence:.2f} < {MIN_CONFIDENCE}"
                 )
                 continue
 
             # Fix price ordering
             if action == "BUY":
                 if stop >= entry:
-                    # Stop is wrong — set to entry − 2% (fallback for tight/missing ATR)
-                    stop = round(entry * 0.980, 2)
+                    stop = round(entry * (1 - MIN_SL_PCT), 2)
                     s["stop_loss"] = stop
                     logger.info(f"Fixed stop_loss for BUY {s.get('stock_symbol')}: {stop}")
                 if target <= entry:
-                    # Target is wrong — set to entry + 2× risk
                     risk = entry - stop
-                    target = round(entry + 2.0 * risk, 2)
+                    target = round(entry + MIN_RR * risk, 2)
                     s["target_price"] = target
                     logger.info(f"Fixed target for BUY {s.get('stock_symbol')}: {target}")
 
             elif action == "SELL":
                 if stop <= entry:
-                    stop = round(entry * 1.020, 2)
+                    stop = round(entry * (1 + MIN_SL_PCT), 2)
                     s["stop_loss"] = stop
                     logger.info(f"Fixed stop_loss for SELL {s.get('stock_symbol')}: {stop}")
                 if target >= entry:
                     risk = stop - entry
-                    target = round(entry - 2.0 * risk, 2)
+                    target = round(entry - MIN_RR * risk, 2)
                     s["target_price"] = target
                     logger.info(f"Fixed target for SELL {s.get('stock_symbol')}: {target}")
 
-            # Enforce minimum R:R ≥ 1.5
+            # Enforce SL floor: must be ≥ MIN_SL_PCT from entry
+            if action == "BUY":
+                min_stop = round(entry * (1 - MIN_SL_PCT), 2)
+                if stop > min_stop:
+                    stop = min_stop
+                    s["stop_loss"] = stop
+                    logger.info(f"Widened SL for BUY {s.get('stock_symbol')} to floor {stop}")
+            else:
+                max_stop = round(entry * (1 + MIN_SL_PCT), 2)
+                if stop < max_stop:
+                    stop = max_stop
+                    s["stop_loss"] = stop
+                    logger.info(f"Widened SL for SELL {s.get('stock_symbol')} to floor {stop}")
+
+            # Enforce minimum R:R ≥ MIN_RR
             if action == "BUY":
                 risk = entry - stop
                 reward = target - entry
@@ -224,27 +255,33 @@ Pre-Screened Market Data (sorted by composite_score descending — best signals 
 
             if risk > 0:
                 rr = reward / risk
-                if rr < 1.5:
-                    # Extend target to achieve 2× R:R
+                if rr < MIN_RR:
                     if action == "BUY":
-                        target = round(entry + 2.0 * risk, 2)
+                        target = round(entry + MIN_RR * risk, 2)
                     else:
-                        target = round(entry - 2.0 * risk, 2)
+                        target = round(entry - MIN_RR * risk, 2)
                     s["target_price"] = target
                     logger.info(
-                        f"Extended target for {s.get('stock_symbol')} to achieve 2× R:R "
+                        f"Extended target for {s.get('stock_symbol')} to achieve {MIN_RR}× R:R "
                         f"(was {rr:.2f}): new target={target}"
                     )
 
+            # Add partial_exit_level at 1:1 R:R (50% exit → breakeven SL)
+            if risk > 0:
+                if action == "BUY":
+                    partial_exit = round(entry + risk, 2)
+                else:
+                    partial_exit = round(entry - risk, 2)
+                s["partial_exit_level"] = partial_exit
+
             valid.append(s)
 
-        # ── If LLM returned 0 valid trades, force-generate from pre-screened data ──
-        if len(valid) == 0 and market_data:
-            logger.warning(
-                "LLM returned 0 valid trades — running emergency trade generation "
-                "from top pre-screened stocks"
+        # Quality over quantity — 0 trades on a bad day is correct behavior
+        if len(valid) == 0:
+            logger.info(
+                "Post-validation: 0 trades passed quality gates — "
+                "returning empty list (no weak setups forced)"
             )
-            valid = self._force_generate_trades(market_data, hold_duration_days)
 
         data["stocks"] = valid
         logger.info(f"Post-validation: {len(valid)} trades ready for execution")
@@ -390,12 +427,12 @@ BUY  : stoch_k < 30  AND  stoch_k > stoch_d  (oversold + recovering)
 SELL : stoch_k > 70  AND  stoch_k < stoch_d  (overbought + falling)
        OR  stoch_signal = "OVERBOUGHT"
 
-## Selection Rules (relaxed to ensure trades are always generated)
-1. Prefer signal_strength ≥ 2 — but signal_strength = 1 with high composite_score is acceptable
-2. volume_ratio ≥ 1.2 preferred (≥ 1.0 acceptable if all other signals align strongly)
+## Selection Rules (quality gates — do NOT relax these)
+1. signal_strength MUST be ≥ 3 (at least 3 of 5 indicator combos agree — no weak signals)
+2. volume_ratio MUST be ≥ 1.3× (institutional confirmation required)
 3. ATR must be ≥ 0.3% of price
 4. days_to_target MUST be 0 for all intraday picks
-5. Confidence score: aim for ≥ 0.65; minimum accepted 0.60
+5. Confidence score: MINIMUM 0.70 — do NOT return trades below this threshold
 6. Time filter: do NOT enter new positions after 2:45 PM IST
 
 {self.TRADEBOOK_LESSONS}
@@ -409,8 +446,9 @@ Return ONLY valid JSON in this exact structure:
             "company_name": "Full Company Name",
             "action": "BUY",
             "entry_price": 100.00,
-            "stop_loss": 99.00,
-            "target_price": 102.00,
+            "stop_loss": 98.00,
+            "target_price": 105.00,
+            "partial_exit_level": 102.00,
             "confidence_score": 0.82,
             "days_to_target": 0,
             "reasoning": "2–3 sentences: which combos triggered, VWAP position, key levels used, R:R achieved."
@@ -420,8 +458,9 @@ Return ONLY valid JSON in this exact structure:
             "company_name": "Full Company Name",
             "action": "SELL",
             "entry_price": 200.00,
-            "stop_loss": 203.00,
-            "target_price": 194.00,
+            "stop_loss": 204.00,
+            "target_price": 190.00,
+            "partial_exit_level": 196.00,
             "confidence_score": 0.78,
             "days_to_target": 0,
             "reasoning": "2–3 sentences: bearish combos triggered, VWAP below, stop above entry."
@@ -429,14 +468,16 @@ Return ONLY valid JSON in this exact structure:
     ]
 }}
 
-Select EXACTLY {num_stocks} stocks. DO NOT return fewer unless the market is completely closed
-(in which case note that in the reasoning field and set confidence_score = 0.50).
+partial_exit_level = entry ± 1× risk (the 1:1 R:R level where 50% position exits and SL moves to breakeven).
+Return UP TO {num_stocks} stocks. If no stock passes all quality gates, return an empty stocks list.
 """
 
     def _build_intraday_user_instruction(self, num_stocks: int) -> str:
         return (
-            f"INTRADAY MODE: Select EXACTLY {num_stocks} stocks (BUY or SELL/short). "
-            f"Prefer signal_strength ≥ 2 but accept ≥ 1 if composite_score is high. "
+            f"INTRADAY MODE: Select UP TO {num_stocks} stocks (BUY or SELL/short) that PASS ALL quality gates. "
+            f"signal_strength MUST be ≥ 3 and volume_ratio MUST be ≥ 1.3×. "
+            f"If fewer than {num_stocks} stocks qualify, return only the ones that qualify. "
+            f"If no stocks pass all gates today, return an empty stocks list — DO NOT force weak setups. "
             f"Use VWAP, MACD crossover/histogram, BB position, EMA alignment, and Stochastic "
             f"to find the strongest setups. Set stop_loss = 1.5× ATR (min 1.5% from entry), target = 3× ATR minimum. "
             f"Enforce strict price ordering: BUY → stop < entry < target; SELL → target < entry < stop. "
@@ -473,9 +514,9 @@ Your SOLE OBJECTIVE: identify stocks with the highest probability of maximum pro
 
 {sector_context}
 
-## CRITICAL MANDATE — ALWAYS GENERATE TRADES
-You MUST return EXACTLY {num_stocks} trade recommendations. There are always opportunities
-in the NSE market. Never return fewer than requested.
+## CRITICAL MANDATE — QUALITY OVER QUANTITY
+Return UP TO {num_stocks} trade recommendations that PASS ALL quality gates (confidence ≥ 0.70,
+R:R ≥ 2.5, SL ≥ 2% from entry). If fewer stocks qualify, return fewer. Never force weak setups.
 
 ## General Selection Criteria (rank by importance)
 1. Volume Surge — volume_ratio > 1.5× (institutional accumulation signal)
@@ -503,7 +544,8 @@ Return ONLY valid JSON:
             "action": "BUY",
             "entry_price": 100.00,
             "stop_loss": 98.00,
-            "target_price": 114.00,
+            "target_price": 105.00,
+            "partial_exit_level": 102.00,
             "confidence_score": 0.85,
             "days_to_target": 3,
             "reasoning": "Concise 2-3 sentence explanation including R:R achieved."
@@ -511,7 +553,8 @@ Return ONLY valid JSON:
     ]
 }}
 
-Select EXACTLY {num_stocks} stocks.
+partial_exit_level = entry + 1× risk (1:1 R:R level for automatic 50% exit and SL → breakeven).
+Select UP TO {num_stocks} stocks that pass all quality gates.
 """
 
     @staticmethod

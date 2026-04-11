@@ -2011,6 +2011,7 @@ class UserTradingAgent:
         gtt_id: Optional[str] = None,
         entry_order_id: str = "",
         atr: float = 0.0,
+        partial_exit_level: float = 0.0,
     ) -> Dict:
         """
         Register a manually-executed trade into the agent's monitoring list.
@@ -2039,11 +2040,14 @@ class UserTradingAgent:
         t1_qty = max(1, quantity // 2)
         t2_qty = max(1, (quantity - t1_qty) // 2) if (quantity - t1_qty) >= 2 else 0
 
-        # T1 = midpoint between entry and target; T2 = target itself
-        if action == "BUY":
-            t1_price = round(entry_price + (target - entry_price) / 2, 2)
+        # T1 = partial_exit_level (1:1 R:R) if provided, else midpoint to target
+        risk = abs(entry_price - stop_loss)
+        if partial_exit_level > 0:
+            t1_price = round(partial_exit_level, 2)
+        elif action == "BUY":
+            t1_price = round(entry_price + risk, 2)   # 1:1 R:R default
         else:
-            t1_price = round(entry_price - (entry_price - target) / 2, 2)
+            t1_price = round(entry_price - risk, 2)   # 1:1 R:R default
 
         pos = PositionState(
             symbol=symbol,
@@ -2197,6 +2201,7 @@ class AutonomousAgentManager:
         gtt_id: Optional[str] = None,
         entry_order_id: str = "",
         atr: float = 0.0,
+        partial_exit_level: float = 0.0,
     ) -> Dict:
         """Inject a manually-executed position into a running agent."""
         if user_id not in self._agents or not self._agents[user_id].is_running:
@@ -2211,6 +2216,7 @@ class AutonomousAgentManager:
             gtt_id=gtt_id,
             entry_order_id=entry_order_id,
             atr=atr,
+            partial_exit_level=partial_exit_level,
         )
 
     def get_agent_status(self, user_id: str) -> Optional[Dict]:

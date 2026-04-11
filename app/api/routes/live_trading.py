@@ -33,6 +33,7 @@ class RegisterPositionRequest(BaseModel):
     gtt_id: Optional[str] = None      # GTT already placed by user (optional)
     entry_order_id: str = ""
     atr: float = 0.0                  # Optional — agent derives 1% fallback if not provided
+    partial_exit_level: float = 0.0   # Price at which to exit 50% and move SL to breakeven
 
 
 class PlaceLimitOrderRequest(BaseModel):
@@ -151,6 +152,7 @@ async def register_position(req: RegisterPositionRequest):
             gtt_id=req.gtt_id,
             entry_order_id=req.entry_order_id,
             atr=req.atr,
+            partial_exit_level=req.partial_exit_level,
         )
         if result.get("status") == "error":
             raise HTTPException(status_code=400, detail=result.get("detail", "Unknown error"))

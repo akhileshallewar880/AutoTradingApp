@@ -57,6 +57,13 @@ class OptionsAnalysisResponse(BaseModel):
     trade: Optional[OptionsTrade] = None
     index_indicators: dict
     status: str = "PENDING_CONFIRMATION"  # PENDING_CONFIRMATION, CONFIRMED, EXECUTING, COMPLETED
+    # Regime-based engine fields (v2)
+    regime: str = "UNKNOWN"                  # TRENDING_UP | TRENDING_DOWN | CHOPPY | SIDEWAYS
+    signal_reasons: list = Field(default_factory=list)    # gates passed
+    failed_filters: list = Field(default_factory=list)    # gates failed / why NO_TRADE
+    or_high: float = 0.0                     # opening range high
+    or_low:  float = 0.0                     # opening range low
+    adx:     float = 0.0                     # trend strength
 
 
 class OptionsConfirmation(BaseModel):

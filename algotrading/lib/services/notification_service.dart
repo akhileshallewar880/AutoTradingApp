@@ -117,7 +117,9 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
 
-    // Opportunity alarm channel — max importance, custom sound, wakes screen
+    // Opportunity alarm channel — max importance, custom sound, wakes screen.
+    // audioAttributesUsage.alarm makes sound play through the ALARM audio
+    // stream, bypassing silent/vibrate/DND modes just like a real alarm app.
     await android?.createNotificationChannel(
       const AndroidNotificationChannel(
         _opportunityChannelId,
@@ -130,6 +132,7 @@ class NotificationService {
         sound: RawResourceAndroidNotificationSound('opportunity_alarm'),
         enableVibration: true,
         showBadge: true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
       ),
     );
 
@@ -298,6 +301,10 @@ class NotificationService {
         'Trade Opportunities',
         importance: Importance.max,
         priority: Priority.max,
+        // CATEGORY_ALARM lets fullScreenIntent bypass the USE_FULL_SCREEN_INTENT
+        // runtime permission introduced in Android 14 (API 34).  Without this,
+        // the notification fires but the screen never wakes on a locked phone.
+        category: AndroidNotificationCategory.alarm,
         fullScreenIntent: true,
         playSound: true,
         sound: const RawResourceAndroidNotificationSound('opportunity_alarm'),
@@ -323,6 +330,9 @@ class NotificationService {
 
   // ── Test alarm (development / market-closed testing) ─────────────────────
 
+  /// Cancels a previously scheduled test alarm (ID 799).
+  Future<void> cancelTestAlarm() => _plugin.cancel(799);
+
   /// Schedules a full-screen alarm notification [delaySeconds] from now.
   /// The notification tap calls [onAlarmTap], which reads pending_opportunity
   /// from SharedPreferences and shows OpportunityAlarmScreen.
@@ -339,6 +349,7 @@ class NotificationService {
         'Trade Opportunities',
         importance: Importance.max,
         priority: Priority.max,
+        category: AndroidNotificationCategory.alarm,
         fullScreenIntent: true,
         playSound: true,
         sound: const RawResourceAndroidNotificationSound('opportunity_alarm'),
@@ -346,7 +357,7 @@ class NotificationService {
         vibrationPattern: Int64List.fromList([0, 400, 200, 400, 200, 800]),
         ticker: 'VanTrade — Test Trade Opportunity',
         styleInformation: const BigTextStyleInformation(
-            'RELIANCE BUY ₹2845 • INFY BUY ₹1620 • Tap to review & execute'),
+            'NIFTY CE 24000 • Entry ₹120 • SL ₹78 • Target ₹204 — Tap to execute'),
         icon: '@mipmap/launcher_icon',
         channelShowBadge: true,
         autoCancel: true,

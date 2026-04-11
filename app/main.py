@@ -37,7 +37,21 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup_event():
-        logger.info("Application starting up (DB-free mode)")
+        logger.info("Application starting up")
+
+        # Restore anti-overtrading guard from DB so a server restart cannot
+        # reset today's trade count or post-loss cooldown.
+        try:
+            from app.storage.database import db
+            from app.engines.options_engine import options_engine
+            rows = db.load_todays_options_trades_sync()
+            options_engine._guard.restore_from_db(rows)
+            logger.info(
+                f"[Startup] Anti-overtrading guard restored "
+                f"({len(rows)} today's trade(s) loaded from DB)"
+            )
+        except Exception as e:
+            logger.warning(f"[Startup] Could not restore guard state: {e}")
 
     @app.on_event("shutdown")
     async def shutdown_event():

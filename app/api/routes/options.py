@@ -31,6 +31,7 @@ from app.agents.options_llm_agent import options_llm_agent
 from app.agents.options_execution_agent import options_execution_agent
 from app.agents.options_monitoring_agent import options_monitoring_agent, MonitoringSession
 from app.core.logging import logger
+from app.storage.database import db
 from datetime import datetime, date
 from typing import List, Optional
 import uuid
@@ -164,23 +165,25 @@ async def get_premium_quote(
 @router.post("/analyze", response_model=OptionsAnalysisResponse)
 async def analyze_options(request: OptionsRequest):
     """
-    Full options analysis pipeline:
-      1. Fetch live index price
-      2. Fetch 5-min candles → calculate indicators
-      3. OptionsEngine votes BUY_CE / BUY_PE / NEUTRAL
-      4. LLM confirms direction and sets premium levels
-      5. Select ATM option contract from Zerodha instruments
-      6. Return trade recommendation
+    Options analysis pipeline v2 — Regime-Based Breakout System:
+      1. Fetch live index price + previous-day OHLC
+      2. Fetch 5-min candles
+      3. Engine: regime detection → breakout detection → structure SL/target
+         (engine is the final authority — no indicator voting, no GPT override)
+      4. If NO_TRADE: return immediately with regime explanation
+      5. If BUY_CE / BUY_PE: deterministic premium levels (no GPT approval)
+      6. GPT writes narrative summary only
+      7. Return full response
 
-    Only NIFTY and BANKNIFTY supported. Only MIS (Intraday) product.
+    Only NIFTY and BANKNIFTY. Only MIS (Intraday). Max 1 trade per day per index.
     """
     index = request.index.upper()
     if index not in ("NIFTY", "BANKNIFTY"):
         raise HTTPException(status_code=400, detail="index must be NIFTY or BANKNIFTY")
 
     logger.info(
-        f"[Options-Analyze] START index={index} expiry={request.expiry_date} "
-        f"lots={request.lots} capital={request.capital_to_use}"
+        f"[Options-Analyze v2] START index={index} expiry={request.expiry_date} "
+        f"lots={request.lots} capital=₹{request.capital_to_use}"
     )
 
     analysis_id = str(uuid.uuid4())
@@ -188,47 +191,104 @@ async def analyze_options(request: OptionsRequest):
     try:
         loop = asyncio.get_event_loop()
 
-        # ── Step 1: Live index price ────────────────────────────────────
+        # ── Step 1: Live index price + previous-day high/low ───────────
         current_price: float = await loop.run_in_executor(
             None,
             lambda: options_service.get_index_price(
                 index, request.api_key, request.access_token
             ),
         )
-        logger.info(f"[Options-Analyze] {index} price: ₹{current_price:.2f}")
+        logger.info(f"[Options-Analyze v2] {index} price: ₹{current_price:.2f}")
 
-        # ── Step 2: 5-min candles + indicators ─────────────────────────
-        candles = await options_service.get_index_candles(
-            index, request.api_key, request.access_token
+        # Prev-day OHLC — used by engine as secondary breakout level confirmation.
+        # Fetched in parallel with candles; failure is non-fatal (engine uses 0.0).
+        prev_day_task = asyncio.create_task(
+            options_service.get_prev_day_ohlc(
+                index, request.api_key, request.access_token
+            )
         )
 
-        if len(candles) < 5:
+        # ── Step 2: 5-min candles + futures volume (parallel) ─────────
+        candles_task = asyncio.create_task(
+            options_service.get_index_candles(
+                index, request.api_key, request.access_token
+            )
+        )
+        fut_vol_task = asyncio.create_task(
+            options_service.get_fut_volume_ratio(
+                index, request.api_key, request.access_token
+            )
+        )
+
+        candles, prev_day_ohlc, fut_volume_ratio = await asyncio.gather(
+            candles_task, prev_day_task, fut_vol_task
+        )
+        prev_day_high = prev_day_ohlc.get("high", 0.0)
+        prev_day_low  = prev_day_ohlc.get("low",  0.0)
+        logger.info(f"[Options-Analyze v2] Futures volume ratio: {fut_volume_ratio:.2f}×")
+
+        if len(candles) < 10:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Not enough candle data ({len(candles)}) for {index}. "
-                    "Could not fetch historical data from Zerodha."
+                    f"Not enough candle data ({len(candles)} candles) for {index}. "
+                    "Need at least 10 five-minute candles. "
+                    "If market just opened, retry after 9:30 AM IST."
                 ),
             )
 
-        indicators = options_engine.calculate_indicators(candles)
-        if indicators is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Failed to calculate technical indicators. Check candle data.",
-            )
-
-        # ── Step 3: Engine signal ────────────────────────────────────
-        engine_signal = options_engine.generate_signal(
-            indicators, expiry_date=request.expiry_date
+        logger.info(
+            f"[Options-Analyze v2] {len(candles)} candles, "
+            f"prev-day H={prev_day_high:.2f} L={prev_day_low:.2f}"
         )
+
+        # ── Step 3: Engine — regime + breakout (FINAL authority) ───────
+        engine_result = options_engine.generate_signal(
+            candles=candles,
+            index=index,
+            expiry_date=request.expiry_date,
+            prev_day_high=prev_day_high,
+            prev_day_low=prev_day_low,
+            fut_volume_ratio=fut_volume_ratio,
+        )
+        ind = engine_result.indicators
 
         logger.info(
-            f"[Options-Analyze] Engine signal: {engine_signal['signal']} "
-            f"strength={engine_signal['strength']}/5"
+            f"[Options-Analyze v2] Engine → signal={engine_result.signal} "
+            f"regime={engine_result.regime.value} ADX={engine_result.adx:.1f}"
         )
 
-        # ── Step 4: ATM strike selection ─────────────────────────────
+        # ── Step 4: If NO_TRADE, return immediately (no Zerodha calls) ─
+        if engine_result.signal == "NO_TRADE":
+            analysis = OptionsAnalysisResponse(
+                analysis_id=analysis_id,
+                index=index,
+                current_index_price=current_price,
+                expiry_date=request.expiry_date,
+                trade=None,
+                index_indicators=ind,
+                status="NO_TRADE",
+                regime=engine_result.regime.value,
+                signal_reasons=engine_result.reasons,
+                failed_filters=engine_result.failed_filters,
+                or_high=engine_result.or_high,
+                or_low=engine_result.or_low,
+                adx=engine_result.adx,
+            )
+            _options_analyses[analysis_id] = {
+                "analysis": analysis,
+                "request":  request,
+                "created_at": datetime.utcnow(),
+            }
+            logger.info(
+                f"[Options-Analyze v2] NO_TRADE — "
+                f"{engine_result.failed_filters[0] if engine_result.failed_filters else 'conditions not met'}"
+            )
+            return analysis
+
+        # ── Step 5: ATM strike + live premiums ────────────────────────
+        opt_type = "CE" if engine_result.signal == "BUY_CE" else "PE"
+
         atm_data = await loop.run_in_executor(
             None,
             lambda: options_service.select_atm_strike(
@@ -239,152 +299,158 @@ async def analyze_options(request: OptionsRequest):
                 request.access_token,
             ),
         )
-
         if atm_data is None:
             raise HTTPException(
                 status_code=404,
                 detail=(
                     f"No option contracts found for {index} expiry={request.expiry_date}. "
-                    "Check that the expiry date is valid."
+                    "Verify the expiry date is valid."
                 ),
             )
 
         atm_strike = atm_data["atm_strike"]
-        ce_inst = atm_data["ce"]
-        pe_inst = atm_data["pe"]
-        # Prefer the actual lot_size from Zerodha's instrument data (updates automatically
-        # when SEBI changes contract sizes). Fall back to hardcoded only if missing.
-        lot_size = int(ce_inst.get("lot_size") or options_service.get_lot_size(index))
+        ce_inst    = atm_data["ce"]
+        pe_inst    = atm_data["pe"]
+        lot_size   = int(ce_inst.get("lot_size") or options_service.get_lot_size(index))
+        chosen_inst = ce_inst if opt_type == "CE" else pe_inst
 
-        # ── Step 5: Fetch live premiums for CE and PE ─────────────────
+        # Live premiums for both sides (for display in summary)
         try:
-            premium_ce: float = await loop.run_in_executor(
+            premium_ce = await loop.run_in_executor(
                 None,
                 lambda: options_service.get_option_premium(
-                    ce_inst["tradingsymbol"],
-                    request.api_key,
-                    request.access_token,
+                    ce_inst["tradingsymbol"], request.api_key, request.access_token
                 ),
             )
-            premium_pe: float = await loop.run_in_executor(
+            premium_pe = await loop.run_in_executor(
                 None,
                 lambda: options_service.get_option_premium(
-                    pe_inst["tradingsymbol"],
-                    request.api_key,
-                    request.access_token,
+                    pe_inst["tradingsymbol"], request.api_key, request.access_token
                 ),
             )
         except Exception as e:
-            logger.warning(f"[Options-Analyze] Premium fetch failed: {e} — using last_price from instruments")
+            logger.warning(f"[Options-Analyze v2] Premium fetch failed: {e} — using instrument last_price")
             premium_ce = float(ce_inst.get("last_price", 0))
             premium_pe = float(pe_inst.get("last_price", 0))
 
+        entry_premium = premium_ce if opt_type == "CE" else premium_pe
         logger.info(
-            f"[Options-Analyze] ATM {atm_strike}: CE=₹{premium_ce:.2f}, PE=₹{premium_pe:.2f}"
+            f"[Options-Analyze v2] ATM {atm_strike}: CE=₹{premium_ce:.2f} PE=₹{premium_pe:.2f} "
+            f"→ using {opt_type} entry=₹{entry_premium:.2f}"
         )
 
-        # ── Step 6: Pre-compute risk budget for LLM constraint ───────
-        leverage = max(1.0, min(float(getattr(request, "leverage_multiplier", 1.0)), 5.0))
-        base_risk_rupees = round(request.capital_to_use * request.risk_percent / 100, 2)
-        max_risk_rupees = round(base_risk_rupees * leverage, 2)
+        # ── Step 6: Deterministic premium levels ──────────────────────
+        # SL: mapped from the engine's structure-based index SL via ATM delta (≈0.5).
+        #     This ties the premium SL to the actual swing structure — not a fixed %.
+        #     Hard floor: risk ≤ 25% of entry (sl_premium ≥ entry × 0.75).
+        # Target: entry + 2× risk — no upside cap. Remainder runs with trailing SL.
+        # Partial: entry + 1× risk — 50% exit at 1R, SL moves to breakeven.
+        ATM_DELTA = 0.5
+        if engine_result.sl_index_price > 0 and engine_result.entry_index_price > 0:
+            if opt_type == "CE":
+                index_risk_pts = engine_result.entry_index_price - engine_result.sl_index_price
+            else:
+                index_risk_pts = engine_result.sl_index_price - engine_result.entry_index_price
+            sl_from_structure = round(entry_premium - index_risk_pts * ATM_DELTA, 2)
+            # Floor: premium SL must be ≥ 75% of entry (max 25% risk per unit)
+            sl_floor    = round(entry_premium * 0.75, 2)
+            sl_premium  = max(sl_from_structure, sl_floor, 0.05)
+        else:
+            # Fallback if engine didn't produce index levels
+            sl_premium = round(entry_premium * 0.75, 2)
 
-        # Max SL distance per unit so that (entry-sl) × lot_size × lots ≤ max_risk
-        max_sl_distance_per_unit = round(
-            max_risk_rupees / (request.lots * lot_size), 2
-        ) if request.lots * lot_size > 0 else 999.0
+        sl_premium      = round(sl_premium, 2)
+        risk_premium    = round(entry_premium - sl_premium, 2)
+        # No upside cap — full trend move captured. Target = 2R.
+        target_premium  = round(entry_premium + 2.0 * risk_premium, 2)
+        partial_premium = round(entry_premium + 1.0 * risk_premium, 2)  # 1R → 50% exit
 
-        logger.info(
-            f"[Options-Analyze] Risk budget: capital=₹{request.capital_to_use} "
-            f"risk={request.risk_percent}% leverage={leverage}× "
-            f"→ base_loss=₹{base_risk_rupees} max_loss=₹{max_risk_rupees} "
-            f"max_sl_dist_per_unit=₹{max_sl_distance_per_unit} "
-            f"(lots={request.lots} lot_size={lot_size})"
-        )
+        # ── Step 7: Risk-based lot sizing ─────────────────────────────
+        # Hard cap: max_risk = 3% of capital. Leverage does not increase risk.
+        max_risk_rupees  = round(request.capital_to_use * 0.03, 2)
+        risk_per_lot     = round(risk_premium * lot_size, 2)
+        if risk_per_lot > 0:
+            max_safe_lots = max(1, int(max_risk_rupees / risk_per_lot))
+        else:
+            max_safe_lots = request.lots
+        lots_to_trade = min(request.lots, max_safe_lots)
 
-        # ── Step 7: LLM analysis ──────────────────────────────────────
-        llm_result = await options_llm_agent.analyze_options_opportunity(
+        if lots_to_trade < request.lots:
+            logger.warning(
+                f"[Options-Analyze v2] Lots capped: requested={request.lots} → "
+                f"{lots_to_trade} (max_risk=₹{max_risk_rupees:.0f} "
+                f"risk_per_lot=₹{risk_per_lot:.0f})"
+            )
+
+        quantity         = lots_to_trade * lot_size
+        total_investment = round(entry_premium * quantity, 2)
+        max_loss         = round(risk_premium * quantity, 2)
+        max_profit       = round((target_premium - entry_premium) * quantity, 2)
+        rr               = round((target_premium - entry_premium) / risk_premium, 2) if risk_premium > 0 else 2.0
+
+        # Suggested hold: proportional to time remaining before NO_TRADE_AFTER (2 PM)
+        now_ist = datetime.now(IST).replace(tzinfo=None) if "IST" in dir() else datetime.utcnow()
+        try:
+            import pytz as _pytz
+            _ist = _pytz.timezone("Asia/Kolkata")
+            now_ist = datetime.now(_ist).replace(tzinfo=None)
+        except Exception:
+            pass
+        minutes_to_close = max(30, (14 * 60) - (now_ist.hour * 60 + now_ist.minute))
+        suggested_hold   = min(90, max(30, minutes_to_close // 2))
+
+        # ── Step 8: GPT narrative summary (non-blocking, does not change signal) ──
+        llm_summary = await options_llm_agent.summarize_trade(
             index=index,
+            result=engine_result,
             current_price=current_price,
             expiry_date=request.expiry_date,
-            indicators=indicators,
-            engine_signal=engine_signal,
-            atm_strike=atm_strike,
-            entry_premium_ce=premium_ce,
-            entry_premium_pe=premium_pe,
-            lots=request.lots,
+            entry_premium=entry_premium,
+            stop_loss_premium=sl_premium,
+            target_premium=target_premium,
+            lots=lots_to_trade,
             lot_size=lot_size,
-            capital=request.capital_to_use,
-            risk_percent=request.risk_percent,
-            max_risk_rupees=max_risk_rupees,
-            max_sl_distance_per_unit=max_sl_distance_per_unit,
         )
 
-        # ── Step 8: Build OptionsTrade response ───────────────────────
-        trade: Optional[OptionsTrade] = None
-        opt_type = llm_result.get("option_type", "NONE")
+        confidence   = float(llm_summary.get("confidence", 0.70))
+        ai_reasoning = (
+            llm_summary.get("ai_reasoning") or
+            llm_summary.get("summary") or
+            f"{engine_result.regime.value} breakout setup. "
+            f"ADX={engine_result.adx:.1f} OR={engine_result.or_high:.0f}/"
+            f"{engine_result.or_low:.0f}. Entry at ATM {opt_type}."
+        )
+        hold_reasoning = (
+            llm_summary.get("risk_notes") or
+            f"Exit by {suggested_hold} min or on SL/target. "
+            "Take 50% off at 1R and trail remainder."
+        )
 
-        if opt_type in ("CE", "PE"):
-            chosen_inst = ce_inst if opt_type == "CE" else pe_inst
-            entry = float(llm_result["entry_premium"])
-            sl = float(llm_result["stop_loss_premium"])
-            target = float(llm_result["target_premium"])
-
-            # ── Risk-based position sizing (leverage-aware) ────────────
-            # Max rupee risk = capital × risk_percent / 100 × leverage
-            # Risk per lot   = (entry - sl) × lot_size
-            # Max safe lots  = floor(max_risk_rupees / risk_per_lot)
-            # This is enforced regardless of what GPT recommended.
-            risk_per_lot = (entry - sl) * lot_size
-            max_risk_rupees = request.capital_to_use * (request.risk_percent / 100) * leverage
-
-            if risk_per_lot > 0:
-                max_safe_lots = max(1, int(max_risk_rupees / risk_per_lot))
-            else:
-                max_safe_lots = request.lots
-
-            lots_recommended = min(
-                int(llm_result.get("lots_recommended", request.lots)),
-                request.lots,
-                max_safe_lots,
-            )
-
-            if lots_recommended < int(llm_result.get("lots_recommended", request.lots)):
-                logger.warning(
-                    f"[Options-Analyze] Lots capped by risk engine: "
-                    f"GPT={llm_result.get('lots_recommended')} → {lots_recommended} "
-                    f"(max_risk=₹{max_risk_rupees:.0f}, risk_per_lot=₹{risk_per_lot:.0f})"
-                )
-
-            quantity = lots_recommended * lot_size
-            total_investment = round(entry * quantity, 2)
-            max_loss = round((entry - sl) * quantity, 2)
-            max_profit = round((target - entry) * quantity, 2)
-            rr = round((target - entry) / (entry - sl), 2) if entry > sl else 2.0
-
-            trade = OptionsTrade(
-                option_symbol=chosen_inst["tradingsymbol"],
-                index=index,
-                option_type=opt_type,
-                strike_price=atm_strike,
-                expiry_date=request.expiry_date,
-                lot_size=lot_size,
-                lots=lots_recommended,
-                quantity=quantity,
-                instrument_token=chosen_inst["instrument_token"],
-                entry_premium=entry,
-                stop_loss_premium=sl,
-                target_premium=target,
-                total_investment=total_investment,
-                max_loss=max_loss,
-                max_profit=max_profit,
-                risk_reward_ratio=rr,
-                confidence_score=float(llm_result.get("confidence_score", 0.5)),
-                suggested_hold_minutes=int(llm_result.get("suggested_hold_minutes", 30)),
-                hold_reasoning=llm_result.get("hold_reasoning", ""),
-                ai_reasoning=llm_result.get("ai_reasoning", ""),
-                current_index_price=current_price,
-                signal=engine_signal["signal"],
-            )
+        # ── Step 9: Build trade response ──────────────────────────────
+        trade = OptionsTrade(
+            option_symbol=chosen_inst["tradingsymbol"],
+            index=index,
+            option_type=opt_type,
+            strike_price=atm_strike,
+            expiry_date=request.expiry_date,
+            lot_size=lot_size,
+            lots=lots_to_trade,
+            quantity=quantity,
+            instrument_token=chosen_inst["instrument_token"],
+            entry_premium=entry_premium,
+            stop_loss_premium=sl_premium,
+            target_premium=target_premium,
+            total_investment=total_investment,
+            max_loss=max_loss,
+            max_profit=max_profit,
+            risk_reward_ratio=rr,
+            confidence_score=confidence,
+            suggested_hold_minutes=suggested_hold,
+            hold_reasoning=hold_reasoning,
+            ai_reasoning=ai_reasoning,
+            current_index_price=current_price,
+            signal=engine_result.signal,
+        )
 
         analysis = OptionsAnalysisResponse(
             analysis_id=analysis_id,
@@ -392,30 +458,35 @@ async def analyze_options(request: OptionsRequest):
             current_index_price=current_price,
             expiry_date=request.expiry_date,
             trade=trade,
-            index_indicators={
-                k: v for k, v in indicators.items()
-                if k not in ("candle_count",)
-            },
-            status="PENDING_CONFIRMATION" if trade else "NO_TRADE",
+            index_indicators=ind,
+            status="PENDING_CONFIRMATION",
+            regime=engine_result.regime.value,
+            signal_reasons=engine_result.reasons,
+            failed_filters=engine_result.failed_filters,
+            or_high=engine_result.or_high,
+            or_low=engine_result.or_low,
+            adx=engine_result.adx,
         )
 
-        # Cache for confirmation step
         _options_analyses[analysis_id] = {
-            "analysis": analysis,
-            "request": request,
+            "analysis":   analysis,
+            "request":    request,
             "created_at": datetime.utcnow(),
         }
 
         logger.info(
-            f"[Options-Analyze] DONE analysis_id={analysis_id} "
-            f"trade={opt_type} confidence={llm_result.get('confidence_score')}"
+            f"[Options-Analyze v2] DONE analysis_id={analysis_id} "
+            f"signal={engine_result.signal} regime={engine_result.regime.value} "
+            f"entry=₹{entry_premium:.2f} SL=₹{sl_premium:.2f} "
+            f"target=₹{target_premium:.2f} lots={lots_to_trade} "
+            f"confidence={confidence:.2f}"
         )
         return analysis
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Options-Analyze] Unexpected error: {e}", exc_info=True)
+        logger.error(f"[Options-Analyze v2] Unexpected error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
 
@@ -505,6 +576,31 @@ async def _execute_options_background(
         if result["status"] == "COMPLETED" and result.get("fill_price"):
             analysis.status = "MONITORING"
 
+            # Register trade with anti-overtrading guard
+            options_engine.register_trade(trade.index)
+
+            # Persist trade to DB
+            await db.save_options_trade({
+                "analysis_id":   analysis_id,
+                "index_name":    trade.index,
+                "option_symbol": trade.option_symbol,
+                "option_type":   trade.option_type,
+                "strike":        float(trade.strike_price),
+                "expiry_date":   str(trade.expiry_date),
+                "lots":          trade.lots,
+                "quantity":      trade.quantity,
+                "entry_premium": trade.entry_premium,
+                "sl_premium":    trade.stop_loss_premium,
+                "target_premium":trade.target_premium,
+                "fill_price":    float(result["fill_price"]),
+                "sl_order_id":   str(result.get("sl_order_id", "")),
+                "target_order_id": str(result.get("target_order_id", "")),
+                "regime":        analysis.regime,
+                "confidence":    float(trade.confidence_score),
+                "signal_reasons": str(analysis.signal_reasons),
+                "failed_filters": str(analysis.failed_filters),
+            })
+
             # Build monitoring session from execution result
             session = MonitoringSession(
                 analysis_id=analysis_id,
@@ -520,6 +616,8 @@ async def _execute_options_background(
                 api_key=api_key,
                 access_token=access_token,
                 instrument_token=trade.instrument_token,
+                index=trade.index,
+                entry_index_price=float(trade.current_index_price),
             )
 
             async def monitoring_callback(event):
@@ -586,24 +684,48 @@ async def get_monitor_state(analysis_id: str):
 
     events = _options_monitoring_events.get(analysis_id, [])
 
-    # Compute live P&L if we have a current premium
+    # If monitoring loop hasn't populated current_premium yet, fetch it directly here
+    # so the very first poll shows live data instead of 0.0 / "--"
+    current_premium = session.current_premium
+    if current_premium <= 0 and session.status == "MONITORING":
+        try:
+            from app.services.zerodha_service import zerodha_service as zs
+            zs.set_credentials(session.api_key, session.access_token)
+            nfo_key = f"NFO:{session.symbol}"
+            # Try kite.ltp() first, fall back to kite.quote()
+            try:
+                ltp_data = zs.kite.ltp([nfo_key])
+                ltp = ltp_data.get(nfo_key, {}).get("last_price", 0.0)
+                if ltp and ltp > 0:
+                    current_premium = float(ltp)
+                    session.current_premium = current_premium
+            except Exception:
+                quote_data = zs.kite.quote([nfo_key])
+                ltp = quote_data.get(nfo_key, {}).get("last_price", 0.0)
+                if ltp and ltp > 0:
+                    current_premium = float(ltp)
+                    session.current_premium = current_premium
+        except Exception:
+            pass  # Return 0.0 — will populate on next poll
+
+    # Compute live P&L
     pnl = None
     pnl_pct = None
-    if session.current_premium > 0:
-        pnl = round((session.current_premium - session.entry_fill_price) * session.quantity, 2)
+    if current_premium > 0:
+        pnl = round((current_premium - session.entry_fill_price) * session.quantity, 2)
         pnl_pct = round(
-            (session.current_premium - session.entry_fill_price) / session.entry_fill_price * 100, 2
+            (current_premium - session.entry_fill_price) / session.entry_fill_price * 100, 2
         )
 
     return {
         "analysis_id": analysis_id,
         "status": session.status,
         "symbol": session.symbol,
-        "current_premium": session.current_premium,
+        "current_premium": current_premium,
         "entry_fill_price": session.entry_fill_price,
         "sl_trigger": session.sl_trigger,
         "target_price": session.target_price,
-        "peak_premium": session.peak_premium,
+        "peak_premium": session.peak_premium if session.peak_premium > 0 else session.entry_fill_price,
         "pnl": pnl,
         "pnl_pct": pnl_pct,
         "poll_count": session.poll_count,

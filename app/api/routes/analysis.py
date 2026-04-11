@@ -422,6 +422,7 @@ async def confirm_analysis(
             confirmation.api_key,
             confirmation.hold_duration_days,
             confirmation.stock_overrides,
+            confirmation.user_id or "",
         )
 
         return {
@@ -444,6 +445,7 @@ async def execute_trades(
     api_key: str,
     hold_duration_days: int = 0,
     stock_overrides: list = None,
+    user_id: str = "",
 ):
     """Background task: execute all trades for an analysis (supports BUY and SELL/short)."""
     try:
@@ -497,6 +499,7 @@ async def execute_trades(
                 logger.warning(f"Skipping {stock.get('stock_symbol')}: unsupported action {action}")
                 continue
 
+            indicators = stock.get("technical_indicators") or {}
             await execution_agent.execute_trade_with_gtt(
                 stock_symbol=stock["stock_symbol"],
                 quantity=stock["quantity"],
@@ -509,6 +512,9 @@ async def execute_trades(
                 api_key=api_key,
                 hold_duration_days=hold_duration_days,
                 action=action,
+                user_id=user_id,
+                partial_exit_level=float(stock.get("partial_exit_level") or 0.0),
+                atr=float(indicators.get("atr") or 0.0),
             )
 
         if analysis_id in _analyses:

@@ -57,6 +57,13 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   // Alarm permission status — drives the setup banner in the scanner card
   AlarmPermissionStatus? _alarmPermStatus;
 
+  // ── Test-alarm repeating timer ────────────────────────────────────────
+  Timer? _testAlarmTimer;
+  Timer? _testAlarmCountdown;
+  bool  _testAlarmRunning = false;
+  int   _testAlarmSecsLeft = 120;   // 2 min interval
+  static const int _testAlarmIntervalSecs = 120;
+
   @override
   void initState() {
     super.initState();
@@ -97,8 +104,17 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   Future<void> _scheduleArmedTestAlarm() async {
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool('test_alarm_armed') != true) return;
-    await prefs.remove('test_alarm_armed');
-    await NotificationService.instance.scheduleTestAlarm(delaySeconds: 120);
+    // Write the NIFTY payload so that when the OS notification fires and
+    // brings MainActivity to the front, _checkPendingOpportunity() shows
+    // the correct alarm screen (not stock data).
+    await prefs.setString(
+      'pending_opportunity',
+      jsonEncode(_testOpportunityPayload),
+    );
+    // Schedule an OS alarm at the current countdown time — this fires even
+    // in Doze mode (exactAllowWhileIdle) and wakes the screen via fullScreenIntent.
+    final delay = _testAlarmSecsLeft > 0 ? _testAlarmSecsLeft : _testAlarmIntervalSecs;
+    await NotificationService.instance.scheduleTestAlarm(delaySeconds: delay);
   }
 
   @override
@@ -109,7 +125,116 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     _scanner.removeListener(_onScannerChanged);
     FlutterForegroundTask.removeTaskDataCallback(_onScannerTaskData);
     context.read<DashboardProvider>().stopAutoRefresh();
+    _stopTestAlarm();
     super.dispose();
+  }
+
+  // ── Test-alarm helpers ────────────────────────────────────────────────────
+
+  // Shared test-opportunity payload used by both foreground and background paths
+  static const _testOpportunityPayload = {
+    'mode': 'NIFTY',
+    'analysis_id': 'test-alarm',
+    'expiry_date': 'TEST',
+    'stocks': <dynamic>[],
+    'options_trade': {
+      'signal':           'BUY_CE',
+      'option_type':      'CE',
+      'strike_price':     24000,
+      'entry_premium':    120.0,
+      'stop_loss':         78.0,
+      'target_price':     204.0,
+      'confidence_score': 0.84,
+      'lots':             1,
+      'expiry_date':      'TEST',
+      'max_loss':         3150.0,
+      'max_profit':       6300.0,
+    },
+  };
+
+  void _startTestAlarm() async {
+    setState(() {
+      _testAlarmRunning  = true;
+      _testAlarmSecsLeft = _testAlarmIntervalSecs;
+    });
+
+    // Persist armed flag so _scheduleArmedTestAlarm() knows to reschedule
+    // when the app goes to background (screen turns off).
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('test_alarm_armed', true);
+
+    // Fire immediately so the user sees it right away
+    _fireTestAlarm();
+
+    // Countdown tick — updates the UI every second
+    _testAlarmCountdown = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {
+        _testAlarmSecsLeft--;
+        if (_testAlarmSecsLeft <= 0) {
+          _testAlarmSecsLeft = _testAlarmIntervalSecs;
+        }
+      });
+    });
+
+    // Repeating alarm every 2 min (foreground only — background handled via OS notification)
+    _testAlarmTimer = Timer.periodic(
+      Duration(seconds: _testAlarmIntervalSecs),
+      (_) => _fireTestAlarm(),
+    );
+  }
+
+  void _stopTestAlarm() async {
+    _testAlarmTimer?.cancel();
+    _testAlarmCountdown?.cancel();
+    _testAlarmTimer     = null;
+    _testAlarmCountdown = null;
+
+    // Disarm background scheduling and clean up stale pending data
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('test_alarm_armed');
+    await prefs.remove('pending_opportunity');
+
+    // Cancel any OS-scheduled test alarm (ID 799)
+    await NotificationService.instance.cancelTestAlarm();
+
+    if (mounted) {
+      setState(() {
+        _testAlarmRunning  = false;
+        _testAlarmSecsLeft = _testAlarmIntervalSecs;
+      });
+    }
+  }
+
+  /// Fires one test alarm cycle.
+  ///
+  /// Always saves the pending opportunity to SharedPreferences and fires an
+  /// immediate [fullScreenIntent] notification — this path works even when the
+  /// screen is off because Android delivers it regardless of Doze state.
+  /// If the Flutter app is already in the foreground, also pushes the alarm
+  /// screen directly (no extra tap required).
+  Future<void> _fireTestAlarm() async {
+    // Write pending opportunity so _checkPendingOpportunity() can read it
+    // from either the foreground or after the notification wakes the device.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'pending_opportunity',
+      jsonEncode(_testOpportunityPayload),
+    );
+
+    // Fire a fullScreenIntent notification — Android delivers this even with
+    // the screen off, waking the device and bringing MainActivity to the front.
+    await NotificationService.instance.showOpportunityAlarm(
+      mode:  'NIFTY',
+      title: '📈 TEST — NIFTY CE Opportunity',
+      body:  'BUY CE 24000 • Entry ₹120 • SL ₹78 • Target ₹204 — Tap to execute',
+    );
+
+    // If the app is already in the foreground, push the alarm screen directly
+    // (user doesn't need to tap the notification banner).
+    if (mounted && !_alarmScreenVisible) {
+      await _checkPendingOpportunity();
+    }
   }
 
   void _initDashboard() {
@@ -133,6 +258,26 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     final trade = await ActiveTradeStore.load();
     if (!mounted) return;
     setState(() => _activeTrade = trade);
+    // If a trade is active and the monitor screen is not already open, push it
+    if (trade != null) {
+      _restoreMonitorScreen(trade);
+    }
+  }
+
+  bool _monitorScreenVisible = false;
+
+  void _restoreMonitorScreen(ActiveTrade trade) {
+    if (_monitorScreenVisible) return;
+    _monitorScreenVisible = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => ActiveMonitorScreen(trade: trade)),
+      ).then((_) {
+        _monitorScreenVisible = false;
+        if (mounted) _checkActiveTrade();
+      });
+    });
   }
 
   // ── Scanner callbacks ─────────────────────────────────────────────────────
@@ -214,7 +359,13 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
           analysisId:   analysisId,
         ),
       ),
-    ).then((_) => _alarmScreenVisible = false);
+    ).then((_) {
+      _alarmScreenVisible = false;
+      // Clear the pending opportunity so lifecycle-resume doesn't re-show
+      // this same alarm after the user has already dismissed it.
+      SharedPreferences.getInstance()
+          .then((p) => p.remove('pending_opportunity'));
+    });
   }
 
   /// Build credentials from current auth + dashboard state.
@@ -801,6 +952,10 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
           ],
 
 
+          // ── Test alarm row ─────────────────────────────────────────────
+          const SizedBox(height: 10),
+          _buildTestAlarmRow(),
+
           // Last opportunity — actionable banner with execute button
           if (_scanner.lastOpportunityTime != null) ...[
             const SizedBox(height: 8),
@@ -909,6 +1064,82 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   }
 
 
+  // ── Test-alarm UI row ─────────────────────────────────────────────────────
+  Widget _buildTestAlarmRow() {
+    final mins = (_testAlarmSecsLeft ~/ 60).toString().padLeft(2, '0');
+    final secs = (_testAlarmSecsLeft % 60).toString().padLeft(2, '0');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: _testAlarmRunning ? Colors.red[50] : Colors.grey[50],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: _testAlarmRunning ? Colors.red[300]! : Colors.grey[300]!,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _testAlarmRunning ? Icons.alarm_on : Icons.alarm,
+            size: 18,
+            color: _testAlarmRunning ? Colors.red[700] : Colors.grey[600],
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _testAlarmRunning
+                ? RichText(
+                    text: TextSpan(
+                      style: TextStyle(fontSize: 12, color: Colors.red[900]),
+                      children: [
+                        const TextSpan(
+                          text: 'Test alarm active — next ring in ',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                        TextSpan(
+                          text: '$mins:$secs',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : Text(
+                    'Test alarm — rings every 2 min',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _testAlarmRunning ? _stopTestAlarm : _startTestAlarm,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: _testAlarmRunning ? Colors.red[700] : Colors.grey[200],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _testAlarmRunning ? 'Stop' : 'Start',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: _testAlarmRunning ? Colors.white : Colors.grey[700],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Checks alarm permissions and auto-shows setup screen on first encounter.
   Future<void> _checkAlarmPermissions() async {
     final status = await AlarmPermissionService.instance.checkAll();
@@ -921,6 +1152,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       final shown = prefs.getBool('alarm_perm_screen_shown') ?? false;
       if (!shown && mounted) {
         await prefs.setBool('alarm_perm_screen_shown', true);
+        if (!mounted) return;
+        // ignore: use_build_context_synchronously
         await Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => const AlarmPermissionScreen(),
         ));

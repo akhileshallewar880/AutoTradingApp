@@ -189,11 +189,29 @@ class _ActiveMonitorScreenState extends State<ActiveMonitorScreen> {
     final isCE = widget.trade.optionType == 'CE';
     final status = s?['status'] as String? ?? 'MONITORING';
 
-    return Scaffold(
+    return PopScope(
+      // Block back gesture/button while trade is active — exit only via Stop Monitoring
+      canPop: !_monitoring,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _monitoring) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Trade is active — use "Stop Monitoring" to exit.',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text('${widget.trade.symbol} Monitor'),
         backgroundColor: _purple,
         foregroundColor: Colors.white,
+        automaticallyImplyLeading: !_monitoring, // hide back button while active
         actions: [
           if (_monitoring)
             Padding(
@@ -229,7 +247,8 @@ class _ActiveMonitorScreenState extends State<ActiveMonitorScreen> {
           ],
         ),
       ),
-    );
+    ), // Scaffold
+    ); // PopScope
   }
 
   Widget _buildSummaryCard(bool isCE) {
