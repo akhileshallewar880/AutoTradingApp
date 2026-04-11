@@ -18,7 +18,8 @@ from typing import Dict, Optional
 
 from openai import AsyncOpenAI
 
-from app.core.config import settings
+from app.core.config import get_settings
+settings = get_settings()
 from app.core.logging import logger
 from app.engines.options_engine import BreakoutResult
 
