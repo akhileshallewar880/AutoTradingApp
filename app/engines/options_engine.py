@@ -440,7 +440,7 @@ class OptionsEngine:
         else:
             sma = close.rolling(min(20, n)).mean().iloc[-1]
             vwap = float(sma) if not math.isnan(sma) else last_close
-        has_volume    = cum_vol.iloc[-1] > 0
+        has_volume    = bool(cum_vol.iloc[-1] > 0)
         vwap_dist_pct = abs(last_close - vwap) / vwap if vwap > 0 else 0.0
 
         # ── ATR (14) ──────────────────────────────────────────────────────────
