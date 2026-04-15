@@ -6,9 +6,8 @@ import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/dashboard_provider.dart';
 import '../utils/api_config.dart';
-import '../models/options_model.dart';
 import '../widgets/animated_loading_overlay.dart';
-import 'options_results_screen.dart';
+import 'options_session_screen.dart';
 
 class OptionsInputScreen extends StatefulWidget {
   const OptionsInputScreen({super.key});
@@ -182,8 +181,8 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
     }
   }
 
-  // ── Run analysis ────────────────────────────────────────────────────────
-  Future<void> _handleAnalyze() async {
+  // ── Start live trading session ──────────────────────────────────────────
+  Future<void> _handleStartTrading() async {
     if (_selectedExpiry == null) {
       setState(() => _error = 'Please select an expiry date');
       return;
@@ -204,58 +203,50 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
     setState(() { _isLoading = true; _error = null; _isMarketDataError = false; });
 
     try {
-      // user_id can be Zerodha string (e.g. "AB1234") or numeric VanTrade ID
-      int? parsedUserId;
-      try { parsedUserId = int.parse(auth.user!.userId); } catch (_) {
-        parsedUserId = auth.user!.userId.hashCode.abs();
-      }
-
       final body = jsonEncode({
         'index': _selectedIndex,
         'expiry_date': _selectedExpiry,
         'risk_percent': _riskPercent,
         'capital_to_use': capital,
         'lots': _lots,
-        'leverage_multiplier': _leverageMultiplier.clamp(1.0, _maxLeverage),
         'access_token': auth.user!.accessToken,
         'api_key': auth.user!.apiKey,
-        'user_id': parsedUserId,
       });
 
       final resp = await http
           .post(
-            Uri.parse(ApiConfig.optionsAnalyzeUrl),
+            Uri.parse(ApiConfig.optionsSessionStartUrl),
             headers: {'Content-Type': 'application/json'},
             body: body,
           )
-          .timeout(const Duration(seconds: 90));
+          .timeout(const Duration(seconds: 30));
 
       if (!mounted) return;
 
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        final analysis = OptionsAnalysis.fromJson(data);
+        final sessionId = data['session_id'] as String;
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => OptionsResultsScreen(analysis: analysis),
+            builder: (_) => OptionsSessionScreen(
+              sessionId: sessionId,
+              index: _selectedIndex,
+              expiryDate: _selectedExpiry!,
+              capital: capital,
+              lots: _lots,
+              apiKey: auth.user!.apiKey,
+              accessToken: auth.user!.accessToken,
+            ),
           ),
         );
       } else {
-        String msg = 'Analysis failed';
-        bool isDataError = false;
+        String msg = 'Failed to start session';
         try {
-          final body = jsonDecode(resp.body);
-          msg = body['detail'] ?? msg;
-          if (msg.toLowerCase().contains('candle') ||
-              msg.toLowerCase().contains('historical data')) {
-            isDataError = true;
-          }
+          final b = jsonDecode(resp.body);
+          msg = b['detail'] ?? msg;
         } catch (_) {}
-        setState(() {
-          _error = msg;
-          _isMarketDataError = isDataError;
-        });
+        setState(() { _error = msg; _isMarketDataError = false; });
       }
     } catch (e) {
       if (mounted) {
@@ -314,7 +305,7 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
         ),
         if (_isLoading)
           AnimatedLoadingOverlay(
-            message: 'AI analyzing $_selectedIndex options…',
+            message: 'Starting live session for $_selectedIndex…',
           ),
       ],
     );
@@ -336,9 +327,9 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Intraday options on NIFTY & BANKNIFTY. '
-              'AI recommends ATM CE or PE with entry, SL, and target premiums. '
-              'Auto square-off at 3:15 PM.',
+              'Live session mode — agent scans every 3 min, '
+              'auto-enters on a valid breakout signal, and monitors with trailing SL. '
+              'No confirmation required. Auto square-off at 3:15 PM.',
               style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
           ),
@@ -783,10 +774,10 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
 
   Widget _buildAnalyzeButton() {
     return ElevatedButton.icon(
-      onPressed: _isLoading ? null : _handleAnalyze,
-      icon: const Icon(Icons.auto_awesome),
+      onPressed: _isLoading ? null : _handleStartTrading,
+      icon: const Icon(Icons.play_arrow_rounded),
       label: const Text(
-        'Analyze with AI',
+        'Start Trading',
         style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
       ),
       style: ElevatedButton.styleFrom(
@@ -848,9 +839,9 @@ class _OptionsInputScreenState extends State<OptionsInputScreen> {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: _isLoading ? null : _handleAnalyze,
+                onPressed: _isLoading ? null : _handleStartTrading,
                 icon: const Icon(Icons.refresh),
-                label: const Text('Retry Analysis'),
+                label: const Text('Retry'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.orange[800],
                   side: BorderSide(color: Colors.orange[400]!),

@@ -45,13 +45,15 @@ class ApiConfig {
   // Options trading endpoints
   static const String optionsExpiriesUrl = '$baseUrl/options/expiries';
   static const String optionsPremiumQuoteUrl = '$baseUrl/options/premium-quote';
-  static const String optionsAnalyzeUrl = '$baseUrl/options/analyze';
-  static String optionsConfirmUrl(String id) => '$baseUrl/options/$id/confirm';
-  static String optionsStatusUrl(String id) => '$baseUrl/options/$id/status';
+  // Live session (replaces analyze → confirm flow)
+  static const String optionsSessionStartUrl = '$baseUrl/options/session/start';
+  static String optionsSessionStopUrl(String id) => '$baseUrl/options/session/$id/stop';
+  static String optionsSessionStreamUrl(String id) => '$baseUrl/options/session/$id/stream';
+  static String optionsSessionStatusUrl(String id) => '$baseUrl/options/session/$id/status';
+  // Active trade monitoring (used by ActiveMonitorScreen resume flow)
   static String optionsMonitorUrl(String id) => '$baseUrl/options/$id/monitor';
   static String optionsMonitorStopUrl(String id) => '$baseUrl/options/$id/monitor/stop';
   static String optionsMonitorResumeUrl(String id) => '$baseUrl/options/$id/monitor/resume';
-  static String optionsCommentaryUrl(String id) => '$baseUrl/options/$id/commentary';
 
   // Portfolio endpoints (paid Kite API)
   static const String holdingsUrl = '$baseUrl/portfolio/holdings';

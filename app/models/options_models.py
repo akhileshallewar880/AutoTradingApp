@@ -77,6 +77,18 @@ class OptionsExpiriesResponse(BaseModel):
     expiries: list  # List of date strings YYYY-MM-DD
 
 
+class SessionStartRequest(BaseModel):
+    """Request to start a live continuous trading session."""
+    index: str = Field(..., description="NIFTY or BANKNIFTY")
+    expiry_date: date = Field(..., description="Option expiry date YYYY-MM-DD")
+    capital_to_use: float = Field(..., gt=0, description="Capital to deploy")
+    lots: int = Field(default=1, ge=1, le=50, description="Lots per trade")
+    risk_percent: float = Field(1.0, gt=0.0, le=5.0, description="Risk % of capital per trade")
+    api_key: str = Field(..., description="User's Zerodha API key")
+    access_token: str = Field(..., description="User's Zerodha access token")
+    user_id: Optional[Union[int, str]] = None
+
+
 class MonitorResumeRequest(BaseModel):
     """Sent by the client to re-attach monitoring after a server restart."""
     symbol: str = Field(..., description="Zerodha tradingsymbol e.g. NIFTY2640722200CE")

@@ -3,13 +3,13 @@ Options Trading API Routes
 
 GET  /options/expiries                      — Available expiry dates for NIFTY/BANKNIFTY
 GET  /options/premium-quote                 — Live ATM CE/PE premiums for a given index+expiry (input screen)
-POST /options/analyze                       — Run AI options analysis + generate trade recommendation
-POST /options/{id}/confirm                  — Execute the recommended options trade
-GET  /options/{id}/status                   — Execution status (polling)
+POST /options/session/start                 — Start a live continuous trading session (auto-scan + auto-execute)
+POST /options/session/{id}/stop             — Stop a running session
+GET  /options/session/{id}/stream           — SSE stream: session events, commentary, trade updates, P&L
 GET  /options/{id}/monitor                  — Monitoring state + events (polling, ~15s)
 GET  /options/{id}/pnl                      — Lightweight live P&L (polling, every 1s)
 GET  /options/{id}/pnl-stream               — SSE push stream, P&L every 1s (preferred)
-POST /options/{id}/monitor/stop             — Stop monitoring for an analysis
+POST /options/{id}/monitor/stop             — Stop monitoring for an active trade
 POST /options/{id}/monitor/resume           — Re-attach AI monitoring to an existing trade after restart
 """
 
@@ -23,7 +23,9 @@ from app.models.options_models import (
     OptionsConfirmation,
     OptionsExpiriesResponse,
     MonitorResumeRequest,
+    SessionStartRequest,
 )
+from app.agents.options_session_agent import options_session_agent, TradingSession
 from app.models.analysis_models import ExecutionUpdate
 from app.services.options_service import options_service
 from app.engines.options_engine import options_engine
@@ -158,6 +160,116 @@ async def get_premium_quote(
     except Exception as e:
         logger.error(f"[Options-PremiumQuote] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to fetch premium quote: {e}")
+
+
+# ── POST /options/session/start ───────────────────────────────────────────────
+
+@router.post("/session/start")
+async def start_trading_session(request: SessionStartRequest):
+    """
+    Start a live continuous trading session.
+    The agent scans every 3 minutes, auto-executes on a valid signal, and monitors
+    the trade with trailing SL. No user confirmation required.
+    Returns a session_id — use it with the /session/{id}/stream endpoint for live events.
+    """
+    index = request.index.upper()
+    if index not in ("NIFTY", "BANKNIFTY"):
+        raise HTTPException(status_code=400, detail="index must be NIFTY or BANKNIFTY")
+
+    session_id = str(uuid.uuid4())
+    session = TradingSession(
+        session_id=session_id,
+        index=index,
+        expiry_date=request.expiry_date,
+        capital=request.capital_to_use,
+        lots=request.lots,
+        risk_percent=request.risk_percent,
+        api_key=request.api_key,
+        access_token=request.access_token,
+        user_id=str(request.user_id) if request.user_id else None,
+    )
+    options_session_agent.start_session(session)
+    logger.info(f"[Session] Started session_id={session_id} index={index}")
+    return {
+        "session_id": session_id,
+        "status": "STARTED",
+        "index": index,
+        "expiry_date": str(request.expiry_date),
+        "message": f"Live session started. Connect to /options/session/{session_id}/stream for live events.",
+    }
+
+
+# ── POST /options/session/{id}/stop ──────────────────────────────────────────
+
+@router.post("/session/{session_id}/stop")
+async def stop_trading_session(session_id: str):
+    """Stop a running trading session."""
+    ok = options_session_agent.stop_session(session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"session_id": session_id, "status": "STOPPED"}
+
+
+# ── GET /options/session/{id}/stream ─────────────────────────────────────────
+
+@router.get("/session/{session_id}/stream")
+async def stream_session_events(session_id: str):
+    """
+    SSE stream for live session events: scan results, trade execution,
+    monitoring updates, P&L, and commentary. Connect once and keep alive.
+    """
+    s = options_session_agent.get_session(session_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return StreamingResponse(
+        options_session_agent.get_events_stream(session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── GET /options/session/{id}/status ─────────────────────────────────────────
+
+@router.get("/session/{session_id}/status")
+async def get_session_status(session_id: str):
+    """Lightweight session status poll (for reconnection / state sync)."""
+    s = options_session_agent.get_session(session_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    active_monitor = None
+    if s.active_analysis_id:
+        ms = options_monitoring_agent.get_session(s.active_analysis_id)
+        if ms:
+            active_monitor = {
+                "symbol":          ms.symbol,
+                "option_type":     ms.option_type,
+                "entry_premium":   ms.entry_fill_price,
+                "current_premium": ms.current_premium,
+                "sl_trigger":      ms.sl_trigger,
+                "target_price":    ms.target_price,
+                "status":          ms.status,
+                "pnl": round(
+                    (ms.current_premium - ms.entry_fill_price) * ms.quantity, 2
+                ),
+            }
+
+    return {
+        "session_id":    session_id,
+        "phase":         s.phase,
+        "running":       s.running,
+        "scan_count":    s.scan_count,
+        "trades_today":  s.trades_today,
+        "session_pnl":   s.session_pnl,
+        "last_signal":   s.last_signal,
+        "last_regime":   s.last_regime,
+        "last_no_trade_reason": s.last_no_trade_reason,
+        "active_trade":  active_monitor,
+        "started_at":    s.started_at.isoformat(),
+    }
 
 
 # ── POST /options/analyze ─────────────────────────────────────────────────────
