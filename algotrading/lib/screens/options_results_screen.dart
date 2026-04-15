@@ -1126,34 +1126,73 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
   }
 
   Widget _buildIndexSummary() {
-    final ind = widget.analysis.indexIndicators;
+    final a   = widget.analysis;
+    final ind = a.indexIndicators;
+    final isNoTrade = a.trade == null;
+
+    // Background: dark/muted for NO_TRADE, vibrant purple for trade found
+    final gradColors = isNoTrade
+        ? [const Color(0xFF1F2937), const Color(0xFF374151)]
+        : [_purple, _indigo];
+
+    // Regime label shown in the header on NO_TRADE
+    String regimeLabel = '';
+    if (isNoTrade && a.regime.isNotEmpty) {
+      regimeLabel = a.regime.replaceAll('_', ' ');
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [_purple, _indigo]),
+        gradient: LinearGradient(colors: gradColors),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            widget.analysis.index,
-            style: const TextStyle(
-                color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                a.index,
+                style: const TextStyle(
+                    color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+              if (isNoTrade && regimeLabel.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    regimeLabel,
+                    style: const TextStyle(
+                        color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500),
+                  ),
+                ),
+            ],
           ),
           Text(
-            _currency.format(widget.analysis.currentIndexPrice),
+            _currency.format(a.currentIndexPrice),
             style: const TextStyle(
                 color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Row(
             children: [
+              _pillStat('ADX', (ind['adx'] as num?)?.toStringAsFixed(1) ?? '--'),
+              const SizedBox(width: 8),
               _pillStat('RSI', (ind['rsi'] as num?)?.toStringAsFixed(1) ?? '--'),
               const SizedBox(width: 8),
               _pillStat('VWAP', ind['price_vs_vwap'] ?? '--'),
-              const SizedBox(width: 8),
-              _pillStat('BB', ind['bb_position'] ?? '--'),
+              if (!isNoTrade) ...[
+                const SizedBox(width: 8),
+                _pillStat('OR%',
+                    (ind['or_range_pct'] as num?) != null
+                        ? '${(ind['or_range_pct'] as num).toStringAsFixed(2)}%'
+                        : '--'),
+              ],
             ],
           ),
         ],
@@ -1526,31 +1565,389 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
     );
   }
 
+  // ── NO_TRADE full breakdown ──────────────────────────────────────────────
+
   Widget _buildNoTradeCard() {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          children: [
-            Icon(Icons.trending_flat, size: 60, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            const Text(
-              'No Trade Recommended',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'The AI did not find a strong enough signal (need 3/5 votes). '
-              'Market conditions are unclear — wait for a clearer setup.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
-            ),
-          ],
+    final a = widget.analysis;
+    final ind = a.indexIndicators;
+
+    // Regime colour + icon
+    final regime = a.regime;
+    Color regimeColor;
+    IconData regimeIcon;
+    String regimeLabel;
+    switch (regime) {
+      case 'TRENDING_UP':
+        regimeColor = Colors.green[700]!;
+        regimeIcon  = Icons.trending_up;
+        regimeLabel = 'Trending Up';
+        break;
+      case 'TRENDING_DOWN':
+        regimeColor = Colors.red[700]!;
+        regimeIcon  = Icons.trending_down;
+        regimeLabel = 'Trending Down';
+        break;
+      case 'SIDEWAYS':
+        regimeColor = Colors.orange[700]!;
+        regimeIcon  = Icons.trending_flat;
+        regimeLabel = 'Sideways';
+        break;
+      default: // CHOPPY
+        regimeColor = Colors.grey[700]!;
+        regimeIcon  = Icons.blur_on;
+        regimeLabel = 'Choppy';
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // ── Hero banner ────────────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.grey[900],
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[800],
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.block, color: Colors.white70, size: 28),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('NO TRADE TODAY',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        )),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Engine blocked entry — see reasons below.',
+                      style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
+
+        const SizedBox(height: 12),
+
+        // ── Regime + key numbers ───────────────────────────────────────
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: Colors.grey[200]!),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.radar, size: 18, color: _purple),
+                    const SizedBox(width: 8),
+                    const Text('Market Regime',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: regimeColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: regimeColor.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(regimeIcon, size: 16, color: regimeColor),
+                          const SizedBox(width: 6),
+                          Text(regimeLabel,
+                              style: TextStyle(
+                                color: regimeColor,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              )),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                // Key stats grid
+                Row(
+                  children: [
+                    _noTradeStat('ADX', a.adx > 0 ? a.adx.toStringAsFixed(1) : (ind['adx'] as num?)?.toStringAsFixed(1) ?? '--',
+                        sub: a.adx >= 20 ? '✅ ≥ 20' : '❌ < 20 (need ≥ 20)'),
+                    _noTradeStat('OR Range',
+                        (ind['or_range_pct'] as num?) != null
+                            ? '${(ind['or_range_pct'] as num).toStringAsFixed(2)}%'
+                            : '--',
+                        sub: (ind['or_range_pct'] as num? ?? 0) >= 0.3
+                            ? '✅ ≥ 0.3%'
+                            : '❌ < 0.3% (too tight)'),
+                    _noTradeStat('VWAP Dist',
+                        (ind['vwap_dist_pct'] as num?) != null
+                            ? '${(ind['vwap_dist_pct'] as num).toStringAsFixed(3)}%'
+                            : '--',
+                        sub: (ind['vwap_dist_pct'] as num? ?? 0) >= 0.15
+                            ? '✅ ≥ 0.15%'
+                            : '❌ < 0.15% (near VWAP)'),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _noTradeStat('OR High',
+                        a.orHigh > 0 ? '₹${a.orHigh.toStringAsFixed(0)}' : '--'),
+                    _noTradeStat('OR Low',
+                        a.orLow > 0 ? '₹${a.orLow.toStringAsFixed(0)}' : '--'),
+                    _noTradeStat('RSI',
+                        (ind['rsi'] as num?)?.toStringAsFixed(1) ?? '--'),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 12),
+
+        // ── Failed filters (WHY blocked) ───────────────────────────────
+        if (a.failedFilters.isNotEmpty)
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.red[100]!),
+            ),
+            color: Colors.red[50],
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.cancel_outlined, size: 18, color: Colors.red[700]),
+                      const SizedBox(width: 8),
+                      Text('Why No Trade',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: Colors.red[800],
+                          )),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ...a.failedFilters.map((f) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(top: 3, right: 8),
+                              child: Icon(Icons.remove_circle,
+                                  size: 14, color: Colors.red[400]),
+                            ),
+                            Expanded(
+                              child: Text(f,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.red[900],
+                                    height: 1.4,
+                                  )),
+                            ),
+                          ],
+                        ),
+                      )),
+                ],
+              ),
+            ),
+          ),
+
+        // ── Passed filters (what DID work) ────────────────────────────
+        if (a.signalReasons.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.green[100]!),
+            ),
+            color: Colors.green[50],
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.check_circle_outline, size: 18, color: Colors.green[700]),
+                      const SizedBox(width: 8),
+                      Text('What Passed',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: Colors.green[800],
+                          )),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ...a.signalReasons.map((r) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(top: 3, right: 8),
+                              child: Icon(Icons.check_circle,
+                                  size: 14, color: Colors.green[600]),
+                            ),
+                            Expanded(
+                              child: Text(r,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.green[900],
+                                    height: 1.4,
+                                  )),
+                            ),
+                          ],
+                        ),
+                      )),
+                ],
+              ),
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 12),
+
+        // ── What to do next ────────────────────────────────────────────
+        Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: Colors.blue[100]!),
+          ),
+          color: Colors.blue[50],
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.lightbulb_outline, size: 18, color: Colors.blue[700]),
+                    const SizedBox(width: 8),
+                    Text('What To Do',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          color: Colors.blue[800],
+                        )),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                ..._noTradeAdvice(regime, ind).map((tip) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3, right: 8),
+                            child: Icon(Icons.arrow_right,
+                                size: 16, color: Colors.blue[600]),
+                          ),
+                          Expanded(
+                            child: Text(tip,
+                                style: TextStyle(
+                                    fontSize: 12, color: Colors.blue[900], height: 1.4)),
+                          ),
+                        ],
+                      ),
+                    )),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _noTradeStat(String label, String value, {String? sub}) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(label,
+              style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+          const SizedBox(height: 2),
+          Text(value,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+          if (sub != null) ...[
+            const SizedBox(height: 1),
+            Text(sub,
+                style: TextStyle(
+                  fontSize: 9,
+                  color: sub.startsWith('✅') ? Colors.green[700] : Colors.red[700],
+                )),
+          ],
+        ],
       ),
     );
+  }
+
+  List<String> _noTradeAdvice(String regime, Map<String, dynamic> ind) {
+    final orPct = (ind['or_range_pct'] as num? ?? 0).toDouble();
+    final adx   = (ind['adx'] as num? ?? 0).toDouble();
+    final vwapD = (ind['vwap_dist_pct'] as num? ?? 0).toDouble();
+
+    final tips = <String>[];
+
+    if (orPct < 0.3) {
+      tips.add('Opening range is too tight (${orPct.toStringAsFixed(2)}% < 0.3%). '
+          'Market opened flat/gapped sideways. No ORB edge exists — skip the day or wait '
+          'for a range expansion after 10 AM.');
+    }
+    if (adx < 20) {
+      tips.add('ADX ${adx.toStringAsFixed(1)} shows no trending momentum. '
+          'Market is ranging — ORB entries in ranging markets lead to whipsaws. '
+          'Wait for ADX to rise above 20 before trying again.');
+    }
+    if (vwapD < 0.15) {
+      tips.add('Price is hugging VWAP (${vwapD.toStringAsFixed(3)}% away). '
+          'No directional bias. This is the classic "oscillating around fair value" setup '
+          'that traps both CE and PE buyers.');
+    }
+    if (regime == 'CHOPPY' || regime == 'SIDEWAYS') {
+      tips.add('Do not force a trade on a choppy day. '
+          'Based on your tradebook, choppy days cost ₹3,000–₹5,000 in overtrading losses. '
+          'Cash is a position.');
+    }
+    if (tips.isEmpty) {
+      // Breakout or retest failed
+      tips.add('Regime was detected but breakout conditions weren\'t met yet. '
+          'Try again in 30 minutes — the setup may form after another candle.');
+      tips.add('Check that futures volume is elevated (≥1.5× average) before re-scanning.');
+    }
+    return tips;
   }
 
   Widget _buildExecuteButton(OptionsTrade trade) {

@@ -447,7 +447,7 @@ class OptionsEngine:
         atr = self._atr(df, min(14, n - 1))
 
         # ── ADX (14) ──────────────────────────────────────────────────────────
-        adx = self._adx(df, min(14, n - 1))
+        adx = self._adx(df)
 
         # ── RSI (14) ──────────────────────────────────────────────────────────
         delta = close.diff()
@@ -910,7 +910,7 @@ class OptionsEngine:
         ADX 20–25 = emerging trend
         ADX > 25  = strong trend
         """
-        if len(df) < period + 2:
+        if len(df) < period + 1:
             return 0.0
 
         high  = df["high"].astype(float)
@@ -945,7 +945,7 @@ class OptionsEngine:
 
         dx_denom = (plus_di_s + minus_di_s).replace(0, np.nan)
         dx  = 100 * (plus_di_s - minus_di_s).abs() / dx_denom
-        adx = dx.ewm(span=period, adjust=False).mean().iloc[-1]
+        adx = dx.ewm(span=period, adjust=False, ignore_na=True).mean().iloc[-1]
 
         return float(adx) if not math.isnan(adx) else 0.0
 

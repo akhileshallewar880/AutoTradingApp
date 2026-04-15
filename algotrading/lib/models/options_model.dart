@@ -85,6 +85,14 @@ class OptionsAnalysis {
   final String status;
   final DateTime createdAt;
 
+  // NO_TRADE diagnostic fields — populated when engine rejects the setup
+  final String regime;           // TRENDING_UP | TRENDING_DOWN | CHOPPY | SIDEWAYS
+  final List<String> signalReasons;   // gates that PASSED
+  final List<String> failedFilters;   // gates that FAILED (why no trade)
+  final double orHigh;
+  final double orLow;
+  final double adx;
+
   OptionsAnalysis({
     required this.analysisId,
     required this.index,
@@ -94,6 +102,12 @@ class OptionsAnalysis {
     required this.indexIndicators,
     required this.status,
     required this.createdAt,
+    this.regime = '',
+    this.signalReasons = const [],
+    this.failedFilters = const [],
+    this.orHigh = 0,
+    this.orLow = 0,
+    this.adx = 0,
   });
 
   factory OptionsAnalysis.fromJson(Map<String, dynamic> json) {
@@ -108,6 +122,12 @@ class OptionsAnalysis {
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at']) ?? DateTime.now()
           : DateTime.now(),
+      regime: json['regime'] ?? '',
+      signalReasons: (json['signal_reasons'] as List?)?.cast<String>() ?? [],
+      failedFilters: (json['failed_filters'] as List?)?.cast<String>() ?? [],
+      orHigh: (json['or_high'] ?? 0).toDouble(),
+      orLow: (json['or_low'] ?? 0).toDouble(),
+      adx: (json['adx'] ?? 0).toDouble(),
     );
   }
 }
