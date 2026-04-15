@@ -1917,7 +1917,6 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
   List<String> _noTradeAdvice(String regime, Map<String, dynamic> ind) {
     final orPct = (ind['or_range_pct'] as num? ?? 0).toDouble();
     final adx   = (ind['adx'] as num? ?? 0).toDouble();
-    final vwapD = (ind['vwap_dist_pct'] as num? ?? 0).toDouble();
 
     final tips = <String>[];
 
@@ -1930,11 +1929,6 @@ class _OptionsResultsScreenState extends State<OptionsResultsScreen> {
       tips.add('ADX ${adx.toStringAsFixed(1)} shows no trending momentum. '
           'Market is ranging — ORB entries in ranging markets lead to whipsaws. '
           'Wait for ADX to rise above 20 before trying again.');
-    }
-    if (vwapD < 0.15) {
-      tips.add('Price is hugging VWAP (${vwapD.toStringAsFixed(3)}% away). '
-          'No directional bias. This is the classic "oscillating around fair value" setup '
-          'that traps both CE and PE buyers.');
     }
     if (regime == 'CHOPPY' || regime == 'SIDEWAYS') {
       tips.add('Do not force a trade on a choppy day. '

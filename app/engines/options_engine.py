@@ -50,7 +50,6 @@ EXPIRY_CUTOFF     = time(13, 30)  # theta-decay cutoff on expiry day
 # ── Regime thresholds ─────────────────────────────────────────────────────────
 MIN_OR_RANGE_PCT      = 0.003    # OR must span ≥ 0.3% of spot (else too tight/choppy)
 MIN_ADX               = 20.0    # ADX < 20 → no meaningful trend
-MAX_VWAP_DISTANCE_PCT = 0.0015  # price within 0.15% of VWAP → no directional bias
 
 # ── Breakout quality gates ────────────────────────────────────────────────────
 MIN_BODY_RATIO       = 0.55    # candle body / total range — rejects wick-heavy candles
@@ -502,18 +501,6 @@ class OptionsEngine:
                 [
                     f"ADX {adx:.1f} < {MIN_ADX:.0f} — "
                     "no sustained directional momentum, market is ranging"
-                ],
-                or_high, or_low, indicators,
-            )
-
-        # ── Gate 3: Price too close to VWAP → SIDEWAYS ───────────────────────
-        if vwap_dist_pct < MAX_VWAP_DISTANCE_PCT:
-            return (
-                MarketRegime.SIDEWAYS,
-                [
-                    f"Price within {vwap_dist_pct*100:.3f}% of VWAP "
-                    f"(threshold {MAX_VWAP_DISTANCE_PCT*100:.2f}%) — "
-                    "price is oscillating around institutional fair value, no bias"
                 ],
                 or_high, or_low, indicators,
             )
