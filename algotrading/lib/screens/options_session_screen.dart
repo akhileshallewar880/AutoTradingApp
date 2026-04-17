@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import '../utils/api_config.dart';
 import '../services/active_trade_store.dart';
+import '../services/active_session_store.dart';
 import '../services/monitoring_foreground_service.dart';
 
 class OptionsSessionScreen extends StatefulWidget {
@@ -64,6 +65,26 @@ class _OptionsSessionScreenState extends State<OptionsSessionScreen> {
     MonitoringForegroundService.addDataCallback(_onForegroundData);
     _connectSse();
     _pollStatus();
+    _persistAndStartForeground();
+  }
+
+  /// Persist session credentials so the foreground service can keep polling
+  /// even when the app is closed, and start the background service.
+  Future<void> _persistAndStartForeground() async {
+    await ActiveSessionStore.save(
+      sessionId:   widget.sessionId,
+      index:       widget.index,
+      expiryDate:  widget.expiryDate,
+      capital:     widget.capital,
+      lots:        widget.lots,
+      apiKey:      widget.apiKey,
+      accessToken: widget.accessToken,
+    );
+    await MonitoringForegroundService.startSession(
+      sessionId: widget.sessionId,
+      statusUrl: ApiConfig.optionsSessionStatusUrl(widget.sessionId),
+      index:     widget.index,
+    );
   }
 
   @override
@@ -182,6 +203,9 @@ class _OptionsSessionScreenState extends State<OptionsSessionScreen> {
       if (type == 'SESSION_STOPPED' || type == 'STREAM_END') {
         _running = false;
         _phase = 'STOPPED';
+        // Clean up background service and persisted store
+        ActiveSessionStore.clear();
+        MonitoringForegroundService.stopMonitoring();
       }
     });
 
@@ -197,15 +221,35 @@ class _OptionsSessionScreenState extends State<OptionsSessionScreen> {
     });
   }
 
-  // ── Foreground service data (background monitoring ticks) ─────────────────
+  // ── Foreground service data (background session/monitor ticks) ──────────────
   void _onForegroundData(Object data) {
-    if (!mounted || _activeTrade == null) return;
+    if (!mounted) return;
     if (data is! Map) return;
-    setState(() {
-      if (data['current_premium'] != null) {
-        _activeTrade!['current_premium'] = (data['current_premium'] as num).toDouble();
-      }
-    });
+    final mode = data['mode'] as String?;
+
+    if (mode == 'SESSION') {
+      // Status update from the background SESSION poller
+      setState(() {
+        if (data['phase']       != null) _phase       = data['phase'] as String;
+        if (data['running']     != null) _running     = data['running'] as bool;
+        if (data['scan_count']  != null) _scanCount   = (data['scan_count'] as num).toInt();
+        if (data['trades_today'] != null) _tradesCount = (data['trades_today'] as num).toInt();
+        if (data['session_pnl'] != null) _sessionPnl  = (data['session_pnl'] as num).toDouble();
+        if (data['active_trade'] != null && _activeTrade != null) {
+          final at = data['active_trade'] as Map<String, dynamic>;
+          if (at['current_premium'] != null) {
+            _activeTrade!['current_premium'] = (at['current_premium'] as num).toDouble();
+          }
+        }
+      });
+    } else if (mode == 'MONITOR' && _activeTrade != null) {
+      // Premium tick from the background MONITOR poller
+      setState(() {
+        if (data['current_premium'] != null) {
+          _activeTrade!['current_premium'] = (data['current_premium'] as num).toDouble();
+        }
+      });
+    }
   }
 
   // ── Periodic status poll (syncs state on reconnect) ───────────────────────
@@ -267,6 +311,11 @@ class _OptionsSessionScreenState extends State<OptionsSessionScreen> {
           .post(Uri.parse(ApiConfig.optionsSessionStopUrl(widget.sessionId)))
           .timeout(const Duration(seconds: 10));
     } catch (_) {}
+
+    // Clear persisted session and stop the background foreground service
+    await ActiveSessionStore.clear();
+    await MonitoringForegroundService.stopMonitoring();
+
     if (mounted) setState(() { _running = false; _phase = 'STOPPED'; _stopping = false; });
   }
 

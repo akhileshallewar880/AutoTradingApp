@@ -18,6 +18,9 @@ import 'active_monitor_screen.dart';
 import 'holdings_screen.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../services/active_trade_store.dart';
+import '../services/active_session_store.dart';
+import '../services/monitoring_foreground_service.dart';
+import 'options_session_screen.dart';
 import '../main.dart' show routeObserver;
 
 class HomeScreen extends StatefulWidget {
@@ -41,13 +44,19 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   // ── Active options trade (persisted across app restarts) ───────────────
   ActiveTrade? _activeTrade;
 
+  // ── Active trading session running in background ────────────────────────
+  ActiveSession? _activeSession;
+  bool _sessionScreenVisible = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    MonitoringForegroundService.addDataCallback(_onForegroundData);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initDashboard();
       _checkActiveTrade();
+      _checkActiveSession();
       routeObserver.subscribe(this, ModalRoute.of(context)!);
     });
   }
@@ -55,12 +64,29 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   @override
   void didPopNext() {
     _checkActiveTrade();
+    _checkActiveSession();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkActiveTrade();
+      _checkActiveSession();
+    }
+  }
+
+  void _onForegroundData(Object data) {
+    // When the session ends in the background, clear the banner
+    if (data is! Map) return;
+    if (data['mode'] == 'SESSION') {
+      final running = data['running'] as bool? ?? true;
+      final phase   = data['phase']   as String? ?? '';
+      if (!running || phase == 'STOPPED') {
+        if (mounted) {
+          setState(() => _activeSession = null);
+          ActiveSessionStore.clear();
+        }
+      }
     }
   }
 
@@ -69,8 +95,56 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     WidgetsBinding.instance.removeObserver(this);
     routeObserver.unsubscribe(this);
     _indexRefreshTimer?.cancel();
+    MonitoringForegroundService.removeDataCallback(_onForegroundData);
     context.read<DashboardProvider>().stopAutoRefresh();
     super.dispose();
+  }
+
+  Future<void> _checkActiveSession() async {
+    final session = await ActiveSessionStore.load();
+    if (!mounted) return;
+    // Verify with server that the session is still running
+    if (session != null) {
+      try {
+        final resp = await http
+            .get(Uri.parse(ApiConfig.optionsSessionStatusUrl(session.sessionId)))
+            .timeout(const Duration(seconds: 8));
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body) as Map<String, dynamic>;
+          final running = data['running'] as bool? ?? false;
+          final phase   = data['phase']   as String? ?? '';
+          if (!running || phase == 'STOPPED') {
+            await ActiveSessionStore.clear();
+            if (mounted) setState(() => _activeSession = null);
+            return;
+          }
+        }
+      } catch (_) {
+        // Server unreachable — still show the banner so user can navigate back
+      }
+    }
+    if (mounted) setState(() => _activeSession = session);
+  }
+
+  void _resumeSession(ActiveSession session) {
+    if (_sessionScreenVisible) return;
+    _sessionScreenVisible = true;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => OptionsSessionScreen(
+          sessionId:   session.sessionId,
+          index:       session.index,
+          expiryDate:  session.expiryDate,
+          capital:     session.capital,
+          lots:        session.lots,
+          apiKey:      session.apiKey,
+          accessToken: session.accessToken,
+        ),
+      ),
+    ).then((_) {
+      _sessionScreenVisible = false;
+      if (mounted) _checkActiveSession();
+    });
   }
 
   void _initDashboard() {
@@ -358,6 +432,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                       _buildWelcomeRow(user?.userName ?? 'Trader'),
                       const SizedBox(height: 12),
 
+                      // ── Active session banner (background scan running) ───────
+                      if (_activeSession != null)
+                        _buildActiveSessionBar(_activeSession!),
+                      if (_activeSession != null)
+                        const SizedBox(height: 12),
+
                       // ── Active trade banner ───────────────────────────────────
                       if (_activeTrade != null)
                         _buildActiveTradeBar(_activeTrade!),
@@ -531,6 +611,77 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── Active session banner ────────────────────────────────────────────────
+  Widget _buildActiveSessionBar(ActiveSession session) {
+    return GestureDetector(
+      onTap: () => _resumeSession(session),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [const Color(0xFF4F46E5), const Color(0xFF7C3AED)],
+          ),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          children: [
+            // Pulsing dot
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.3, end: 1.0),
+              duration: const Duration(milliseconds: 900),
+              builder: (_, v, child) => Opacity(opacity: v, child: child),
+              onEnd: () => setState(() {}),
+              child: Container(
+                width: 10, height: 10,
+                decoration: const BoxDecoration(
+                  color: Colors.greenAccent,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Session Running in Background',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    '${session.index}  •  Scanning for opportunities…',
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+              ),
+              child: const Text(
+                'Resume',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

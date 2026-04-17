@@ -418,10 +418,39 @@ class OptionsService:
             logger.info(
                 f"[OptionsService] Fetched {len(candles)} {interval} candles for {index}"
             )
-            return candles
         except Exception as e:
             logger.error(f"[OptionsService] Failed to fetch {index} candles: {e}")
             return []
+
+        if not candles:
+            return []
+
+        # ── Inject live LTP into the last (possibly in-progress) candle ──────
+        # Zerodha's historical API may return the last candle's close slightly
+        # behind the actual market price (cache lag + in-progress candle delay).
+        # Fetching kite.ltp() directly gives us the exact current tick and
+        # ensures all indicators (VWAP, RSI, EMA, breakout close) use the
+        # most recent price rather than data that can be 3–8 min stale.
+        try:
+            live_price = await loop.run_in_executor(
+                None,
+                lambda: self.get_index_price(index_upper, api_key, access_token),
+            )
+            if live_price > 0:
+                last_c = dict(candles[-1])  # make a mutable copy
+                hist_close = float(last_c.get("close", live_price))
+                last_c["close"] = live_price
+                last_c["high"]  = max(float(last_c.get("high",  live_price)), live_price)
+                last_c["low"]   = min(float(last_c.get("low",   live_price)), live_price)
+                candles = list(candles[:-1]) + [last_c]
+                logger.info(
+                    f"[OptionsService] {index} last candle close updated: "
+                    f"hist={hist_close:.2f} → live={live_price:.2f}"
+                )
+        except Exception as e:
+            logger.debug(f"[OptionsService] Live LTP injection failed (using hist close): {e}")
+
+        return candles
 
 
     async def get_prev_day_ohlc(
