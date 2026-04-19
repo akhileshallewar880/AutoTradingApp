@@ -54,21 +54,11 @@ class LLMAgent:
 
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        # Route model: intraday uses fast gpt-4o, swing can use reasoning models
-        self._configured_model = getattr(settings, "OPENAI_MODEL", "gpt-4o")
+        # gpt-4.1 — OpenAI's latest flagship model for multi-day reasoning
+        self._configured_model = getattr(settings, "OPENAI_MODEL", "gpt-4.1")
 
     def _get_model_for_mode(self, hold_duration_days: int) -> str:
-        """
-        Route to the best model based on trading mode.
-        Intraday: needs speed + JSON → gpt-4o
-        Swing:    needs reasoning  → o1 / o3-mini / gpt-4o depending on config
-        """
-        model = self._configured_model
-        # Never use a slow reasoning model for intraday (latency kills execution)
-        if hold_duration_days == 0 and model.startswith("o"):
-            logger.info(f"Overriding {model} → gpt-4o for intraday (reasoning models too slow)")
-            return "gpt-4o"
-        return model
+        return self._configured_model
 
     async def analyze_opportunities(
         self,

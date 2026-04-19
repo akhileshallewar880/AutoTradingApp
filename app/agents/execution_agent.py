@@ -397,6 +397,37 @@ class ExecutionAgent:
                 update_callback,
             )
 
+            # ── Persist swing position for hold-duration auto-exit ─────────────
+            # Only swing (CNC) trades need expiry tracking — intraday auto-squares
+            # at 3:15 PM by Zerodha and needs no DB record for expiry.
+            if not is_intraday and hold_duration_days > 0:
+                try:
+                    from app.storage.database import db
+                    await db.save_swing_position({
+                        "user_id":            str(user_id or ""),
+                        "analysis_id":        str(analysis_id),
+                        "stock_symbol":       stock_symbol,
+                        "action":             action,
+                        "quantity":           quantity,
+                        "entry_price":        float(entry_price),
+                        "stop_loss":          float(gtt_stop_loss),
+                        "target_price":       float(gtt_target),
+                        "fill_price":         float(actual_fill),
+                        "gtt_id":             str(gtt_id) if gtt_id else None,
+                        "entry_order_id":     str(entry_order_id),
+                        "hold_duration_days": int(hold_duration_days),
+                        "api_key":            api_key,
+                        "access_token":       access_token,
+                    })
+                    logger.info(
+                        f"[ExecutionAgent] Swing position persisted for {stock_symbol} "
+                        f"(hold={hold_duration_days}d) — expiry_date set by DB trigger"
+                    )
+                except Exception as db_err:
+                    logger.warning(
+                        f"[ExecutionAgent] Could not save swing position to DB: {db_err}"
+                    )
+
             # ── Auto-register with autonomous agent for partial exit monitoring ──
             if user_id and is_intraday:
                 try:

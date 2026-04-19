@@ -103,171 +103,229 @@ class Database:
         self._init_attempted = True
         self._engine = _get_engine()
         if self._engine:
-            self._ensure_options_trade_table()
+            self._ensure_swing_positions_table()
             self._ready = True
 
-    def _ensure_options_trade_table(self):
-        """Create vantrade_options_trades if it doesn't exist (idempotent)."""
+    def _ensure_swing_positions_table(self):
+        """Create vantrade_swing_positions and its MS SQL trigger (idempotent)."""
         if not self._engine:
             return
         try:
             from sqlalchemy import text
             with self._engine.connect() as conn:
+                # Table
                 conn.execute(text("""
                     IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'vantrade_options_trades'
+                        SELECT * FROM sys.tables WHERE name = 'vantrade_swing_positions'
                     )
-                    CREATE TABLE vantrade_options_trades (
-                        id              INT IDENTITY(1,1) PRIMARY KEY,
-                        analysis_id     VARCHAR(50)  NOT NULL,
-                        index_name      VARCHAR(20)  NOT NULL,
-                        option_symbol   VARCHAR(50)  NOT NULL,
-                        option_type     VARCHAR(5)   NOT NULL,
-                        strike          DECIMAL(10,2) NULL,
-                        expiry_date     DATE          NULL,
-                        lots            INT           NOT NULL DEFAULT 1,
-                        quantity        INT           NOT NULL,
-                        entry_premium   DECIMAL(10,2) NULL,
-                        sl_premium      DECIMAL(10,2) NULL,
-                        target_premium  DECIMAL(10,2) NULL,
-                        fill_price      DECIMAL(10,2) NULL,
-                        sl_order_id     VARCHAR(50)   NULL,
-                        target_order_id VARCHAR(50)   NULL,
-                        regime          VARCHAR(30)   NULL,
-                        confidence      DECIMAL(5,2)  NULL,
-                        status          VARCHAR(20)   NOT NULL DEFAULT 'ACTIVE',
-                        exit_reason     VARCHAR(50)   NULL,
-                        exit_premium    DECIMAL(10,2) NULL,
-                        pnl             DECIMAL(12,2) NULL,
-                        partial_pnl     DECIMAL(12,2) NULL,
-                        signal_reasons  NVARCHAR(MAX) NULL,
-                        failed_filters  NVARCHAR(MAX) NULL,
-                        created_at      DATETIMEOFFSET NOT NULL DEFAULT GETUTCDATE(),
-                        closed_at       DATETIMEOFFSET NULL,
-                        INDEX idx_options_analysis_id (analysis_id),
-                        INDEX idx_options_created_at  (created_at),
-                        INDEX idx_options_status      (status)
+                    CREATE TABLE vantrade_swing_positions (
+                        id                 INT IDENTITY(1,1) PRIMARY KEY,
+                        user_id            VARCHAR(50)       NOT NULL,
+                        analysis_id        VARCHAR(50)       NOT NULL,
+                        stock_symbol       VARCHAR(20)       NOT NULL,
+                        action             VARCHAR(10)       NOT NULL,
+                        quantity           INT               NOT NULL,
+                        entry_price        DECIMAL(10,2)     NOT NULL,
+                        stop_loss          DECIMAL(10,2)     NULL,
+                        target_price       DECIMAL(10,2)     NULL,
+                        fill_price         DECIMAL(10,2)     NULL,
+                        gtt_id             VARCHAR(50)       NULL,
+                        entry_order_id     VARCHAR(50)       NULL,
+                        hold_duration_days INT               NOT NULL DEFAULT 0,
+                        expiry_date        DATE              NULL,
+                        status             VARCHAR(20)       NOT NULL DEFAULT 'OPEN',
+                        exit_order_id      VARCHAR(50)       NULL,
+                        exit_price         DECIMAL(10,2)     NULL,
+                        pnl                DECIMAL(12,2)     NULL,
+                        api_key            NVARCHAR(MAX)     NULL,
+                        access_token       NVARCHAR(MAX)     NULL,
+                        error_message      NVARCHAR(MAX)     NULL,
+                        created_at         DATETIMEOFFSET    NOT NULL DEFAULT GETUTCDATE(),
+                        closed_at          DATETIMEOFFSET    NULL,
+                        INDEX idx_swing_status  (status),
+                        INDEX idx_swing_expiry  (expiry_date, status),
+                        INDEX idx_swing_user    (user_id, status),
+                        INDEX idx_swing_symbol  (stock_symbol, status)
                     );
                 """))
                 conn.commit()
-                logger.info("[DB] vantrade_options_trades table ready")
+
+                # MS SQL Trigger: auto-compute expiry_date on INSERT
+                conn.execute(text("""
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.triggers
+                        WHERE name = 'trg_set_swing_expiry'
+                    )
+                    EXEC('
+                        CREATE TRIGGER trg_set_swing_expiry
+                        ON vantrade_swing_positions
+                        AFTER INSERT
+                        AS
+                        BEGIN
+                            SET NOCOUNT ON;
+                            UPDATE vantrade_swing_positions
+                            SET expiry_date = CAST(
+                                DATEADD(day, i.hold_duration_days,
+                                        CAST(i.created_at AS DATE)) AS DATE)
+                            FROM vantrade_swing_positions sp
+                            INNER JOIN inserted i ON sp.id = i.id
+                            WHERE i.hold_duration_days > 0;
+                        END
+                    ');
+                """))
+                conn.commit()
+
+                # MS SQL Trigger: recompute expiry_date on UPDATE of hold_duration_days
+                conn.execute(text("""
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.triggers
+                        WHERE name = 'trg_update_swing_expiry'
+                    )
+                    EXEC('
+                        CREATE TRIGGER trg_update_swing_expiry
+                        ON vantrade_swing_positions
+                        AFTER UPDATE
+                        AS
+                        BEGIN
+                            SET NOCOUNT ON;
+                            IF UPDATE(hold_duration_days)
+                            BEGIN
+                                UPDATE vantrade_swing_positions
+                                SET expiry_date = CAST(
+                                    DATEADD(day, i.hold_duration_days,
+                                            CAST(sp.created_at AS DATE)) AS DATE)
+                                FROM vantrade_swing_positions sp
+                                INNER JOIN inserted i ON sp.id = i.id
+                                WHERE i.hold_duration_days > 0;
+                            END
+                        END
+                    ');
+                """))
+                conn.commit()
+                logger.info("[DB] vantrade_swing_positions table + triggers ready")
         except Exception as e:
-            logger.warning(f"[DB] Could not ensure options table: {e}")
+            logger.warning(f"[DB] Could not ensure swing positions table: {e}")
 
-    # ── Options trades ──────────────────────────────────────────────────────
+    # ── Swing positions ─────────────────────────────────────────────────────
 
-    def _sync_save_options_trade(self, data: dict):
+    def _sync_save_swing_position(self, data: dict):
         from sqlalchemy import text
         sql = text("""
-            INSERT INTO vantrade_options_trades
-              (analysis_id, index_name, option_symbol, option_type, strike,
-               expiry_date, lots, quantity, entry_premium, sl_premium,
-               target_premium, fill_price, sl_order_id, target_order_id,
-               regime, confidence, status, signal_reasons, failed_filters)
+            INSERT INTO vantrade_swing_positions
+              (user_id, analysis_id, stock_symbol, action, quantity,
+               entry_price, stop_loss, target_price, fill_price, gtt_id,
+               entry_order_id, hold_duration_days, api_key, access_token)
             VALUES
-              (:analysis_id, :index_name, :option_symbol, :option_type, :strike,
-               :expiry_date, :lots, :quantity, :entry_premium, :sl_premium,
-               :target_premium, :fill_price, :sl_order_id, :target_order_id,
-               :regime, :confidence, 'ACTIVE', :signal_reasons, :failed_filters)
+              (:user_id, :analysis_id, :stock_symbol, :action, :quantity,
+               :entry_price, :stop_loss, :target_price, :fill_price, :gtt_id,
+               :entry_order_id, :hold_duration_days, :api_key, :access_token)
         """)
         with self._engine.connect() as conn:
             conn.execute(sql, data)
             conn.commit()
 
-    async def save_options_trade(self, data: dict):
-        """Persist a new options trade immediately after execution fill."""
+    async def save_swing_position(self, data: dict):
+        """Persist a new swing position after fill + GTT placed."""
         self._ensure_engine()
         if not self._ready:
             return
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._sync_save_options_trade, data)
-            logger.info(f"[DB] options trade saved: {data.get('analysis_id')}")
+            await loop.run_in_executor(None, self._sync_save_swing_position, data)
+            logger.info(
+                f"[DB] swing position saved: {data.get('stock_symbol')} "
+                f"hold={data.get('hold_duration_days')}d"
+            )
         except Exception as e:
-            logger.error(f"[DB] save_options_trade failed: {e}")
+            logger.error(f"[DB] save_swing_position failed: {e}")
 
-    def _sync_close_options_trade(self, analysis_id: str, exit_reason: str,
-                                   exit_premium: float, pnl: float, partial_pnl: float):
+    def _sync_get_expired_swing_positions(self) -> list:
         from sqlalchemy import text
         sql = text("""
-            UPDATE vantrade_options_trades
-               SET status       = 'CLOSED',
-                   exit_reason  = :exit_reason,
-                   exit_premium = :exit_premium,
-                   pnl          = :pnl,
-                   partial_pnl  = :partial_pnl,
-                   closed_at    = GETUTCDATE()
-             WHERE analysis_id  = :analysis_id
-               AND status       = 'ACTIVE'
+            SELECT id, user_id, analysis_id, stock_symbol, action, quantity,
+                   entry_price, fill_price, gtt_id, entry_order_id,
+                   hold_duration_days, expiry_date, api_key, access_token
+              FROM vantrade_swing_positions
+             WHERE status      = 'OPEN'
+               AND expiry_date <= CAST(GETDATE() AS DATE)
+        """)
+        with self._engine.connect() as conn:
+            rows = conn.execute(sql).fetchall()
+        keys = ["id","user_id","analysis_id","stock_symbol","action","quantity",
+                "entry_price","fill_price","gtt_id","entry_order_id",
+                "hold_duration_days","expiry_date","api_key","access_token"]
+        return [dict(zip(keys, r)) for r in rows]
+
+    async def get_expired_swing_positions(self) -> list:
+        """Return all open swing positions whose hold period has elapsed."""
+        self._ensure_engine()
+        if not self._ready:
+            return []
+        try:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._sync_get_expired_swing_positions)
+        except Exception as e:
+            logger.error(f"[DB] get_expired_swing_positions failed: {e}")
+            return []
+
+    def _sync_update_swing_position_status(self, position_id: int, status: str,
+                                            exit_order_id: str = None,
+                                            error_message: str = None):
+        from sqlalchemy import text
+        sql = text("""
+            UPDATE vantrade_swing_positions
+               SET status        = :status,
+                   exit_order_id = COALESCE(:exit_order_id, exit_order_id),
+                   error_message = COALESCE(:error_message, error_message),
+                   closed_at     = CASE WHEN :status IN ('EXPIRED','CLOSED','ERROR')
+                                        THEN GETUTCDATE() ELSE closed_at END
+             WHERE id = :id
         """)
         with self._engine.connect() as conn:
             conn.execute(sql, {
-                "analysis_id":  analysis_id,
-                "exit_reason":  exit_reason,
-                "exit_premium": exit_premium,
-                "pnl":          pnl,
-                "partial_pnl":  partial_pnl,
+                "id": position_id, "status": status,
+                "exit_order_id": exit_order_id, "error_message": error_message,
             })
             conn.commit()
 
-    async def close_options_trade(
-        self,
-        analysis_id: str,
-        exit_reason: str,
-        exit_premium: float,
-        pnl: float,
-        partial_pnl: float = 0.0,
-    ):
-        """Update the options trade row to CLOSED with final P&L."""
+    async def mark_swing_position_exiting(self, position_id: int):
         self._ensure_engine()
         if not self._ready:
             return
         try:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
-                None,
-                self._sync_close_options_trade,
-                analysis_id, exit_reason, exit_premium, pnl, partial_pnl,
-            )
-            logger.info(
-                f"[DB] options trade closed: {analysis_id} "
-                f"reason={exit_reason} pnl=₹{pnl:+.0f}"
+                None, self._sync_update_swing_position_status, position_id, "EXITING"
             )
         except Exception as e:
-            logger.error(f"[DB] close_options_trade failed: {e}")
+            logger.error(f"[DB] mark_swing_position_exiting failed: {e}")
 
-    def load_todays_options_trades_sync(self) -> list:
-        """
-        Return today's options trade rows as a list of dicts.
-        Used at startup to restore the anti-overtrading guard state.
-        Returns [] when DB is not configured (local dev).
-        """
+    async def mark_swing_position_expired(self, position_id: int, exit_order_id: str = None):
         self._ensure_engine()
         if not self._ready:
-            return []
+            return
         try:
-            from sqlalchemy import text
-            with self._engine.connect() as conn:
-                rows = conn.execute(text("""
-                    SELECT index_name, status, exit_reason, pnl,
-                           CAST(created_at AS DATE) AS trade_date
-                      FROM vantrade_options_trades
-                     WHERE CAST(created_at AS DATE) = CAST(GETUTCDATE() AS DATE)
-                """)).fetchall()
-            from datetime import date as _date
-            return [
-                {
-                    "index_name":  r[0],
-                    "status":      r[1],
-                    "exit_reason": r[2],
-                    "pnl":         float(r[3]) if r[3] is not None else None,
-                    "trade_date":  _date.today(),   # already filtered to today
-                }
-                for r in rows
-            ]
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, self._sync_update_swing_position_status,
+                position_id, "EXPIRED", exit_order_id, None
+            )
+            logger.info(f"[DB] swing position {position_id} marked EXPIRED, exit={exit_order_id}")
         except Exception as e:
-            logger.warning(f"[DB] load_todays_options_trades failed: {e}")
-            return []
+            logger.error(f"[DB] mark_swing_position_expired failed: {e}")
+
+    async def mark_swing_position_error(self, position_id: int, error: str):
+        self._ensure_engine()
+        if not self._ready:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, self._sync_update_swing_position_status,
+                position_id, "ERROR", None, error
+            )
+        except Exception as e:
+            logger.error(f"[DB] mark_swing_position_error failed: {e}")
 
     # ── Existing stubs (kept for backward-compat with rest of app) ──────────
 

@@ -9,7 +9,6 @@ import 'screens/onboarding_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/api_settings_screen.dart';
 import 'screens/home_screen.dart';
-import 'services/monitoring_foreground_service.dart';
 import 'services/notification_service.dart';
 
 /// Global route observer — lets HomeScreen detect when it regains focus.
@@ -19,7 +18,6 @@ final RouteObserver<ModalRoute<void>> routeObserver =
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  MonitoringForegroundService.init();
 
   runApp(const AlgoTradingApp());
 

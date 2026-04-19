@@ -1,7 +1,8 @@
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
-from app.api.routes import agent, performance, auth, analysis, dashboard, credentials, live_trading, backtest, options, portfolio, ticker
+from app.api.routes import agent, performance, auth, analysis, dashboard, credentials, live_trading, backtest, portfolio, ticker
 from app.core.logging import logger
 
 settings = get_settings()
@@ -10,7 +11,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         description="Agentic AI Trading System Backend",
-        version="1.0.0"
+        version="2.0.0"
     )
 
     # CORS
@@ -31,7 +32,6 @@ def create_app() -> FastAPI:
     app.include_router(credentials.router, tags=["Credentials"])
     app.include_router(live_trading.router, prefix="/api/v1", tags=["Live Trading"])
     app.include_router(backtest.router, prefix="/api/v1/backtest", tags=["Backtest"])
-    app.include_router(options.router, prefix="/api/v1/options", tags=["Options Trading"])
     app.include_router(portfolio.router, prefix="/api/v1/portfolio", tags=["Portfolio"])
     app.include_router(ticker.router, prefix="/api/v1/ticker", tags=["Live Ticker"])
 
@@ -39,19 +39,13 @@ def create_app() -> FastAPI:
     async def startup_event():
         logger.info("Application starting up")
 
-        # Restore anti-overtrading guard from DB so a server restart cannot
-        # reset today's trade count or post-loss cooldown.
+        # Start the swing trade expiry scheduler (checks daily at 9:15 AM IST)
         try:
-            from app.storage.database import db
-            from app.engines.options_engine import options_engine
-            rows = db.load_todays_options_trades_sync()
-            options_engine._guard.restore_from_db(rows)
-            logger.info(
-                f"[Startup] Anti-overtrading guard restored "
-                f"({len(rows)} today's trade(s) loaded from DB)"
-            )
+            from app.services.trade_expiry_service import trade_expiry_service
+            asyncio.create_task(trade_expiry_service.run_scheduler())
+            logger.info("[Startup] Swing trade expiry scheduler started")
         except Exception as e:
-            logger.warning(f"[Startup] Could not restore guard state: {e}")
+            logger.warning(f"[Startup] Could not start expiry scheduler: {e}")
 
     @app.on_event("shutdown")
     async def shutdown_event():

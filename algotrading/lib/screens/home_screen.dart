@@ -13,14 +13,7 @@ import '../utils/api_config.dart';
 import 'analysis_input_screen.dart';
 import 'backtest_screen.dart';
 import 'gtt_analysis_screen.dart';
-import 'options_input_screen.dart';
-import 'active_monitor_screen.dart';
 import 'holdings_screen.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import '../services/active_trade_store.dart';
-import '../services/active_session_store.dart';
-import '../services/monitoring_foreground_service.dart';
-import 'options_session_screen.dart';
 import '../main.dart' show routeObserver;
 
 class HomeScreen extends StatefulWidget {
@@ -41,110 +34,29 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   Map<String, dynamic> _indexPrices = {};
   Timer? _indexRefreshTimer;
 
-  // ── Active options trade (persisted across app restarts) ───────────────
-  ActiveTrade? _activeTrade;
-
-  // ── Active trading session running in background ────────────────────────
-  ActiveSession? _activeSession;
-  bool _sessionScreenVisible = false;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    MonitoringForegroundService.addDataCallback(_onForegroundData);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initDashboard();
-      _checkActiveTrade();
-      _checkActiveSession();
       routeObserver.subscribe(this, ModalRoute.of(context)!);
     });
   }
 
   @override
-  void didPopNext() {
-    _checkActiveTrade();
-    _checkActiveSession();
-  }
+  void didPopNext() {}
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _checkActiveTrade();
-      _checkActiveSession();
-    }
-  }
-
-  void _onForegroundData(Object data) {
-    // When the session ends in the background, clear the banner
-    if (data is! Map) return;
-    if (data['mode'] == 'SESSION') {
-      final running = data['running'] as bool? ?? true;
-      final phase   = data['phase']   as String? ?? '';
-      if (!running || phase == 'STOPPED') {
-        if (mounted) {
-          setState(() => _activeSession = null);
-          ActiveSessionStore.clear();
-        }
-      }
-    }
-  }
+  void didChangeAppLifecycleState(AppLifecycleState state) {}
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     routeObserver.unsubscribe(this);
     _indexRefreshTimer?.cancel();
-    MonitoringForegroundService.removeDataCallback(_onForegroundData);
     context.read<DashboardProvider>().stopAutoRefresh();
     super.dispose();
-  }
-
-  Future<void> _checkActiveSession() async {
-    final session = await ActiveSessionStore.load();
-    if (!mounted) return;
-    // Verify with server that the session is still running
-    if (session != null) {
-      try {
-        final resp = await http
-            .get(Uri.parse(ApiConfig.optionsSessionStatusUrl(session.sessionId)))
-            .timeout(const Duration(seconds: 8));
-        if (resp.statusCode == 200) {
-          final data = jsonDecode(resp.body) as Map<String, dynamic>;
-          final running = data['running'] as bool? ?? false;
-          final phase   = data['phase']   as String? ?? '';
-          if (!running || phase == 'STOPPED') {
-            await ActiveSessionStore.clear();
-            if (mounted) setState(() => _activeSession = null);
-            return;
-          }
-        }
-      } catch (_) {
-        // Server unreachable — still show the banner so user can navigate back
-      }
-    }
-    if (mounted) setState(() => _activeSession = session);
-  }
-
-  void _resumeSession(ActiveSession session) {
-    if (_sessionScreenVisible) return;
-    _sessionScreenVisible = true;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => OptionsSessionScreen(
-          sessionId:   session.sessionId,
-          index:       session.index,
-          expiryDate:  session.expiryDate,
-          capital:     session.capital,
-          lots:        session.lots,
-          apiKey:      session.apiKey,
-          accessToken: session.accessToken,
-        ),
-      ),
-    ).then((_) {
-      _sessionScreenVisible = false;
-      if (mounted) _checkActiveSession();
-    });
   }
 
   void _initDashboard() {
@@ -164,31 +76,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     }
   }
 
-  Future<void> _checkActiveTrade() async {
-    final trade = await ActiveTradeStore.load();
-    if (!mounted) return;
-    setState(() => _activeTrade = trade);
-    // If a trade is active and the monitor screen is not already open, push it
-    if (trade != null) {
-      _restoreMonitorScreen(trade);
-    }
-  }
-
-  bool _monitorScreenVisible = false;
-
-  void _restoreMonitorScreen(ActiveTrade trade) {
-    if (_monitorScreenVisible) return;
-    _monitorScreenVisible = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => ActiveMonitorScreen(trade: trade)),
-      ).then((_) {
-        _monitorScreenVisible = false;
-        if (mounted) _checkActiveTrade();
-      });
-    });
-  }
 
   Future<void> _fetchIndexPrices() async {
     final auth = context.read<AuthProvider>();
@@ -432,18 +319,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                       _buildWelcomeRow(user?.userName ?? 'Trader'),
                       const SizedBox(height: 12),
 
-                      // ── Active session banner (background scan running) ───────
-                      if (_activeSession != null)
-                        _buildActiveSessionBar(_activeSession!),
-                      if (_activeSession != null)
-                        const SizedBox(height: 12),
-
-                      // ── Active trade banner ───────────────────────────────────
-                      if (_activeTrade != null)
-                        _buildActiveTradeBar(_activeTrade!),
-                      if (_activeTrade != null)
-                        const SizedBox(height: 12),
-
                       // ── Live index prices strip ───────────────────────────────
                       if (!auth.isDemoMode && _indexPrices.isNotEmpty)
                         _buildIndexPriceStrip(),
@@ -611,162 +486,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  // ── Active session banner ────────────────────────────────────────────────
-  Widget _buildActiveSessionBar(ActiveSession session) {
-    return GestureDetector(
-      onTap: () => _resumeSession(session),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [const Color(0xFF4F46E5), const Color(0xFF7C3AED)],
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.4)),
-        ),
-        child: Row(
-          children: [
-            // Pulsing dot
-            TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0.3, end: 1.0),
-              duration: const Duration(milliseconds: 900),
-              builder: (_, v, child) => Opacity(opacity: v, child: child),
-              onEnd: () => setState(() {}),
-              child: Container(
-                width: 10, height: 10,
-                decoration: const BoxDecoration(
-                  color: Colors.greenAccent,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Session Running in Background',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    '${session.index}  •  Scanning for opportunities…',
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
-              ),
-              child: const Text(
-                'Resume',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── Active trade banner ──────────────────────────────────────────────────
-  Widget _buildActiveTradeBar(ActiveTrade trade) {
-    final isCE = trade.optionType == 'CE';
-    return GestureDetector(
-      onTap: () async {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ActiveMonitorScreen(trade: trade),
-          ),
-        );
-        // Re-check after returning — trade may have ended
-        if (mounted) _checkActiveTrade();
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Colors.grey[900]!, Colors.grey[850]!],
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.5)),
-        ),
-        child: Row(
-          children: [
-            // Pulsing dot
-            TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0.3, end: 1.0),
-              duration: const Duration(milliseconds: 900),
-              builder: (_, v, child) => Opacity(opacity: v, child: child),
-              onEnd: () => setState(() {}),
-              child: Container(
-                width: 10, height: 10,
-                decoration: const BoxDecoration(
-                  color: Colors.greenAccent,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Live Trade Active',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    '${trade.symbol}  ${isCE ? "CE ▲" : "PE ▼"}  '
-                    'Entry ₹${trade.entryFillPrice.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.greenAccent.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.4)),
-              ),
-              child: const Text(
-                'View',
-                style: TextStyle(
-                  color: Colors.greenAccent,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1587,43 +1306,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                         SizedBox(width: 6),
                         Text(
                           'Analysis',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Options Trading button
-            Expanded(
-              child: Material(
-                color: const Color(0xFF7C3AED),
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const OptionsInputScreen(),
-                    ),
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 13),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.candlestick_chart, color: Colors.white, size: 18),
-                        SizedBox(width: 6),
-                        Text(
-                          'Options',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 13,

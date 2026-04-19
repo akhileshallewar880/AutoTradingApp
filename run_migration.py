@@ -79,6 +79,11 @@ try:
 except ImportError:
     apply_daily_pnl = None
 
+try:
+    from app.migrations.swing_expiry_trigger import run as run_swing_expiry
+except ImportError:
+    run_swing_expiry = None
+
 
 def main():
     """Run or rollback migrations based on command line arguments."""
@@ -129,6 +134,19 @@ def main():
                     logger.info("=" * 70)
                 else:
                     logger.error("❌ add_daily_pnl_records migration not found")
+                    sys.exit(1)
+            elif migration_name == "swing_expiry_trigger":
+                if run_swing_expiry:
+                    success = run_swing_expiry()
+                    if success:
+                        logger.info("=" * 70)
+                        logger.info("✅ SWING EXPIRY TRIGGER MIGRATION SUCCESSFUL")
+                        logger.info("=" * 70)
+                    else:
+                        logger.error("❌ swing_expiry_trigger migration failed")
+                        sys.exit(1)
+                else:
+                    logger.error("❌ swing_expiry_trigger migration not found")
                     sys.exit(1)
             else:
                 logger.error(f"❌ Unknown migration: {migration_name}")
