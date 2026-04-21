@@ -14,21 +14,37 @@ class RiskEngine:
         capital: float,
         action: str = "BUY",
         leverage: int = 1,
+        num_stocks: int = 0,
     ) -> int:
         """
-        Calculate position size based on risk percentage and leverage.
+        Calculate position size.
 
-        For BUY  (long):  risk_per_share = entry_price - stop_loss
-        For SELL (short): risk_per_share = stop_loss - entry_price
+        Swing mode (num_stocks > 0):
+          Allocates capital equally across stocks — deploys full capital.
+          capital_per_stock = capital / num_stocks
+          quantity          = floor(capital_per_stock / entry_price)
 
-        Quantity = (Capital × Leverage × Risk%) / risk_per_share
-
-        Leverage (1–5x) is for MIS intraday trades only.
-        Zerodha provides up to 5x margin on MIS equity positions.
+        Intraday mode (num_stocks == 0):
+          Risk-based sizing with leverage.
+          quantity = floor((capital × leverage × risk%) / risk_per_share)
         """
-        leverage = max(1, min(5, leverage))  # clamp 1–5
+        if entry_price <= 0:
+            return 0
+
+        # ── Swing: equal-weight capital allocation ────────────────────────
+        if num_stocks > 0:
+            capital_per_stock = capital / num_stocks
+            quantity = math.floor(capital_per_stock / entry_price)
+            logger.info(
+                f"Capital Alloc [{action}]: Capital={capital:,.0f}, "
+                f"Stocks={num_stocks}, PerStock={capital_per_stock:,.0f}, "
+                f"Entry={entry_price:.2f}, Qty={quantity}"
+            )
+            return max(quantity, 1)
+
+        # ── Intraday: risk-based sizing ────────────────────────────────────
+        leverage = max(1, min(5, leverage))
         if action == "SELL":
-            # Short position: stop is ABOVE entry
             risk_per_share = stop_loss - entry_price
             if risk_per_share <= 0:
                 logger.warning(
@@ -37,7 +53,6 @@ class RiskEngine:
                 )
                 return 0
         else:
-            # Long position: stop is BELOW entry
             risk_per_share = entry_price - stop_loss
             if risk_per_share <= 0:
                 logger.warning(

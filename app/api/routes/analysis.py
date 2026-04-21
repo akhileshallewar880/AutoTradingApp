@@ -230,6 +230,13 @@ async def generate_analysis(request: AnalysisRequest):
 
             # Apply leverage only for intraday MIS trades
             effective_leverage = request.leverage if request.hold_duration_days == 0 else 1
+
+            # Swing: allocate capital equally across all recommended stocks so the
+            # full balance is deployed (num_stocks > 0 triggers capital-allocation mode).
+            # Intraday: use risk-based sizing (num_stocks=0) with leverage.
+            is_intraday = request.hold_duration_days == 0
+            num_stocks_for_sizing = 0 if is_intraday else max(request.num_stocks, 1)
+
             quantity = risk_engine.calculate_quantity(
                 entry_price=entry,
                 stop_loss=sl,
@@ -237,6 +244,7 @@ async def generate_analysis(request: AnalysisRequest):
                 capital=capital_for_sizing,
                 action=action,
                 leverage=effective_leverage,
+                num_stocks=num_stocks_for_sizing,
             )
 
             if quantity == 0:

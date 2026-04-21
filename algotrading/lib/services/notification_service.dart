@@ -138,20 +138,6 @@ class NotificationService {
 
     // POST_NOTIFICATIONS permission (Android 13+)
     await android?.requestNotificationsPermission();
-
-    // USE_FULL_SCREEN_INTENT permission (Android 14+, API 34+).
-    // Without this the alarm notification fires but does NOT wake the screen
-    // when it is locked/off — it sits silently in the notification shade.
-    await android?.requestFullScreenIntentPermission();
-  }
-
-  /// Returns true if the app has the USE_FULL_SCREEN_INTENT permission granted.
-  /// Always returns true on Android < 14 (permission not required there).
-  Future<bool> hasFullScreenIntentPermission() async {
-    final androidPlugin = _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-    return await androidPlugin?.canScheduleExactNotifications() ?? true;
   }
 
   Future<void> _createChannel({
@@ -301,11 +287,7 @@ class NotificationService {
         'Trade Opportunities',
         importance: Importance.max,
         priority: Priority.max,
-        // CATEGORY_ALARM lets fullScreenIntent bypass the USE_FULL_SCREEN_INTENT
-        // runtime permission introduced in Android 14 (API 34).  Without this,
-        // the notification fires but the screen never wakes on a locked phone.
         category: AndroidNotificationCategory.alarm,
-        fullScreenIntent: true,
         playSound: true,
         sound: const RawResourceAndroidNotificationSound('opportunity_alarm'),
         enableVibration: true,
@@ -350,7 +332,6 @@ class NotificationService {
         importance: Importance.max,
         priority: Priority.max,
         category: AndroidNotificationCategory.alarm,
-        fullScreenIntent: true,
         playSound: true,
         sound: const RawResourceAndroidNotificationSound('opportunity_alarm'),
         enableVibration: true,
