@@ -7,8 +7,29 @@ data survives re-logins (Zerodha only returns today's trade history).
 from sqlalchemy import text
 
 
-def apply(engine):
+def _get_engine():
+    """Build a SQLAlchemy engine from app config, or return None if not configured."""
+    try:
+        from app.storage.database import _build_conn_str, _get_engine as _db_get_engine
+        return _db_get_engine()
+    except Exception:
+        pass
+    try:
+        from app.core.database import engine
+        return engine
+    except Exception:
+        return None
+
+
+def apply(engine=None):
     """Apply migration to add daily P&L records table."""
+    if engine is None:
+        engine = _get_engine()
+    if engine is None:
+        raise RuntimeError(
+            "No database engine available — ensure DB_SERVER, DB_NAME, DB_USER, "
+            "DB_PASSWORD environment variables are set."
+        )
     with engine.connect() as conn:
         conn.execute(text("""
             IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'vantrade_daily_pnl_records')

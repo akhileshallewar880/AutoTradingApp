@@ -85,6 +85,17 @@ except ImportError:
     run_swing_expiry = None
 
 
+def _get_migration_engine():
+    """Return a SQLAlchemy engine for migrations. Raises if DB not configured."""
+    from app.storage.database import _get_engine
+    engine = _get_engine()
+    if engine is None:
+        raise RuntimeError(
+            "No database engine — ensure DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD are set."
+        )
+    return engine
+
+
 def main():
     """Run or rollback migrations based on command line arguments."""
     # Get migration name from args
@@ -98,9 +109,8 @@ def main():
         logger.info("=" * 70)
         try:
             if migration_name == "admin_schema":
-                from app.core.database import engine
                 if apply_admin:
-                    apply_admin(engine)
+                    apply_admin(_get_migration_engine())
                     logger.info("=" * 70)
                     logger.info("✅ ADMIN SCHEMA MIGRATION SUCCESSFUL")
                     logger.info("=" * 70)
@@ -126,9 +136,8 @@ def main():
                     logger.error("❌ fix_execution_schema migration not found")
                     sys.exit(1)
             elif migration_name == "add_daily_pnl_records":
-                from app.core.database import engine
                 if apply_daily_pnl:
-                    apply_daily_pnl(engine)
+                    apply_daily_pnl()
                     logger.info("=" * 70)
                     logger.info("✅ DAILY PNL RECORDS MIGRATION SUCCESSFUL")
                     logger.info("=" * 70)
@@ -162,9 +171,8 @@ def main():
         logger.info("=" * 70)
         try:
             if action == "admin_schema":
-                from app.core.database import engine
                 if rollback_admin:
-                    rollback_admin(engine)
+                    rollback_admin(_get_migration_engine())
                     logger.info("=" * 70)
                     logger.info("✅ ADMIN SCHEMA ROLLBACK SUCCESSFUL")
                     logger.info("=" * 70)
