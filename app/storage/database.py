@@ -327,6 +327,61 @@ class Database:
         except Exception as e:
             logger.error(f"[DB] mark_swing_position_error failed: {e}")
 
+    def _sync_get_amo_pending_positions(self) -> list:
+        from sqlalchemy import text
+        sql = text("""
+            SELECT id, user_id, analysis_id, stock_symbol, action, quantity,
+                   entry_price, stop_loss, target_price, entry_order_id,
+                   hold_duration_days, api_key, access_token
+              FROM vantrade_swing_positions
+             WHERE status = 'AMO_PENDING'
+        """)
+        with self._engine.connect() as conn:
+            rows = conn.execute(sql).fetchall()
+        keys = ["id", "user_id", "analysis_id", "stock_symbol", "action", "quantity",
+                "entry_price", "stop_loss", "target_price", "entry_order_id",
+                "hold_duration_days", "api_key", "access_token"]
+        return [dict(zip(keys, r)) for r in rows]
+
+    async def get_amo_pending_positions(self) -> list:
+        """Return all swing positions still waiting for AMO fill confirmation."""
+        self._ensure_engine()
+        if not self._ready:
+            return []
+        try:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._sync_get_amo_pending_positions)
+        except Exception as e:
+            logger.error(f"[DB] get_amo_pending_positions failed: {e}")
+            return []
+
+    def _sync_mark_swing_position_active(self, position_id: int, fill_price: float, gtt_id: str):
+        from sqlalchemy import text
+        sql = text("""
+            UPDATE vantrade_swing_positions
+               SET status     = 'OPEN',
+                   fill_price = :fill_price,
+                   gtt_id     = :gtt_id
+             WHERE id = :id
+        """)
+        with self._engine.connect() as conn:
+            conn.execute(sql, {"id": position_id, "fill_price": fill_price, "gtt_id": gtt_id})
+            conn.commit()
+
+    async def mark_swing_position_active(self, position_id: int, fill_price: float, gtt_id: str):
+        """Mark an AMO_PENDING position as OPEN after fill + GTT placement."""
+        self._ensure_engine()
+        if not self._ready:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, self._sync_mark_swing_position_active, position_id, fill_price, gtt_id
+            )
+            logger.info(f"[DB] swing position {position_id} activated: fill={fill_price}, gtt={gtt_id}")
+        except Exception as e:
+            logger.error(f"[DB] mark_swing_position_active failed: {e}")
+
     # ── Existing stubs (kept for backward-compat with rest of app) ──────────
 
     async def save_analysis(self, analysis):
