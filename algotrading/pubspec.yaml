@@ -64,17 +64,6 @@ dependencies:
   timezone: ^0.9.4
   flutter_timezone: ^5.0.0
 
-  # Android foreground service — keeps monitoring alive when app is backgrounded
-  flutter_foreground_task: ^8.15.0
-
-  # Opens specific Android system settings pages (alarm permission, full-screen intent, etc.)
-  android_intent_plus: ^5.1.0
-
-  # Keep screen on during alarm (wakelock)
-  wakelock_plus: ^1.2.8
-
-  # Vibration pattern for alarm
-  vibration: ^2.0.0
 
 dev_dependencies:
   flutter_test:

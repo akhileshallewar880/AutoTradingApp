@@ -109,48 +109,96 @@ class ExecutionAgent:
             )
 
             # ── Step 2: Monitor until filled ───────────────────────────────
-            is_filled, fill_info = await self._wait_for_order_fill(entry_order_id, timeout=300)
+            # Intraday: 5-minute timeout (quick in-and-out)
+            # Swing (CNC): wait until 3:20 PM IST — price may reach the limit
+            # any time during the session; cancelling early would mean missing
+            # a valid entry that arrives hours after analysis.
+            if is_intraday:
+                fill_timeout = 300  # 5 minutes
+                timeout_label = "5 minutes"
+            else:
+                fill_timeout = self._seconds_until_market_cutoff()
+                cutoff_mins = fill_timeout // 60
+                timeout_label = f"3:20 PM IST (~{cutoff_mins} min remaining)"
+
+            is_filled, fill_info = await self._wait_for_order_fill(
+                entry_order_id, timeout=fill_timeout
+            )
 
             if not is_filled:
                 final_status = fill_info.get("status", "TIMEOUT").upper()
                 reason = fill_info.get("status_message", "")
 
                 if final_status in ("CANCELLED", "REJECTED"):
-                    update_type = "ORDER_REJECTED"
                     msg = (
                         f"Order {final_status}"
                         + (f": {reason}" if reason else "")
                         + ". No position opened."
                     )
-                    log_status = "REJECTED"
+                    await self._send_update(
+                        analysis_id, stock_symbol, "ORDER_REJECTED", msg,
+                        update_callback, order_id=entry_order_id,
+                    )
+                    execution_log["status"] = "REJECTED"
+                    execution_log["error"] = msg
+                    return execution_log
+
+                # ── TIMEOUT: try cancel then verify actual status ──────────
+                # Race condition: the order may have filled in the 2-second gap
+                # between the last poll and now. Zerodha rejects cancel requests
+                # on already-filled orders with an exception — if we just catch
+                # that and return, the position is open with NO GTT protecting it.
+                # Solution: always re-fetch status after the cancel attempt.
+                try:
+                    await self.zs.cancel_order(entry_order_id)
+                    logger.info(f"{stock_symbol}: cancel request sent for {entry_order_id}")
+                except Exception as cancel_err:
+                    logger.warning(
+                        f"{stock_symbol}: cancel_order raised: {cancel_err} — "
+                        f"may have filled just at timeout edge; verifying status…"
+                    )
+
+                # Wait 1 s for Zerodha to process cancel/fill, then check truth
+                await asyncio.sleep(1)
+                try:
+                    verify = await self.zs.get_order_status(entry_order_id)
+                    verified_status = verify.get("status", "").upper()
+                except Exception as verify_err:
+                    logger.error(f"{stock_symbol}: could not verify order status: {verify_err}")
+                    verified_status = "UNKNOWN"
+                    verify = {}
+
+                if verified_status == "COMPLETE":
+                    # Order filled at the timeout edge — proceed to GTT placement
+                    logger.info(
+                        f"{stock_symbol}: order filled at timeout edge — "
+                        f"treating as fill and placing GTT"
+                    )
+                    is_filled = True
+                    fill_info = verify
                 else:
-                    # Limit order not filled within 5 min — cancel it so it
-                    # doesn't fill later when we're no longer monitoring.
-                    update_type = "ORDER_TIMEOUT"
-                    log_status = "TIMEOUT"
-                    try:
-                        await self.zs.cancel_order(entry_order_id)
+                    # Genuinely not filled — abort
+                    if verified_status in ("CANCELLED", "REJECTED"):
                         msg = (
-                            f"Price did not reach ₹{entry_price:.2f} within 5 minutes. "
+                            f"Price did not reach ₹{entry_price:.2f} by {timeout_label}. "
                             f"Limit order cancelled — no position opened."
                         )
-                    except Exception as cancel_err:
-                        logger.warning(
-                            f"{stock_symbol}: cancel after timeout failed: {cancel_err}"
-                        )
+                    else:
                         msg = (
-                            f"Price did not reach ₹{entry_price:.2f} within 5 minutes. "
-                            f"Order may still be pending — check Zerodha app and cancel manually "
-                            f"if needed. Order ID: {entry_order_id}"
+                            f"Price did not reach ₹{entry_price:.2f} by {timeout_label}. "
+                            f"Order status: {verified_status}. "
+                            f"Cancel manually in Zerodha if still open. "
+                            f"Order ID: {entry_order_id}"
                         )
+                    await self._send_update(
+                        analysis_id, stock_symbol, "ORDER_TIMEOUT", msg,
+                        update_callback, order_id=entry_order_id,
+                    )
+                    execution_log["status"] = "TIMEOUT"
+                    execution_log["error"] = msg
+                    return execution_log
 
-                await self._send_update(
-                    analysis_id, stock_symbol, update_type, msg, update_callback,
-                    order_id=entry_order_id,
-                )
-                execution_log["status"] = log_status
-                execution_log["error"] = msg
-                return execution_log
+            # reaches here only when is_filled is True (normal fill OR edge-fill above)
 
             # ── Step 3: Reconcile fill price ───────────────────────────────
             actual_fill = fill_info.get("average_price", 0.0)
@@ -642,6 +690,22 @@ class ExecutionAgent:
             gtt_type="single",
         )
         return gtt_id
+
+    # ── Swing order timeout helper ────────────────────────────────────────────
+
+    def _seconds_until_market_cutoff(self) -> int:
+        """
+        Returns seconds from now until 3:20 PM IST (swing order deadline).
+        Minimum 60 s so we always poll at least once. If market is already
+        past 3:20 PM or hasn't opened yet, returns 60 s (caller will get an
+        immediate timeout and cancel the order).
+        """
+        import pytz
+        IST = pytz.timezone("Asia/Kolkata")
+        now = datetime.now(IST)
+        cutoff = now.replace(hour=15, minute=20, second=0, microsecond=0)
+        secs = int((cutoff - now).total_seconds())
+        return max(secs, 60)
 
     # ── Order monitoring ──────────────────────────────────────────────────────
 

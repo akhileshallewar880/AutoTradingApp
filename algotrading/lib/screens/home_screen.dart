@@ -45,10 +45,43 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   }
 
   @override
-  void didPopNext() {}
+  void didPopNext() {
+    // Refresh data when returning from a sub-screen
+    final auth = context.read<AuthProvider>();
+    if (auth.user != null) {
+      context.read<DashboardProvider>().fetchDashboard(
+        auth.user!.accessToken,
+        apiKey: auth.user!.apiKey,
+      );
+      _fetchIndexPrices();
+    }
+  }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {}
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final auth = context.read<AuthProvider>();
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden) {
+      // Screen off / app backgrounded — stop all polling to save battery
+      _indexRefreshTimer?.cancel();
+      _indexRefreshTimer = null;
+      context.read<DashboardProvider>().stopAutoRefresh();
+    } else if (state == AppLifecycleState.resumed) {
+      // App back in foreground — restart polling
+      if (auth.user != null) {
+        _fetchIndexPrices();
+        _indexRefreshTimer = Timer.periodic(
+          const Duration(seconds: 60),
+          (_) => _fetchIndexPrices(),
+        );
+        context.read<DashboardProvider>()
+          ..fetchDashboard(auth.user!.accessToken, apiKey: auth.user!.apiKey)
+          ..startAutoRefresh(auth.user!.accessToken,
+              apiKey: auth.user!.apiKey, intervalSeconds: 60);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -70,7 +103,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       _fetchIndexPrices();
       // Refresh index prices every 30 seconds
       _indexRefreshTimer = Timer.periodic(
-        const Duration(seconds: 30),
+        const Duration(seconds: 60),
         (_) => _fetchIndexPrices(),
       );
     }

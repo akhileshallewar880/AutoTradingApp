@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import '../providers/auth_provider.dart';
+import '../providers/auth_provider.dart' show AuthProvider, kDemoAccessToken;
 import '../models/holdings_model.dart';
 import '../utils/api_config.dart';
 
@@ -30,9 +30,23 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
 
   Future<void> _fetchHoldings() async {
     final auth = context.read<AuthProvider>();
-    if (auth.user == null) return;
+    if (auth.user == null) {
+      if (mounted) setState(() { _loading = false; _error = 'Not logged in.'; });
+      return;
+    }
 
     setState(() { _loading = true; _error = null; });
+
+    if (auth.user!.accessToken == kDemoAccessToken) {
+      await Future.delayed(const Duration(milliseconds: 400));
+      if (!mounted) return;
+      setState(() {
+        _holdings = _demoHoldings();
+        _summary = _demoSummary();
+        _loading = false;
+      });
+      return;
+    }
 
     try {
       final uri = Uri.parse(ApiConfig.holdingsUrl).replace(queryParameters: {
@@ -44,16 +58,23 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
       if (!mounted) return;
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
-        final list = (data['holdings'] as List).cast<Map<String, dynamic>>();
+        final raw = (data['holdings'] as List? ?? []);
+        final list = raw
+            .whereType<Map<String, dynamic>>()
+            .where((h) =>
+                (h['quantity'] as num? ?? 0) > 0 ||
+                (h['t1_quantity'] as num? ?? 0) > 0)
+            .toList();
         setState(() {
           _holdings = list.map(Holding.fromJson).toList();
-          _summary = HoldingsSummary.fromJson(data['summary'] ?? {});
+          _summary = HoldingsSummary.fromJson(
+              (data['summary'] as Map<String, dynamic>?) ?? {});
         });
       } else if (resp.statusCode == 403) {
         setState(() => _error = '__UPGRADE_REQUIRED__');
       } else {
         String msg = 'Failed to load holdings';
-        try { msg = jsonDecode(resp.body)['detail'] ?? msg; } catch (_) {}
+        try { msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg; } catch (_) {}
         setState(() => _error = msg);
       }
     } catch (e) {
@@ -62,6 +83,37 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
       if (mounted) setState(() => _loading = false);
     }
   }
+
+  List<Holding> _demoHoldings() => [
+        Holding(
+          symbol: 'RELIANCE', exchange: 'NSE', isin: 'INE002A01018',
+          quantity: 10, t1Quantity: 0, averagePrice: 2750.0, lastPrice: 2875.50,
+          closePrice: 2860.0, pnl: 1255.0, pnlPct: 4.56,
+          dayChange: 15.5, dayChangePct: 0.54,
+          investedValue: 27500.0, currentValue: 28755.0, product: 'CNC',
+        ),
+        Holding(
+          symbol: 'TCS', exchange: 'NSE', isin: 'INE467B01029',
+          quantity: 5, t1Quantity: 0, averagePrice: 4100.0, lastPrice: 4389.75,
+          closePrice: 4350.0, pnl: 1448.75, pnlPct: 7.07,
+          dayChange: 39.75, dayChangePct: 0.91,
+          investedValue: 20500.0, currentValue: 21948.75, product: 'CNC',
+        ),
+        Holding(
+          symbol: 'INFY', exchange: 'NSE', isin: 'INE009A01021',
+          quantity: 15, t1Quantity: 5, averagePrice: 1820.0, lastPrice: 1890.75,
+          closePrice: 1875.0, pnl: 1061.25, pnlPct: 3.88,
+          dayChange: 15.75, dayChangePct: 0.84,
+          investedValue: 27300.0, currentValue: 28361.25, product: 'CNC',
+        ),
+      ];
+
+  HoldingsSummary _demoSummary() => HoldingsSummary(
+        totalInvested: 75300.0,
+        totalCurrentValue: 79065.0,
+        totalPnl: 3765.0,
+        overallPnlPct: 5.0,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -337,8 +389,10 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text(
-              'You have no long-term CNC holdings yet. '
-              'Buy stocks with CNC product to see them here.',
+              'No CNC delivery holdings found in your Zerodha account.\n\n'
+              '• Holdings appear here after T+2 settlement\n'
+              '• Intraday MIS positions are not shown here\n'
+              '• Stocks bought today may appear tomorrow',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[600], fontSize: 13),
             ),
