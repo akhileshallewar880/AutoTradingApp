@@ -30,7 +30,7 @@ class OrderService:
     MARKET_OPEN  = time(9, 15)
     MARKET_CLOSE = time(15, 30)
     AMO_START    = time(15, 45)   # AMO accepts orders from 3:45 PM
-    AMO_END      = time(8, 57)    # AMO closes at 8:57 AM next morning
+    AMO_END      = time(8, 57)    # AMO closes at 8:57 AM (pre-market)
     IST = pytz.timezone("Asia/Kolkata")
 
     def __init__(self):
@@ -44,34 +44,51 @@ class OrderService:
         return self.MARKET_OPEN <= current_time <= self.MARKET_CLOSE
 
     def is_amo_window(self) -> bool:
-        """True when Zerodha's AMO window is open (Mon–Fri, 3:45 PM – 8:57 AM)."""
+        """
+        True when Zerodha's AMO window is open.
+
+        Weekends (Sat/Sun): ALL day — Zerodha accepts AMO orders on weekends
+          and executes them at the following Monday's market open.
+        Weekdays: 3:45 PM – 8:57 AM (after market close until pre-market).
+          The 9:00–9:14 AM gap is also covered so that early-morning users
+          are not blocked between AMO close and market open.
+        """
         now_ist = datetime.now(self.IST)
-        if now_ist.weekday() >= 5:
-            return False
+        weekday = now_ist.weekday()
+
+        # Weekends: always allow AMO (executes next trading day)
+        if weekday >= 5:
+            return True
+
+        # Weekdays: after 3:45 PM OR before 9:15 AM (covers full non-market window)
         ct = now_ist.time()
-        return ct >= self.AMO_START or ct <= self.AMO_END
+        return ct >= self.AMO_START or ct < self.MARKET_OPEN
 
     def market_status_message(self) -> str:
         now_ist = datetime.now(self.IST)
         weekday = now_ist.weekday()
         current_time = now_ist.time()
+        time_str = current_time.strftime('%I:%M %p')
 
         if weekday >= 5:
             day_name = "Saturday" if weekday == 5 else "Sunday"
             return (
                 f"Market is closed today ({day_name}). "
-                "NSE trades Monday–Friday, 9:15 AM – 3:30 PM IST."
+                "Intraday orders require market hours (Mon–Fri 9:15 AM – 3:30 PM IST). "
+                "Swing CNC orders can be placed as AMO (executes Monday morning)."
             )
         elif current_time < self.MARKET_OPEN:
             return (
-                f"Market has not opened yet. "
-                f"NSE opens at 9:15 AM IST (current time: {current_time.strftime('%I:%M %p')} IST)."
+                f"Market has not opened yet (current: {time_str} IST). "
+                f"NSE opens at 9:15 AM IST. "
+                "Swing CNC orders can be placed as AMO (executes at market open today)."
             )
         elif current_time > self.MARKET_CLOSE:
             return (
-                f"Market is closed for today. "
-                f"NSE closed at 3:30 PM IST (current time: {current_time.strftime('%I:%M %p')} IST). "
-                "Please try again tomorrow during market hours."
+                f"Market is closed for today (current: {time_str} IST). "
+                f"NSE closed at 3:30 PM IST. "
+                "Intraday orders must wait for tomorrow's market open. "
+                "Swing CNC orders can be placed as AMO."
             )
         return "Market is open."
 

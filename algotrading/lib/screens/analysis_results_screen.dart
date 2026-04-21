@@ -720,12 +720,14 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     return minuteOfDay >= 9 * 60 + 15 && minuteOfDay < 15 * 60 + 30;
   }
 
-  /// Returns true during Zerodha's AMO window: Mon–Fri 3:45 PM – 8:57 AM.
+  /// True when Zerodha's AMO window is open.
+  /// Weekends: always (executes next trading day).
+  /// Weekdays: after 3:45 PM or before 9:15 AM (full non-market window).
   bool _isAmoWindow() {
     final now = DateTime.now();
-    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) return false;
+    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) return true;
     final minuteOfDay = now.hour * 60 + now.minute;
-    return minuteOfDay >= 15 * 60 + 45 || minuteOfDay <= 8 * 60 + 57;
+    return minuteOfDay >= 15 * 60 + 45 || minuteOfDay < 9 * 60 + 15;
   }
 
   String _marketClosedReason() {
@@ -811,6 +813,26 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     );
   }
 
+  String _amoDialogBody() {
+    final now = DateTime.now();
+    final isWeekend =
+        now.weekday == DateTime.saturday || now.weekday == DateTime.sunday;
+    if (isWeekend) {
+      return 'Market is closed today (weekend). Your swing trade order will be '
+          'placed as an AMO (After Market Order) and will execute at NSE market '
+          'open on Monday (9:15 AM IST).';
+    }
+    final minuteOfDay = now.hour * 60 + now.minute;
+    if (minuteOfDay < 9 * 60 + 15) {
+      return 'Market has not opened yet. Your swing trade order will be placed '
+          'as an AMO (After Market Order) and will execute at market open today '
+          '(9:15 AM IST).';
+    }
+    return 'Market is currently closed. Your swing trade order will be placed '
+        'as an AMO (After Market Order) and will execute at NSE market open '
+        'tomorrow (9:15 AM IST).';
+  }
+
   Future<bool> _showAmoConfirmDialog(BuildContext context) async {
     return await showDialog<bool>(
           context: context,
@@ -837,10 +859,9 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Market is currently closed. Your swing trade order will be placed as an '
-                  'AMO (After Market Order) and will execute at NSE market open (9:15 AM IST).',
-                  style: TextStyle(fontSize: 14, height: 1.5),
+                Text(
+                  _amoDialogBody(),
+                  style: const TextStyle(fontSize: 14, height: 1.5),
                 ),
                 const SizedBox(height: 14),
                 Container(
