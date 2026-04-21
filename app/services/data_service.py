@@ -339,6 +339,8 @@ class DataService:
         for c in top_candidates:
             token = c["instrument_token"]
             sym = c["symbol"]
+            # Zerodha historical_data: max 3 req/sec — sleep between calls
+            await asyncio.sleep(0.38)
             try:
                 def _hist(tok, fd, td):
                     return kite_instance.historical_data(tok, fd, td, "day")

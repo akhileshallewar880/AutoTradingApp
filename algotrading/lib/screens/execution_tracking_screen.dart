@@ -64,7 +64,7 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
     final execStatus = analysisProvider.executionStatus;
     final overallStatus = execStatus?.overallStatus;
 
-    if (overallStatus == 'COMPLETED' || overallStatus == 'FAILED' || overallStatus == 'MARKET_CLOSED') {
+    if (overallStatus == 'COMPLETED' || overallStatus == 'FAILED' || overallStatus == 'MARKET_CLOSED' || overallStatus == 'AMO_PLACED') {
       _pollTimer?.cancel();
       _pulseController.stop();
     }
@@ -281,6 +281,7 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
     final isError = update.updateType == 'ERROR' ||
         update.updateType == 'FAILED';
     final isMarketClosed = update.updateType == 'MARKET_CLOSED';
+    final isAmo = update.updateType == 'AMO_PLACED';
     final isGtt = update.updateType == 'GTT_CREATED' ||
         update.updateType == 'GTT_PLACED';
     final isSquaredOff = update.updateType == 'SQUAREDOFF';
@@ -292,6 +293,9 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
     if (isSquareOffFailed || isGttFailed) {
       tileColor = Colors.red[900]!;
       icon = Icons.warning_amber_rounded;
+    } else if (isAmo) {
+      tileColor = Colors.indigo[700]!;
+      icon = Icons.schedule_rounded;
     } else if (isMarketClosed || isError) {
       tileColor = isMarketClosed ? Colors.orange[700]! : Colors.red[700]!;
       icon = isMarketClosed ? Icons.access_time_rounded : Icons.error_outline;

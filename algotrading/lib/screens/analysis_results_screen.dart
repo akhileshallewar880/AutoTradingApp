@@ -713,16 +713,19 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
   }
 
   /// Returns true if NSE is currently open (Mon–Fri, 9:15–15:30 IST).
-  /// Uses device local time — assumes the device clock is set correctly.
   bool _isMarketOpen() {
-    final now = DateTime.now(); // local device time (IST on user's phone)
-    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) {
-      return false;
-    }
+    final now = DateTime.now();
+    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) return false;
     final minuteOfDay = now.hour * 60 + now.minute;
-    const openMinute = 9 * 60 + 15; // 9:15 AM
-    const closeMinute = 15 * 60 + 30; // 3:30 PM
-    return minuteOfDay >= openMinute && minuteOfDay < closeMinute;
+    return minuteOfDay >= 9 * 60 + 15 && minuteOfDay < 15 * 60 + 30;
+  }
+
+  /// Returns true during Zerodha's AMO window: Mon–Fri 3:45 PM – 8:57 AM.
+  bool _isAmoWindow() {
+    final now = DateTime.now();
+    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) return false;
+    final minuteOfDay = now.hour * 60 + now.minute;
+    return minuteOfDay >= 15 * 60 + 45 || minuteOfDay <= 8 * 60 + 57;
   }
 
   String _marketClosedReason() {
@@ -808,24 +811,109 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     );
   }
 
+  Future<bool> _showAmoConfirmDialog(BuildContext context) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo[50],
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.schedule_rounded, color: Colors.indigo[700], size: 24),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text('Place After Market Order?',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Market is currently closed. Your swing trade order will be placed as an '
+                  'AMO (After Market Order) and will execute at NSE market open (9:15 AM IST).',
+                  style: TextStyle(fontSize: 14, height: 1.5),
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.amber[50],
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.amber[300]!),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Icon(Icons.warning_amber_rounded, size: 16, color: Colors.amber[800]),
+                        const SizedBox(width: 6),
+                        Text('After order fills at market open:',
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber[900])),
+                      ]),
+                      const SizedBox(height: 6),
+                      Text(
+                        '• Open Zerodha app and set Stop Loss + Target\n'
+                        '  via GTT or SL order to protect your position.',
+                        style: TextStyle(fontSize: 12, color: Colors.amber[900], height: 1.4),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.indigo[700],
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Place AMO'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   Future<void> _handleConfirm(
     BuildContext context,
     AnalysisResponseModel analysis,
   ) async {
     setState(() => _confirmError = null);
 
-    // ── Client-side market hours guard ───────────────────────────────────
-    // Check before making any network call — gives instant feedback.
+    final analysisProvider = context.read<AnalysisProvider>();
+    final isSwing = analysisProvider.holdDurationDays > 0;
+
     if (!_isMarketOpen()) {
-      if (context.mounted) {
-        await _showMarketClosedDialog(context, _marketClosedReason());
+      // Swing trades: allow AMO placement after market hours
+      if (isSwing && _isAmoWindow()) {
+        final proceed = await _showAmoConfirmDialog(context);
+        if (!proceed || !context.mounted) return;
+      } else {
+        // Intraday or outside AMO window — block
+        if (context.mounted) {
+          await _showMarketClosedDialog(context, _marketClosedReason());
+        }
+        return;
       }
-      return;
     }
-    // ────────────────────────────────────────────────────────────────────
 
     final authProvider = context.read<AuthProvider>();
-    final analysisProvider = context.read<AnalysisProvider>();
 
     try {
       await analysisProvider.confirmAnalysis(

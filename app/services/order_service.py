@@ -5,20 +5,32 @@ import pytz
 
 
 class MarketClosedException(Exception):
-    """Raised when an order is attempted outside NSE market hours."""
+    """Raised when an order is attempted outside NSE market hours (and AMO is unavailable)."""
     pass
+
+
+class AmoOrderPlaced(Exception):
+    """
+    Raised (as a signal, not an error) when an order is placed as AMO.
+    Caught by execution_agent to skip the fill-waiting loop.
+    """
+    def __init__(self, order_id: str, message: str):
+        super().__init__(message)
+        self.order_id = order_id
 
 
 class OrderService:
     """
     Service for placing orders via Zerodha.
 
-    Market hours: Mon–Fri, 09:15–15:30 IST
-    Raises MarketClosedException if called outside these hours.
+    Market hours:  Mon–Fri, 09:15–15:30 IST  → regular variety
+    AMO window:    Mon–Fri, 15:45–08:57 IST  → variety="amo" (CNC only)
     """
 
-    MARKET_OPEN = time(9, 15)
+    MARKET_OPEN  = time(9, 15)
     MARKET_CLOSE = time(15, 30)
+    AMO_START    = time(15, 45)   # AMO accepts orders from 3:45 PM
+    AMO_END      = time(8, 57)    # AMO closes at 8:57 AM next morning
     IST = pytz.timezone("Asia/Kolkata")
 
     def __init__(self):
@@ -30,6 +42,14 @@ class OrderService:
             return False
         current_time = now_ist.time()
         return self.MARKET_OPEN <= current_time <= self.MARKET_CLOSE
+
+    def is_amo_window(self) -> bool:
+        """True when Zerodha's AMO window is open (Mon–Fri, 3:45 PM – 8:57 AM)."""
+        now_ist = datetime.now(self.IST)
+        if now_ist.weekday() >= 5:
+            return False
+        ct = now_ist.time()
+        return ct >= self.AMO_START or ct <= self.AMO_END
 
     def market_status_message(self) -> str:
         now_ist = datetime.now(self.IST)
@@ -69,19 +89,14 @@ class OrderService:
         """
         Execute an entry order via Zerodha.
 
-        Args:
-            transaction_type: "BUY"  for long positions
-                              "SELL" for short sell positions (intraday only with MIS)
-            product:          "MIS"  for intraday (auto-squares off at 3:15 PM)
-                              "CNC"  for delivery / long-term
-            order_type:       "LIMIT" (default) places at exact entry_price for better fills.
-                              "MARKET" for immediate fills (used for squareoff exits).
+        During market hours: places a regular LIMIT/MARKET order.
+        After market hours (CNC only): places an AMO (After Market Order) that
+          executes at the next trading session's market open.  Raises AmoOrderPlaced
+          with the order_id so the caller can skip the fill-waiting loop.
 
         Raises:
-            MarketClosedException: If called outside NSE market hours.
-
-        Returns:
-            Order ID string on success.
+            MarketClosedException: market is closed AND AMO is not available.
+            AmoOrderPlaced:        CNC order accepted as AMO (not a real error).
         """
         try:
             action_label = "SHORT SELL" if transaction_type == "SELL" else "BUY"
@@ -91,6 +106,33 @@ class OrderService:
             )
 
             if not self.is_market_open():
+                # CNC swing orders → try AMO during the AMO window
+                if product == "CNC" and self.is_amo_window():
+                    order_id = await self.zs.place_order(
+                        symbol=symbol,
+                        transaction_type=transaction_type,
+                        quantity=quantity,
+                        order_type=order_type,
+                        price=price,
+                        product=product,
+                        exchange="NSE",
+                        validity="DAY",
+                        variety="amo",
+                    )
+                    logger.info(
+                        f"AMO placed: {symbol} {action_label} {quantity} @ ₹{price} "
+                        f"| Order ID: {order_id}"
+                    )
+                    raise AmoOrderPlaced(
+                        order_id=order_id,
+                        message=(
+                            f"After Market Order placed — {symbol} {action_label} "
+                            f"{quantity} shares @ ₹{price:.2f}. "
+                            f"Order ID: {order_id}. "
+                            f"Will execute at market open (9:15 AM IST next trading day)."
+                        ),
+                    )
+
                 msg = self.market_status_message()
                 logger.warning(f"Order rejected — market closed: {msg}")
                 raise MarketClosedException(msg)
@@ -111,7 +153,7 @@ class OrderService:
             )
             return order_id
 
-        except MarketClosedException:
+        except (MarketClosedException, AmoOrderPlaced):
             raise
         except Exception as e:
             logger.error(f"Error placing order for {symbol}: {e}")

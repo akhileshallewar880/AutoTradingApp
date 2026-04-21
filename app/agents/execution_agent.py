@@ -2,7 +2,7 @@ import uuid
 import asyncio
 from app.core.logging import logger
 from app.services.zerodha_service import zerodha_service
-from app.services.order_service import order_service, MarketClosedException
+from app.services.order_service import order_service, MarketClosedException, AmoOrderPlaced
 from app.models.analysis_models import ExecutionUpdate
 from typing import List, Dict, Callable, Tuple
 from datetime import datetime
@@ -83,16 +83,62 @@ class ExecutionAgent:
                 update_callback,
             )
 
-            entry_order_id = await self.os.execute_trade(
-                symbol=stock_symbol,
-                quantity=quantity,
-                price=entry_price,
-                stop_loss=stop_loss,
-                target=target,
-                product=product,
-                transaction_type=action,
-                order_type="LIMIT",
-            )
+            try:
+                entry_order_id = await self.os.execute_trade(
+                    symbol=stock_symbol,
+                    quantity=quantity,
+                    price=entry_price,
+                    stop_loss=stop_loss,
+                    target=target,
+                    product=product,
+                    transaction_type=action,
+                    order_type="LIMIT",
+                )
+            except AmoOrderPlaced as amo:
+                # AMO placed — skip fill-wait and GTT (GTT requires an open position)
+                entry_order_id = amo.order_id
+                execution_log["entry_order_id"] = entry_order_id
+                execution_log["status"] = "AMO_PLACED"
+                await self._send_update(
+                    analysis_id,
+                    stock_symbol,
+                    "AMO_PLACED",
+                    (
+                        f"After Market Order placed — {entry_label} {quantity} shares "
+                        f"@ ₹{entry_price:.2f} ({product}). Order ID: {entry_order_id}.\n"
+                        f"Order executes at market open (9:15 AM IST). "
+                        f"Once filled, open Zerodha app and set:\n"
+                        f"  • Stop Loss: ₹{stop_loss:.2f}\n"
+                        f"  • Target:    ₹{target:.2f}\n"
+                        f"(via GTT or SL order in Zerodha)"
+                    ),
+                    update_callback,
+                    order_id=entry_order_id,
+                )
+                # Persist as AMO_PENDING so trade expiry service can track it
+                if not is_intraday and hold_duration_days > 0:
+                    try:
+                        from app.storage.database import db
+                        await db.save_swing_position({
+                            "user_id":            str(user_id or ""),
+                            "analysis_id":        str(analysis_id),
+                            "stock_symbol":       stock_symbol,
+                            "action":             action,
+                            "quantity":           quantity,
+                            "entry_price":        float(entry_price),
+                            "stop_loss":          float(stop_loss),
+                            "target_price":       float(target),
+                            "fill_price":         0.0,
+                            "gtt_id":             None,
+                            "entry_order_id":     str(entry_order_id),
+                            "hold_duration_days": int(hold_duration_days),
+                            "api_key":            api_key,
+                            "access_token":       access_token,
+                            "status":             "AMO_PENDING",
+                        })
+                    except Exception as db_err:
+                        logger.warning(f"[ExecutionAgent] Could not save AMO position to DB: {db_err}")
+                return execution_log
 
             execution_log["entry_order_id"] = entry_order_id
 

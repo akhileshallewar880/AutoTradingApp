@@ -62,34 +62,48 @@ class AnalysisService:
 
         # ── Swing / Delivery pipeline ──────────────────────────────────────
         try:
-            # Build kite_instance for Zerodha-native data if credentials provided
-            kite_instance = None
-            if user_api_key and user_access_token:
-                from kiteconnect import KiteConnect
-                kite_instance = KiteConnect(api_key=user_api_key)
-                kite_instance.set_access_token(user_access_token)
-
+            # For swing, we do NOT use the Zerodha live-quote screener.
+            # Zerodha historical_data is rate-limited to 3 req/sec during market
+            # hours; sequential calls for 60+ stocks cause throttling errors.
+            # yfinance daily data is sufficient for multi-day swing analysis
+            # and handles concurrent calls without rate issues.
             screen_limit = min(limit * 3, 150)
             candidates = await self.ds.screen_top_movers(
                 limit=screen_limit,
                 sectors=sectors,
                 hold_duration_days=hold_duration_days,
-                kite_instance=kite_instance,
+                kite_instance=None,   # yfinance screener — no rate limits
             )
 
             if not candidates:
                 logger.warning("Screener returned no candidates, falling back to NIFTY 50")
                 candidates = await self.ds.screen_top_movers(
-                    limit=screen_limit, sectors=["NIFTY 50"], kite_instance=kite_instance,
+                    limit=screen_limit, sectors=["NIFTY 50"],
                 )
+
+            # For swing, always use yfinance for 60-day daily candles.
+            # Zerodha's historical_data API is rate-limited to 3 req/sec during
+            # market hours — fetching 60+ stocks sequentially triggers throttling
+            # and causes analysis failures. yfinance daily data is adequate for
+            # swing analysis and has no such rate limits.
+            now_ist = datetime.now(self.IST)
+            is_market_open = (
+                now_ist.weekday() < 5
+                and datetime.strptime("09:15", "%H:%M").time()
+                <= now_ist.time()
+                <= datetime.strptime("15:30", "%H:%M").time()
+            )
 
             enriched = []
             for c in candidates:
                 symbol = c["symbol"]
-                if kite_instance:
-                    df = await self.ds.get_candle_data_zerodha(kite_instance, symbol, "day", 60)
-                else:
-                    df = await self.ds.get_candle_data(symbol, "day", period="60d")
+                df = await self.ds.get_candle_data(symbol, "day", period="60d")
+
+                # During market hours, the last candle is the incomplete current
+                # session (partial volume, midday price). Drop it so indicators
+                # are calculated on fully closed candles only.
+                if is_market_open and not df.empty and len(df) > 10:
+                    df = df.iloc[:-1]
 
                 if df.empty or len(df) < 10:
                     logger.debug(f"Skipping {symbol}: insufficient candle data")

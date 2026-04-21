@@ -5,7 +5,7 @@ from app.models.analysis_models import (
 )
 from app.services.zerodha_service import zerodha_service
 from app.services.analysis_service import analysis_service
-from app.services.order_service import order_service, MarketClosedException
+from app.services.order_service import order_service, MarketClosedException, AmoOrderPlaced
 from app.services.nse_sector_service import nse_sector_service
 from app.agents.llm_agent import llm_agent
 from app.agents.execution_agent import execution_agent
@@ -407,10 +407,20 @@ async def confirm_analysis(
             _analyses[analysis_id]["status"] = "CANCELLED"
             return {"status": "cancelled", "message": "Analysis cancelled by user"}
 
+        hold_duration_days = analysis_data.get("hold_duration_days", 0)
+        is_swing = hold_duration_days > 0
+
         if not order_service.is_market_open():
-            market_msg = order_service.market_status_message()
-            logger.warning(f"Execution blocked — market closed: {market_msg}")
-            raise HTTPException(status_code=423, detail=market_msg)
+            # Swing CNC trades: allow AMO placement after market hours
+            if is_swing and order_service.is_amo_window():
+                logger.info(
+                    f"Market closed but AMO window is open — "
+                    f"swing trade (hold={hold_duration_days}d) will proceed as AMO"
+                )
+            else:
+                market_msg = order_service.market_status_message()
+                logger.warning(f"Execution blocked — market closed: {market_msg}")
+                raise HTTPException(status_code=423, detail=market_msg)
 
         _analyses[analysis_id]["status"] = "IN_PROGRESS"
 
