@@ -129,6 +129,24 @@ def _load_monthly_records(user_id: int, year: int, month: int) -> list:
         return []
 
 
+def _resolve_internal_user_id(zerodha_user_id: str) -> Optional[int]:
+    """Resolve Zerodha user_id string → internal vantrade_users.user_id integer."""
+    try:
+        from sqlmodel import Session, select
+        from app.core.database import engine
+        from app.models.db_models import User
+        if engine is None:
+            return None
+        with Session(engine) as session:
+            user = session.exec(
+                select(User).where(User.zerodha_user_id == zerodha_user_id)
+            ).first()
+            return user.user_id if user else None
+    except Exception as e:
+        logger.warning(f"[PERF] Could not resolve user_id for {zerodha_user_id}: {e}")
+        return None
+
+
 @router.get("/monthly-performance", response_model=MonthlyPerformanceResponse)
 async def get_monthly_performance(
     access_token: str = Query(...),
@@ -148,6 +166,12 @@ async def get_monthly_performance(
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
     month_label = now.strftime("%B %Y")  # e.g. "April 2026"
+
+    # Resolve internal integer user_id from the Zerodha user_id string
+    internal_user_id: Optional[int] = None
+    if user_id:
+        loop = asyncio.get_event_loop()
+        internal_user_id = await loop.run_in_executor(None, _resolve_internal_user_id, user_id)
 
     # ── Step 1: Fetch live data from Zerodha ──────────────────────────────────
     trades_raw: list = []
@@ -203,9 +227,9 @@ async def get_monthly_performance(
         today_trades = len(trades_raw)
 
         # Persist today's snapshot to DB (best-effort)
-        if user_id:
+        if internal_user_id:
             _upsert_daily_record(
-                user_id=int(user_id),
+                user_id=internal_user_id,
                 trade_date=today_str,
                 realized_pnl=today_realized,
                 gross_profit=today_gross_profit,
@@ -227,8 +251,8 @@ async def get_monthly_performance(
     pnl_list_for_drawdown: list = []
     has_history = False
 
-    if user_id:
-        records = _load_monthly_records(int(user_id), now.year, now.month)
+    if internal_user_id:
+        records = _load_monthly_records(internal_user_id, now.year, now.month)
         for r in records:
             month_realized += float(r.realized_pnl)
             month_gross_profit += float(r.gross_profit)
@@ -245,7 +269,7 @@ async def get_monthly_performance(
         )
 
     # ── Step 4: If no DB history and Zerodha failed, error out ────────────────
-    if not has_history and not zerodha_ok:
+    if not has_history and not zerodha_ok and not internal_user_id:
         raise HTTPException(
             status_code=500,
             detail="Failed to fetch performance data. Please try again."
@@ -268,7 +292,7 @@ async def get_monthly_performance(
     # ── Step 5b: Add closed swing positions from DB for current month ─────────
     # Zerodha tradebook misses swing CNC trades from previous days.
     # Count EXPIRED swing positions closed this month as additional trades.
-    if user_id:
+    if internal_user_id:
         try:
             from app.storage.database import db
             swing_closed = await db.get_closed_swing_positions_for_month(
