@@ -333,7 +333,7 @@ class Database:
             SELECT stock_symbol, action, stop_loss, target_price, gtt_id
               FROM vantrade_swing_positions
              WHERE api_key = :api_key
-               AND status  = 'OPEN'
+               AND status  IN ('OPEN', 'AMO_PENDING')
         """)
         with self._engine.connect() as conn:
             rows = conn.execute(sql, {"api_key": api_key}).fetchall()

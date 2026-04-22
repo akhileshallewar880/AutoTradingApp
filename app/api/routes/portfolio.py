@@ -75,7 +75,8 @@ def _extract_gtt_levels(gtt: dict) -> tuple[float, float] | None:
 async def _build_gtt_map_from_db(api_key: str) -> dict:
     """
     Fall back to our DB (vantrade_swing_positions) to get GTT levels.
-    Returns symbol → {stop_loss, target_price, gtt_id} for OPEN positions.
+    Includes OPEN positions (GTT placed) and AMO_PENDING (GTT not placed yet
+    but stop_loss/target are known from analysis).
     """
     try:
         from app.storage.database import db
@@ -171,27 +172,30 @@ async def get_holdings(
         total_pnl = 0.0
 
         for h in (raw or []):
-            qty = int(h.get("quantity", 0) or 0)
+            qty    = int(h.get("quantity", 0) or 0)
             t1_qty = int(h.get("t1_quantity", 0) or 0)
+            # Use total qty (settled + T+1) for value calculations so T+1-only
+            # holdings don't show ₹0 for Invested/Current.
+            total_qty = qty + t1_qty
             avg = float(h.get("average_price", 0) or 0)
             ltp = float(h.get("last_price", 0) or 0)
             pnl = float(h.get("pnl", 0) or 0)
             day_chg = float(h.get("day_change", 0) or 0)
             day_chg_pct = float(h.get("day_change_percentage", 0) or 0)
-            invested = avg * qty
-            current = ltp * qty
-            pnl_pct = ((ltp - avg) / avg * 100) if avg > 0 else 0.0
+            invested = avg * total_qty
+            current  = ltp * total_qty
+            pnl_pct  = ((ltp - avg) / avg * 100) if avg > 0 else 0.0
 
             total_invested += invested
-            total_current += current
-            total_pnl += pnl
+            total_current  += current
+            total_pnl      += pnl
 
             symbol = h.get("tradingsymbol", "")
             entry: dict = {
                 "symbol": symbol,
                 "exchange": h.get("exchange", "NSE"),
                 "isin": h.get("isin", ""),
-                "quantity": qty,
+                "quantity": total_qty,   # show effective qty (settled + T+1)
                 "t1_quantity": t1_qty,
                 "average_price": round(avg, 2),
                 "last_price": round(ltp, 2),
@@ -213,11 +217,10 @@ async def get_holdings(
             }
 
             gtt = gtt_map.get(symbol)
-            if gtt and avg > 0 and qty > 0:
+            if gtt and avg > 0 and total_qty > 0:
                 levels = _extract_gtt_levels(gtt)
                 if levels:
                     sl_price, target_price = levels
-                    total_qty = qty + t1_qty
                     max_profit = round((target_price - avg) * total_qty, 2)
                     max_loss = round((sl_price - avg) * total_qty, 2)
                     entry.update({
