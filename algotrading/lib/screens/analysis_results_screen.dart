@@ -352,6 +352,23 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     final holdDays = provider.holdDurationDays;
     final holdLabel = _holdLabel(holdDays);
 
+    // Overall confidence = average of all stock confidence scores
+    final double overallConfidence = analysis.stocks.isEmpty
+        ? 0.0
+        : analysis.stocks.map((s) => s.confidenceScore).reduce((a, b) => a + b) /
+            analysis.stocks.length;
+    final int confPct = (overallConfidence * 100).round();
+    final Color confColor = confPct >= 80
+        ? Colors.green[700]!
+        : confPct >= 70
+            ? Colors.orange[700]!
+            : Colors.red[600]!;
+    final String confLabel = confPct >= 80
+        ? 'High'
+        : confPct >= 70
+            ? 'Moderate'
+            : 'Low';
+
     return Card(
       margin: const EdgeInsets.all(16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -381,11 +398,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.timer_outlined,
-                        size: 13,
-                        color: Colors.blue[700],
-                      ),
+                      Icon(Icons.timer_outlined, size: 13, color: Colors.blue[700]),
                       const SizedBox(width: 4),
                       Text(
                         holdLabel,
@@ -399,6 +412,56 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 14),
+            // ── Overall Confidence Banner ─────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: confColor.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: confColor.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.verified_outlined, color: confColor, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Overall Confidence — $confLabel',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: confColor,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: overallConfidence,
+                            backgroundColor: confColor.withValues(alpha: 0.15),
+                            color: confColor,
+                            minHeight: 6,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    '$confPct%',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: confColor,
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 16),
             // Available Balance
