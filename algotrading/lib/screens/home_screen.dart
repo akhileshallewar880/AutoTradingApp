@@ -26,11 +26,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBindingObserver {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
 
-  Map<String, dynamic>? _perfData;
-  bool _perfLoading = false;
-  String? _perfError;
-  String _perfPeriod = 'today';   // today | monthly | yearly
-
   // ── Live index prices (KiteTicker snapshot) ────────────────────────────
   Map<String, dynamic> _indexPrices = {};
   Timer? _indexRefreshTimer;
@@ -100,7 +95,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       dash.fetchDashboard(auth.user!.accessToken, apiKey: auth.user!.apiKey)
           .then((_) => _checkSessionExpired());
       dash.startAutoRefresh(auth.user!.accessToken, apiKey: auth.user!.apiKey);
-      _fetchPerformance();
       _fetchIndexPrices();
       // Refresh index prices every 30 seconds
       _indexRefreshTimer = Timer.periodic(
@@ -131,44 +125,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       }
     } catch (_) {
       // Silent fail — index strip is best-effort
-    }
-  }
-
-  Future<void> _fetchPerformance({String? period}) async {
-    final auth = context.read<AuthProvider>();
-    if (auth.user == null || auth.isDemoMode) return;
-    final selectedPeriod = period ?? _perfPeriod;
-    if (mounted) setState(() { _perfLoading = true; _perfError = null; });
-    try {
-      final now = DateTime.now();
-      final uri = Uri.parse(ApiConfig.monthlyPerformanceUrl).replace(
-        queryParameters: {
-          'access_token': auth.user!.accessToken,
-          'api_key': auth.user!.apiKey,
-          'period': selectedPeriod,
-          'month': '${now.month}',
-          'year': '${now.year}',
-        },
-      );
-      final response = await http.get(uri).timeout(const Duration(seconds: 30));
-      if (!mounted) return;
-      if (response.statusCode == 200) {
-        setState(() => _perfData = jsonDecode(response.body));
-      } else {
-        // Surface the actual error from the server
-        String msg;
-        try {
-          final body = jsonDecode(response.body);
-          msg = body['detail'] ?? 'Server error ${response.statusCode}';
-        } catch (_) {
-          msg = 'Server error ${response.statusCode}';
-        }
-        setState(() => _perfError = msg);
-      }
-    } on Exception catch (e) {
-      if (mounted) setState(() => _perfError = e.toString().replaceFirst('Exception: ', ''));
-    } finally {
-      if (mounted) setState(() => _perfLoading = false);
     }
   }
 
@@ -208,13 +164,10 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   Future<void> _refresh() async {
     final auth = context.read<AuthProvider>();
     if (auth.user != null) {
-      await Future.wait([
-        context.read<DashboardProvider>().fetchDashboard(
-          auth.user!.accessToken,
-          apiKey: auth.user!.apiKey,
-        ),
-        _fetchPerformance(),
-      ]);
+      await context.read<DashboardProvider>().fetchDashboard(
+        auth.user!.accessToken,
+        apiKey: auth.user!.apiKey,
+      );
       _checkSessionExpired();
     }
   }
@@ -405,8 +358,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                           )
                         else
                           const SizedBox.shrink(),
-                        const SizedBox(height: 12),
-                        _buildMonthCard(dash.dashboard, _perfData, _perfLoading, perfError: _perfError, period: _perfPeriod),
                         const SizedBox(height: 12),
                         if ((dash.dashboard?.positions.isNotEmpty ??
                             false)) ...[
@@ -711,318 +662,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       ),
     );
   }
-
-  // ── Month P&L ────────────────────────────────────────────────────────────
-  Widget _buildMonthCard(DashboardModel? data, Map<String, dynamic>? perf, bool perfLoading, {String? perfError, String period = 'today'}) {
-    final hasPerfData = perf != null;
-    final monthPnl = hasPerfData
-        ? ((perf['total_pnl'] as num?) ?? 0).toDouble()
-        : (data?.monthPnl ?? 0.0);
-    final trades = hasPerfData
-        ? ((perf['total_trades'] as num?) ?? 0).toInt()
-        : (data?.monthTrades ?? 0);
-    final winRate = hasPerfData
-        ? ((perf['win_rate'] as num?) ?? 0).toDouble()
-        : (data?.monthWinRate ?? 0.0);
-    final wins = hasPerfData
-        ? ((perf['winning_positions'] as num?) ?? 0).toInt()
-        : (data?.monthWins ?? 0);
-    final losses = hasPerfData
-        ? ((perf['losing_positions'] as num?) ?? 0).toInt()
-        : (data?.monthLosses ?? 0);
-    final isPositive = monthPnl >= 0;
-    final monthLabel = hasPerfData
-        ? (perf['month'] as String? ?? DateFormat('MMMM yyyy').format(DateTime.now()))
-        : DateFormat('MMMM yyyy').format(DateTime.now());
-
-    final grossProfit = hasPerfData ? ((perf['gross_profit'] as num?) ?? 0).toDouble() : null;
-    final grossLoss   = hasPerfData ? ((perf['gross_loss']   as num?) ?? 0).toDouble() : null;
-    final charges     = hasPerfData ? ((perf['total_charges'] as num?) ?? 0).toDouble() : null;
-    final netPnl      = hasPerfData ? ((perf['net_pnl']      as num?) ?? 0).toDouble() : null;
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── Header + period toggle ────────────────────────────────────
-            Row(
-              children: [
-                Icon(Icons.calendar_month, color: Colors.blue[700], size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '$monthLabel Performance',
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            _buildPeriodToggle(period),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildStatBox(
-                    label: period == 'yearly' ? 'Year P&L' : period == 'today' ? 'Today P&L' : 'Month P&L',
-                    value: data == null
-                        ? '—'
-                        : '${isPositive ? '+' : ''}${_currency.format(monthPnl)}',
-                    color: isPositive ? Colors.green[700]! : Colors.red[600]!,
-                    icon: isPositive
-                        ? Icons.arrow_upward
-                        : Icons.arrow_downward,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _buildStatBox(
-                    label: 'Trades',
-                    value: data == null ? '—' : '$trades',
-                    color: Colors.blue[700]!,
-                    icon: Icons.swap_horiz,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _buildStatBox(
-                    label: 'Win Rate',
-                    value: data == null
-                        ? '—'
-                        : '${winRate.toStringAsFixed(1)}%',
-                    color: winRate >= 50
-                        ? Colors.green[700]!
-                        : Colors.orange[700]!,
-                    icon: Icons.emoji_events_outlined,
-                  ),
-                ),
-              ],
-            ),
-            if (data != null && trades > 0) ...[
-              const SizedBox(height: 12),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: trades > 0 ? wins / trades : 0,
-                  backgroundColor: Colors.red[100],
-                  color: Colors.green[600],
-                  minHeight: 6,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '$wins wins',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.green[700],
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Text(
-                    '$losses losses',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.red[600],
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-
-            // ── Profit / Loss / Charges from Zerodha API ─────────────────
-            const SizedBox(height: 14),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            if (perfLoading)
-              const Center(
-                child: SizedBox(
-                  width: 16, height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              )
-            else if (perfError != null)
-              Row(
-                children: [
-                  Icon(Icons.error_outline, size: 14, color: Colors.red[400]),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      perfError,
-                      style: TextStyle(fontSize: 11, color: Colors.red[600]),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: _fetchPerformance,
-                    icon: const Icon(Icons.refresh, size: 14),
-                    label: const Text('Retry', style: TextStyle(fontSize: 12)),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.blue[700],
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-                ],
-              )
-            else ...[
-              Row(
-                children: [
-                  _buildPerfTile('Profit', grossProfit, Colors.green[700]!),
-                  const SizedBox(width: 8),
-                  _buildPerfTile('Loss', grossLoss, Colors.red[600]!, isLoss: true),
-                  const SizedBox(width: 8),
-                  _buildPerfTile('Charges', charges, Colors.orange[700]!, isLoss: true),
-                ],
-              ),
-              if (netPnl != null) ...[
-                const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Net P&L (after charges)',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                    Text(
-                      '${netPnl >= 0 ? '+' : ''}${_currency.format(netPnl)}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: netPnl >= 0 ? Colors.green[700] : Colors.red[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPerfTile(String label, double? value, Color color, {bool isLoss = false}) {
-    final display = value == null
-        ? '—'
-        : '${isLoss ? '' : '+'}${_currency.format(value)}';
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.2)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[600])),
-            const SizedBox(height: 3),
-            Text(
-              display,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPeriodToggle(String currentPeriod) {
-    const periods = [
-      ('today',   'Today'),
-      ('monthly', 'Monthly'),
-      ('yearly',  'Yearly'),
-    ];
-    return Row(
-      children: periods.map((p) {
-        final (value, label) = p;
-        final selected = currentPeriod == value;
-        return Padding(
-          padding: const EdgeInsets.only(right: 6),
-          child: GestureDetector(
-            onTap: () {
-              if (currentPeriod == value) return;
-              setState(() {
-                _perfPeriod = value;
-                _perfData = null;
-              });
-              _fetchPerformance(period: value);
-            },
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              decoration: BoxDecoration(
-                color: selected ? Colors.blue[700] : Colors.grey[100],
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: selected ? Colors.blue[700]! : Colors.grey[300]!,
-                ),
-              ),
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: selected ? Colors.white : Colors.grey[700],
-                ),
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildStatBox({
-    required String label,
-    required String value,
-    required Color color,
-    required IconData icon,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 13, color: color),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   // ── Positions ────────────────────────────────────────────────────────────
   Widget _buildPositionsList(List<PositionModel> positions) {
     return Card(
