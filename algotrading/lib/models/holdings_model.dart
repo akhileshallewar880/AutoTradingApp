@@ -15,6 +15,14 @@ class Holding {
   final double currentValue;
   final String product;
 
+  // GTT-based risk/reward (null when no active GTT)
+  final double? stopLoss;
+  final double? target;
+  final double? maxProfit;
+  final double? maxLoss;
+  final bool hasGtt;
+  final String? gttId;
+
   Holding({
     required this.symbol,
     required this.exchange,
@@ -31,6 +39,12 @@ class Holding {
     required this.investedValue,
     required this.currentValue,
     required this.product,
+    this.stopLoss,
+    this.target,
+    this.maxProfit,
+    this.maxLoss,
+    this.hasGtt = false,
+    this.gttId,
   });
 
   factory Holding.fromJson(Map<String, dynamic> json) {
@@ -50,6 +64,12 @@ class Holding {
       investedValue: (json['invested_value'] ?? 0).toDouble(),
       currentValue: (json['current_value'] ?? 0).toDouble(),
       product: json['product'] ?? 'CNC',
+      stopLoss: json['stop_loss'] != null ? (json['stop_loss'] as num).toDouble() : null,
+      target: json['target'] != null ? (json['target'] as num).toDouble() : null,
+      maxProfit: json['max_profit'] != null ? (json['max_profit'] as num).toDouble() : null,
+      maxLoss: json['max_loss'] != null ? (json['max_loss'] as num).toDouble() : null,
+      hasGtt: json['has_gtt'] ?? false,
+      gttId: json['gtt_id']?.toString(),
     );
   }
 }

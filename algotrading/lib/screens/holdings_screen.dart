@@ -91,6 +91,9 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           closePrice: 2860.0, pnl: 1255.0, pnlPct: 4.56,
           dayChange: 15.5, dayChangePct: 0.54,
           investedValue: 27500.0, currentValue: 28755.0, product: 'CNC',
+          stopLoss: 2600.0, target: 3050.0,
+          maxProfit: 3000.0, maxLoss: -1500.0,
+          hasGtt: true, gttId: 'demo-1',
         ),
         Holding(
           symbol: 'TCS', exchange: 'NSE', isin: 'INE467B01029',
@@ -98,6 +101,9 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           closePrice: 4350.0, pnl: 1448.75, pnlPct: 7.07,
           dayChange: 39.75, dayChangePct: 0.91,
           investedValue: 20500.0, currentValue: 21948.75, product: 'CNC',
+          stopLoss: 3900.0, target: 4600.0,
+          maxProfit: 2500.0, maxLoss: -1000.0,
+          hasGtt: true, gttId: 'demo-2',
         ),
         Holding(
           symbol: 'INFY', exchange: 'NSE', isin: 'INE009A01021',
@@ -105,6 +111,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           closePrice: 1875.0, pnl: 1061.25, pnlPct: 3.88,
           dayChange: 15.75, dayChangePct: 0.84,
           investedValue: 27300.0, currentValue: 28361.25, product: 'CNC',
+          // No GTT set — shows "No active GTT" warning
         ),
       ];
 
@@ -337,6 +344,24 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               ),
             ),
 
+            // ── GTT Risk/Reward ─────────────────────────────────────────
+            if (h.hasGtt && h.maxProfit != null && h.maxLoss != null) ...[
+              const SizedBox(height: 10),
+              _buildGttRiskReward(h),
+            ] else ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(Icons.shield_outlined, size: 13, color: Colors.grey[400]),
+                  const SizedBox(width: 4),
+                  Text(
+                    'No active GTT — SL/Target not set',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                  ),
+                ],
+              ),
+            ],
+
             // ── T+1 badge ───────────────────────────────────────────────
             if (h.t1Quantity > 0) ...[
               const SizedBox(height: 8),
@@ -355,6 +380,119 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildGttRiskReward(Holding h) {
+    final profit = h.maxProfit!;
+    final loss = h.maxLoss!;
+    final rr = loss != 0 ? (profit / loss.abs()).abs() : 0.0;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.indigo[50],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.indigo[100]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shield_outlined, size: 13, color: Colors.indigo[400]),
+              const SizedBox(width: 4),
+              Text(
+                'GTT Active',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.indigo[600]),
+              ),
+              const Spacer(),
+              Text(
+                'R:R  ${rr.toStringAsFixed(1)}x',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.indigo[700]),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              // Stop Loss
+              Expanded(
+                child: _gttLevelTile(
+                  label: 'Stop Loss',
+                  price: h.stopLoss!,
+                  delta: loss,
+                  color: Colors.red[600]!,
+                  icon: Icons.arrow_downward_rounded,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Target
+              Expanded(
+                child: _gttLevelTile(
+                  label: 'Target',
+                  price: h.target!,
+                  delta: profit,
+                  color: Colors.green[700]!,
+                  icon: Icons.arrow_upward_rounded,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _gttLevelTile({
+    required String label,
+    required double price,
+    required double delta,
+    required Color color,
+    required IconData icon,
+  }) {
+    final sign = delta >= 0 ? '+' : '';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 11, color: color),
+              const SizedBox(width: 3),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: color,
+                      fontWeight: FontWeight.w600)),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            _currency.format(price),
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: color),
+          ),
+          Text(
+            '$sign${_currency.format(delta)}',
+            style: TextStyle(fontSize: 11, color: color),
+          ),
+        ],
       ),
     );
   }

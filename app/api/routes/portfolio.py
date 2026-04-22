@@ -39,14 +39,48 @@ router = APIRouter()
 
 # ── GET /portfolio/holdings ───────────────────────────────────────────────────
 
+def _extract_gtt_levels(gtt: dict) -> tuple[float, float] | None:
+    """
+    Extract (stop_loss_price, target_price) from a Zerodha GTT dict.
+
+    Two-leg GTT for a long (BUY) position:
+      orders[0] = SELL at stop_loss  (lower price)
+      orders[1] = SELL at target     (higher price)
+    Two-leg GTT for a short (SELL) position:
+      orders[0] = BUY  at target     (lower price)
+      orders[1] = BUY  at stop_loss  (higher price)
+
+    Returns (stop_loss_price, target_price) regardless of position direction.
+    Returns None when the GTT has fewer than 2 legs or missing prices.
+    """
+    orders = gtt.get("orders") or []
+    if len(orders) < 2:
+        return None
+    try:
+        p0 = float(orders[0].get("price") or 0)
+        p1 = float(orders[1].get("price") or 0)
+        if p0 <= 0 or p1 <= 0:
+            return None
+        txn = str(orders[0].get("transaction_type", "")).upper()
+        if txn == "SELL":
+            # Long position: lower = SL, higher = target
+            return (min(p0, p1), max(p0, p1))
+        else:
+            # Short position: lower = target (profit), higher = SL (loss cap)
+            return (max(p0, p1), min(p0, p1))
+    except (TypeError, ValueError):
+        return None
+
+
 @router.get("/holdings")
 async def get_holdings(
     api_key: str = Query(...),
     access_token: str = Query(...),
 ):
     """
-    Returns user's long-term CNC holdings.
-    Each holding: symbol, quantity, avg_price, last_price, pnl, day_change, isin.
+    Returns user's long-term CNC holdings with GTT-based max profit/loss.
+    Each holding: symbol, quantity, avg_price, last_price, pnl, day_change, isin,
+                  stop_loss, target, max_profit, max_loss (when an active GTT exists).
     Paid Kite Connect API.
     """
     try:
@@ -55,7 +89,30 @@ async def get_holdings(
         kite.set_access_token(access_token)
 
         loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(None, kite.holdings)
+
+        # Fetch holdings and active GTTs in parallel
+        raw, raw_gtts = await asyncio.gather(
+            loop.run_in_executor(None, kite.holdings),
+            loop.run_in_executor(None, kite.get_gtts),
+            return_exceptions=True,
+        )
+
+        if isinstance(raw, Exception):
+            raise raw
+
+        # Build symbol → GTT map (active two-leg GTTs only)
+        gtt_map: dict[str, dict] = {}
+        if isinstance(raw_gtts, list):
+            for g in raw_gtts:
+                status = str(g.get("status", "")).lower()
+                if status != "active":
+                    continue
+                orders = g.get("orders") or []
+                if len(orders) < 2:
+                    continue
+                symbol = (g.get("condition") or {}).get("tradingsymbol", "")
+                if symbol:
+                    gtt_map[symbol] = g
 
         holdings = []
         total_invested = 0.0
@@ -78,8 +135,9 @@ async def get_holdings(
             total_current += current
             total_pnl += pnl
 
-            holdings.append({
-                "symbol": h.get("tradingsymbol", ""),
+            symbol = h.get("tradingsymbol", "")
+            entry: dict = {
+                "symbol": symbol,
                 "exchange": h.get("exchange", "NSE"),
                 "isin": h.get("isin", ""),
                 "quantity": qty,
@@ -94,7 +152,33 @@ async def get_holdings(
                 "invested_value": round(invested, 2),
                 "current_value": round(current, 2),
                 "product": h.get("product", "CNC"),
-            })
+                # GTT fields — populated below if an active GTT exists
+                "stop_loss": None,
+                "target": None,
+                "max_profit": None,
+                "max_loss": None,
+                "has_gtt": False,
+                "gtt_id": None,
+            }
+
+            gtt = gtt_map.get(symbol)
+            if gtt and avg > 0 and qty > 0:
+                levels = _extract_gtt_levels(gtt)
+                if levels:
+                    sl_price, target_price = levels
+                    total_qty = qty + t1_qty
+                    max_profit = round((target_price - avg) * total_qty, 2)
+                    max_loss = round((sl_price - avg) * total_qty, 2)
+                    entry.update({
+                        "stop_loss": round(sl_price, 2),
+                        "target": round(target_price, 2),
+                        "max_profit": max_profit,
+                        "max_loss": max_loss,
+                        "has_gtt": True,
+                        "gtt_id": str(gtt.get("id", "")),
+                    })
+
+            holdings.append(entry)
 
         # Sort by absolute P&L descending
         holdings.sort(key=lambda x: abs(x["pnl"]), reverse=True)
