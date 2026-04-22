@@ -72,6 +72,32 @@ def _extract_gtt_levels(gtt: dict) -> tuple[float, float] | None:
         return None
 
 
+async def _build_gtt_map_from_db(api_key: str) -> dict:
+    """
+    Fall back to our DB (vantrade_swing_positions) to get GTT levels.
+    Returns symbol → {stop_loss, target_price, gtt_id} for OPEN positions.
+    """
+    try:
+        from app.storage.database import db
+        positions = await db.get_open_swing_positions_by_api_key(api_key)
+        result = {}
+        for pos in positions:
+            sym = pos.get("stock_symbol", "")
+            sl  = pos.get("stop_loss")
+            tgt = pos.get("target_price")
+            if sym and sl and tgt:
+                result[sym] = {
+                    "stop_loss": float(sl),
+                    "target_price": float(tgt),
+                    "gtt_id": str(pos.get("gtt_id") or ""),
+                    "action": pos.get("action", "BUY"),
+                }
+        return result
+    except Exception as e:
+        logger.warning(f"[Holdings] DB GTT fallback failed: {e}")
+        return {}
+
+
 @router.get("/holdings")
 async def get_holdings(
     api_key: str = Query(...),
@@ -100,12 +126,15 @@ async def get_holdings(
         if isinstance(raw, Exception):
             raise raw
 
-        # Build symbol → GTT map (active two-leg GTTs only)
+        # Build symbol → GTT map from Zerodha API (active/triggered two-leg GTTs)
         gtt_map: dict[str, dict] = {}
-        if isinstance(raw_gtts, list):
+        if isinstance(raw_gtts, Exception):
+            logger.warning(f"[Holdings] Zerodha GTT fetch failed: {raw_gtts} — using DB fallback")
+        elif isinstance(raw_gtts, list):
+            logger.info(f"[Holdings] Zerodha returned {len(raw_gtts)} GTTs")
             for g in raw_gtts:
                 status = str(g.get("status", "")).lower()
-                if status != "active":
+                if status not in ("active", "triggered"):
                     continue
                 orders = g.get("orders") or []
                 if len(orders) < 2:
@@ -113,6 +142,28 @@ async def get_holdings(
                 symbol = (g.get("condition") or {}).get("tradingsymbol", "")
                 if symbol:
                     gtt_map[symbol] = g
+
+        # If Zerodha returned nothing, fall back to our DB swing positions
+        if not gtt_map:
+            logger.info("[Holdings] No GTTs from Zerodha — trying DB fallback")
+            db_gtts = await _build_gtt_map_from_db(api_key)
+            # Convert DB format into the same shape _extract_gtt_levels expects
+            for sym, d in db_gtts.items():
+                sl, tgt = d["stop_loss"], d["target_price"]
+                is_short = d["action"] == "SELL"
+                txn = "BUY" if is_short else "SELL"
+                gtt_map[sym] = {
+                    "_db_source": True,
+                    "id": d["gtt_id"],
+                    "status": "active",
+                    "condition": {"tradingsymbol": sym},
+                    "orders": [
+                        {"transaction_type": txn, "price": sl if not is_short else tgt},
+                        {"transaction_type": txn, "price": tgt if not is_short else sl},
+                    ],
+                }
+            if gtt_map:
+                logger.info(f"[Holdings] DB fallback found {len(gtt_map)} GTT position(s)")
 
         holdings = []
         total_invested = 0.0

@@ -327,6 +327,33 @@ class Database:
         except Exception as e:
             logger.error(f"[DB] mark_swing_position_error failed: {e}")
 
+    def _sync_get_open_swing_positions_by_api_key(self, api_key: str) -> list:
+        from sqlalchemy import text
+        sql = text("""
+            SELECT stock_symbol, action, stop_loss, target_price, gtt_id
+              FROM vantrade_swing_positions
+             WHERE api_key = :api_key
+               AND status  = 'OPEN'
+        """)
+        with self._engine.connect() as conn:
+            rows = conn.execute(sql, {"api_key": api_key}).fetchall()
+        keys = ["stock_symbol", "action", "stop_loss", "target_price", "gtt_id"]
+        return [dict(zip(keys, r)) for r in rows]
+
+    async def get_open_swing_positions_by_api_key(self, api_key: str) -> list:
+        """Return OPEN swing positions for a given api_key (for GTT fallback in holdings)."""
+        self._ensure_engine()
+        if not self._ready:
+            return []
+        try:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None, self._sync_get_open_swing_positions_by_api_key, api_key
+            )
+        except Exception as e:
+            logger.error(f"[DB] get_open_swing_positions_by_api_key failed: {e}")
+            return []
+
     def _sync_get_amo_pending_positions(self) -> list:
         from sqlalchemy import text
         sql = text("""

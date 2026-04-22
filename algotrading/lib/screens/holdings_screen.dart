@@ -121,6 +121,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
         totalPnl: 3765.0,
         overallPnlPct: 5.0,
       );
+  // Demo GTT totals: RELIANCE profit=3000 loss=-1500, TCS profit=2500 loss=-1000
 
   @override
   Widget build(BuildContext context) {
@@ -174,6 +175,12 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     final s = _summary!;
     final isProfit = s.totalPnl >= 0;
 
+    // Aggregate expected P&L from all holdings that have an active GTT
+    final gttHoldings = _holdings.where((h) => h.hasGtt && h.maxProfit != null && h.maxLoss != null).toList();
+    final totalExpectedProfit = gttHoldings.fold(0.0, (sum, h) => sum + h.maxProfit!);
+    final totalExpectedLoss   = gttHoldings.fold(0.0, (sum, h) => sum + h.maxLoss!);
+    final gttCount = gttHoldings.length;
+
     return Container(
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(20),
@@ -215,8 +222,70 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               ),
             ],
           ),
+          if (gttCount > 0) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.shield_outlined, size: 12, color: Colors.white70),
+                      const SizedBox(width: 5),
+                      Text(
+                        'GTT Protection ($gttCount of ${_holdings.length} holdings)',
+                        style: const TextStyle(color: Colors.white70, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _gttSummaryTile(
+                          label: 'Expected Profit',
+                          value: '+${_currency.format(totalExpectedProfit)}',
+                          color: Colors.greenAccent[100]!,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _gttSummaryTile(
+                          label: 'Expected Loss',
+                          value: _currency.format(totalExpectedLoss),
+                          color: Colors.red[200]!,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _gttSummaryTile({
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: color.withValues(alpha: 0.85), fontSize: 10)),
+        const SizedBox(height: 2),
+        Text(value,
+            style: TextStyle(
+                color: color, fontSize: 13, fontWeight: FontWeight.bold)),
+      ],
     );
   }
 
@@ -344,23 +413,12 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               ),
             ),
 
-            // ── GTT Risk/Reward ─────────────────────────────────────────
-            if (h.hasGtt && h.maxProfit != null && h.maxLoss != null) ...[
-              const SizedBox(height: 10),
-              _buildGttRiskReward(h),
-            ] else ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(Icons.shield_outlined, size: 13, color: Colors.grey[400]),
-                  const SizedBox(width: 4),
-                  Text(
-                    'No active GTT — SL/Target not set',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                  ),
-                ],
-              ),
-            ],
+            // ── Expected Profit / Loss (from active GTT) ────────────────
+            const SizedBox(height: 10),
+            if (h.hasGtt && h.maxProfit != null && h.maxLoss != null)
+              _buildExpectedPnl(h)
+            else
+              _buildNoGttHint(),
 
             // ── T+1 badge ───────────────────────────────────────────────
             if (h.t1Quantity > 0) ...[
@@ -384,95 +442,56 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     );
   }
 
-  Widget _buildGttRiskReward(Holding h) {
+  Widget _buildExpectedPnl(Holding h) {
     final profit = h.maxProfit!;
     final loss = h.maxLoss!;
-    final rr = loss != 0 ? (profit / loss.abs()).abs() : 0.0;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.indigo[50],
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.indigo[100]!),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.shield_outlined, size: 13, color: Colors.indigo[400]),
-              const SizedBox(width: 4),
-              Text(
-                'GTT Active',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.indigo[600]),
-              ),
-              const Spacer(),
-              Text(
-                'R:R  ${rr.toStringAsFixed(1)}x',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.indigo[700]),
-              ),
-            ],
+    return Row(
+      children: [
+        Expanded(
+          child: _pnlTile(
+            label: 'Expected Profit',
+            amount: profit,
+            price: h.target!,
+            color: Colors.green[700]!,
+            icon: Icons.trending_up_rounded,
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              // Stop Loss
-              Expanded(
-                child: _gttLevelTile(
-                  label: 'Stop Loss',
-                  price: h.stopLoss!,
-                  delta: loss,
-                  color: Colors.red[600]!,
-                  icon: Icons.arrow_downward_rounded,
-                ),
-              ),
-              const SizedBox(width: 8),
-              // Target
-              Expanded(
-                child: _gttLevelTile(
-                  label: 'Target',
-                  price: h.target!,
-                  delta: profit,
-                  color: Colors.green[700]!,
-                  icon: Icons.arrow_upward_rounded,
-                ),
-              ),
-            ],
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _pnlTile(
+            label: 'Expected Loss',
+            amount: loss,
+            price: h.stopLoss!,
+            color: Colors.red[600]!,
+            icon: Icons.trending_down_rounded,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _gttLevelTile({
+  Widget _pnlTile({
     required String label,
+    required double amount,
     required double price,
-    required double delta,
     required Color color,
     required IconData icon,
   }) {
-    final sign = delta >= 0 ? '+' : '';
+    final sign = amount >= 0 ? '+' : '';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.25)),
+        color: color.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.22)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, size: 11, color: color),
-              const SizedBox(width: 3),
+              Icon(icon, size: 13, color: color),
+              const SizedBox(width: 4),
               Text(label,
                   style: TextStyle(
                       fontSize: 10,
@@ -480,20 +499,33 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                       fontWeight: FontWeight.w600)),
             ],
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 4),
           Text(
-            _currency.format(price),
+            '$sign${_currency.format(amount)}',
             style: TextStyle(
-                fontSize: 12,
+                fontSize: 14,
                 fontWeight: FontWeight.bold,
                 color: color),
           ),
           Text(
-            '$sign${_currency.format(delta)}',
-            style: TextStyle(fontSize: 11, color: color),
+            '@ ${_currency.format(price)}',
+            style: TextStyle(fontSize: 10, color: Colors.grey[600]),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildNoGttHint() {
+    return Row(
+      children: [
+        Icon(Icons.info_outline, size: 13, color: Colors.grey[400]),
+        const SizedBox(width: 4),
+        Text(
+          'No active GTT — Expected P&L unavailable',
+          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+        ),
+      ],
     );
   }
 
