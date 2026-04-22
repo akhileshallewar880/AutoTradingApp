@@ -15,20 +15,105 @@ def _safe_float(val, default=0.0) -> float:
         return default
 
 
+def _compute_perf_from_positions(positions: list, label: str) -> dict:
+    """Aggregate P&L metrics from a list of closed swing position dicts."""
+    realized_pnl = 0.0
+    gross_profit = 0.0
+    gross_loss = 0.0
+    winning = 0
+    losing = 0
+
+    for pos in positions:
+        # Prefer stored pnl; fall back to computing from exit/fill prices
+        pnl = _safe_float(pos.get("pnl"))
+        if pnl == 0.0:
+            qty        = _safe_float(pos.get("quantity"))
+            exit_price = _safe_float(pos.get("exit_price") or pos.get("fill_price"))
+            entry_price = _safe_float(pos.get("entry_price"))
+            action      = str(pos.get("action") or "BUY").upper()
+            if qty > 0 and exit_price > 0 and entry_price > 0:
+                pnl = (exit_price - entry_price) * qty if action == "BUY" \
+                      else (entry_price - exit_price) * qty
+
+        realized_pnl += pnl
+        if pnl > 0:
+            gross_profit += pnl
+            winning += 1
+        elif pnl < 0:
+            gross_loss += abs(pnl)
+            losing += 1
+
+    total_closed = winning + losing
+    win_rate = round((winning / total_closed) * 100, 1) if total_closed > 0 else 0.0
+
+    return dict(
+        realized_pnl=round(realized_pnl, 2),
+        gross_profit=round(gross_profit, 2),
+        gross_loss=round(gross_loss, 2),
+        winning_positions=winning,
+        losing_positions=losing,
+        total_trades=total_closed,
+        win_rate=win_rate,
+    )
+
+
 @router.get("/monthly-performance", response_model=MonthlyPerformanceResponse)
 async def get_monthly_performance(
     access_token: str = Query(...),
     api_key: str = Query(...),
     user_id: Optional[str] = Query(None),   # kept for API compat, not used
+    period: str = Query("today"),            # today | monthly | yearly
+    month: Optional[int] = Query(None),      # 1-12, defaults to current month
+    year: Optional[int] = Query(None),       # defaults to current year
 ):
     """
-    Returns current-month trading performance directly from Zerodha.
+    Returns trading performance for the requested period.
 
-    Sources:
-    - kite.positions() → day positions for realized P&L, wins/losses
-    - kite.trades()    → today's executed fills for trade count & gross figures
+    period=today   → live Zerodha positions + trades (today only)
+    period=monthly → closed swing positions for the given month/year from DB
+    period=yearly  → closed swing positions for the given year from DB
     """
     now = datetime.now()
+    eff_year  = year  if year  else now.year
+    eff_month = month if month else now.month
+
+    if period == "today":
+        return await _today_performance(access_token, api_key, now)
+
+    # ── Historical periods: query vantrade_swing_positions ───────────────────
+    from app.storage.database import db
+
+    if period == "monthly":
+        label = datetime(eff_year, eff_month, 1).strftime("%B %Y")
+        positions = await db.get_closed_swing_positions_for_month(api_key, eff_year, eff_month)
+    else:  # yearly
+        label = str(eff_year)
+        positions = await db.get_closed_swing_positions_for_year(api_key, eff_year)
+
+    metrics = _compute_perf_from_positions(positions, label)
+    logger.info(
+        f"[PERF] {label} ({period}) — P&L: ₹{metrics['realized_pnl']:.2f}, "
+        f"trades: {metrics['total_trades']}, win_rate: {metrics['win_rate']}%"
+    )
+
+    return MonthlyPerformanceResponse(
+        month=label,
+        realized_pnl=metrics["realized_pnl"],
+        unrealized_pnl=0.0,
+        total_pnl=metrics["realized_pnl"],
+        gross_profit=metrics["gross_profit"],
+        gross_loss=metrics["gross_loss"],
+        total_charges=0.0,
+        net_pnl=metrics["realized_pnl"],
+        total_trades=metrics["total_trades"],
+        winning_positions=metrics["winning_positions"],
+        losing_positions=metrics["losing_positions"],
+        win_rate=metrics["win_rate"],
+        max_drawdown=0.0,
+    )
+
+
+async def _today_performance(access_token: str, api_key: str, now: datetime) -> MonthlyPerformanceResponse:
     month_label = now.strftime("%B %Y")
 
     try:
@@ -93,8 +178,6 @@ async def get_monthly_performance(
 
     if isinstance(trades_raw, list):
         total_trades = len(trades_raw)
-        # Zerodha equity CNC charges: ₹0 brokerage + STT 0.1% on sell + misc ~₹5–8 per trade
-        # Use a conservative flat estimate since exact charges are not in the tradebook
         for t in trades_raw:
             qty   = _safe_float(t.get("quantity") or t.get("filled_quantity") or 0)
             price = _safe_float(t.get("price") or t.get("average_price") or 0)
@@ -102,11 +185,10 @@ async def get_monthly_performance(
             if qty <= 0 or price <= 0:
                 continue
             turnover = qty * price
-            # CNC equity: STT 0.1% on sell, exchange 0.00345%, SEBI 0.000001%, GST 18% on exchange
             stt        = turnover * 0.001   if txn == "SELL" else 0.0
             exchange   = turnover * 0.0000345
             sebi       = turnover * 0.000001
-            gst        = (exchange) * 0.18
+            gst        = exchange * 0.18
             stamp      = turnover * 0.00015 if txn == "BUY"  else 0.0
             total_charges += stt + exchange + sebi + gst + stamp
 
@@ -118,12 +200,12 @@ async def get_monthly_performance(
     win_rate = round((winning_positions / total_closed) * 100, 1) if total_closed > 0 else 0.0
 
     logger.info(
-        f"[PERF] {month_label} — P&L: ₹{total_pnl:.2f}, trades: {total_trades}, "
+        f"[PERF] {month_label} (today) — P&L: ₹{total_pnl:.2f}, trades: {total_trades}, "
         f"wins: {winning_positions}, losses: {losing_positions}, win_rate: {win_rate}%"
     )
 
     return MonthlyPerformanceResponse(
-        month=month_label,
+        month=f"Today · {month_label}",
         realized_pnl=round(realized_pnl, 2),
         unrealized_pnl=round(unrealized_pnl, 2),
         total_pnl=total_pnl,

@@ -29,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   Map<String, dynamic>? _perfData;
   bool _perfLoading = false;
   String? _perfError;
+  String _perfPeriod = 'today';   // today | monthly | yearly
 
   // ── Live index prices (KiteTicker snapshot) ────────────────────────────
   Map<String, dynamic> _indexPrices = {};
@@ -133,16 +134,20 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     }
   }
 
-  Future<void> _fetchPerformance() async {
+  Future<void> _fetchPerformance({String? period}) async {
     final auth = context.read<AuthProvider>();
     if (auth.user == null || auth.isDemoMode) return;
+    final selectedPeriod = period ?? _perfPeriod;
     if (mounted) setState(() { _perfLoading = true; _perfError = null; });
     try {
+      final now = DateTime.now();
       final uri = Uri.parse(ApiConfig.monthlyPerformanceUrl).replace(
         queryParameters: {
           'access_token': auth.user!.accessToken,
           'api_key': auth.user!.apiKey,
-          'user_id': auth.user!.userId,   // enables DB persistence of monthly history
+          'period': selectedPeriod,
+          'month': '${now.month}',
+          'year': '${now.year}',
         },
       );
       final response = await http.get(uri).timeout(const Duration(seconds: 30));
@@ -401,7 +406,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                         else
                           const SizedBox.shrink(),
                         const SizedBox(height: 12),
-                        _buildMonthCard(dash.dashboard, _perfData, _perfLoading, perfError: _perfError),
+                        _buildMonthCard(dash.dashboard, _perfData, _perfLoading, perfError: _perfError, period: _perfPeriod),
                         const SizedBox(height: 12),
                         if ((dash.dashboard?.positions.isNotEmpty ??
                             false)) ...[
@@ -708,9 +713,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   }
 
   // ── Month P&L ────────────────────────────────────────────────────────────
-  Widget _buildMonthCard(DashboardModel? data, Map<String, dynamic>? perf, bool perfLoading, {String? perfError}) {
-    // Prefer performance endpoint data (DB-backed monthly history) when available,
-    // fall back to dashboard data (today-only from Zerodha tradebook)
+  Widget _buildMonthCard(DashboardModel? data, Map<String, dynamic>? perf, bool perfLoading, {String? perfError, String period = 'today'}) {
     final hasPerfData = perf != null;
     final monthPnl = hasPerfData
         ? ((perf['total_pnl'] as num?) ?? 0).toDouble()
@@ -745,25 +748,27 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Header + period toggle ────────────────────────────────────
             Row(
               children: [
                 Icon(Icons.calendar_month, color: Colors.blue[700], size: 18),
                 const SizedBox(width: 8),
-                Text(
-                  '$monthLabel Performance',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
+                Expanded(
+                  child: Text(
+                    '$monthLabel Performance',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 10),
+            _buildPeriodToggle(period),
             const SizedBox(height: 14),
             Row(
               children: [
                 Expanded(
                   child: _buildStatBox(
-                    label: 'Month P&L',
+                    label: period == 'yearly' ? 'Year P&L' : period == 'today' ? 'Today P&L' : 'Month P&L',
                     value: data == null
                         ? '—'
                         : '${isPositive ? '+' : ''}${_currency.format(monthPnl)}',
@@ -929,6 +934,52 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPeriodToggle(String currentPeriod) {
+    const periods = [
+      ('today',   'Today'),
+      ('monthly', 'Monthly'),
+      ('yearly',  'Yearly'),
+    ];
+    return Row(
+      children: periods.map((p) {
+        final (value, label) = p;
+        final selected = currentPeriod == value;
+        return Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: GestureDetector(
+            onTap: () {
+              if (currentPeriod == value) return;
+              setState(() {
+                _perfPeriod = value;
+                _perfData = null;
+              });
+              _fetchPerformance(period: value);
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              decoration: BoxDecoration(
+                color: selected ? Colors.blue[700] : Colors.grey[100],
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: selected ? Colors.blue[700]! : Colors.grey[300]!,
+                ),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : Colors.grey[700],
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 

@@ -358,7 +358,8 @@ class Database:
         from sqlalchemy import text
         month_prefix = f"{year:04d}-{month:02d}"
         sql = text("""
-            SELECT stock_symbol, action, quantity, entry_price, fill_price, closed_at
+            SELECT stock_symbol, action, quantity, entry_price, fill_price,
+                   exit_price, pnl, closed_at
               FROM vantrade_swing_positions
              WHERE api_key = :api_key
                AND status  IN ('EXPIRED', 'CLOSED')
@@ -366,7 +367,8 @@ class Database:
         """)
         with self._engine.connect() as conn:
             rows = conn.execute(sql, {"api_key": api_key, "month_prefix": month_prefix}).fetchall()
-        keys = ["stock_symbol", "action", "quantity", "entry_price", "fill_price", "closed_at"]
+        keys = ["stock_symbol", "action", "quantity", "entry_price", "fill_price",
+                "exit_price", "pnl", "closed_at"]
         return [dict(zip(keys, r)) for r in rows]
 
     async def get_closed_swing_positions_for_month(self, api_key: str, year: int, month: int) -> list:
@@ -380,6 +382,36 @@ class Database:
             )
         except Exception as e:
             logger.error(f"[DB] get_closed_swing_positions_for_month failed: {e}")
+            return []
+
+    def _sync_get_closed_swing_positions_for_year(self, api_key: str, year: int) -> list:
+        from sqlalchemy import text
+        year_str = f"{year:04d}"
+        sql = text("""
+            SELECT stock_symbol, action, quantity, entry_price, fill_price,
+                   exit_price, pnl, closed_at
+              FROM vantrade_swing_positions
+             WHERE api_key = :api_key
+               AND status  IN ('EXPIRED', 'CLOSED')
+               AND CONVERT(VARCHAR(4), closed_at, 120) = :year_str
+        """)
+        with self._engine.connect() as conn:
+            rows = conn.execute(sql, {"api_key": api_key, "year_str": year_str}).fetchall()
+        keys = ["stock_symbol", "action", "quantity", "entry_price", "fill_price",
+                "exit_price", "pnl", "closed_at"]
+        return [dict(zip(keys, r)) for r in rows]
+
+    async def get_closed_swing_positions_for_year(self, api_key: str, year: int) -> list:
+        self._ensure_engine()
+        if not self._ready:
+            return []
+        try:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None, self._sync_get_closed_swing_positions_for_year, api_key, year
+            )
+        except Exception as e:
+            logger.error(f"[DB] get_closed_swing_positions_for_year failed: {e}")
             return []
 
     def _sync_get_amo_pending_positions(self) -> list:
