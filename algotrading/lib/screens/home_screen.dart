@@ -142,6 +142,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
         queryParameters: {
           'access_token': auth.user!.accessToken,
           'api_key': auth.user!.apiKey,
+          'user_id': auth.user!.userId,   // enables DB persistence of monthly history
         },
       );
       final response = await http.get(uri).timeout(const Duration(seconds: 30));
@@ -708,18 +709,33 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
 
   // ── Month P&L ────────────────────────────────────────────────────────────
   Widget _buildMonthCard(DashboardModel? data, Map<String, dynamic>? perf, bool perfLoading, {String? perfError}) {
-    final monthPnl = data?.monthPnl ?? 0.0;
-    final trades = data?.monthTrades ?? 0;
-    final winRate = data?.monthWinRate ?? 0.0;
-    final wins = data?.monthWins ?? 0;
-    final losses = data?.monthLosses ?? 0;
+    // Prefer performance endpoint data (DB-backed monthly history) when available,
+    // fall back to dashboard data (today-only from Zerodha tradebook)
+    final hasPerfData = perf != null;
+    final monthPnl = hasPerfData
+        ? ((perf['total_pnl'] as num?) ?? 0).toDouble()
+        : (data?.monthPnl ?? 0.0);
+    final trades = hasPerfData
+        ? ((perf['total_trades'] as num?) ?? 0).toInt()
+        : (data?.monthTrades ?? 0);
+    final winRate = hasPerfData
+        ? ((perf['win_rate'] as num?) ?? 0).toDouble()
+        : (data?.monthWinRate ?? 0.0);
+    final wins = hasPerfData
+        ? ((perf['winning_positions'] as num?) ?? 0).toInt()
+        : (data?.monthWins ?? 0);
+    final losses = hasPerfData
+        ? ((perf['losing_positions'] as num?) ?? 0).toInt()
+        : (data?.monthLosses ?? 0);
     final isPositive = monthPnl >= 0;
-    final monthLabel = DateFormat('MMMM yyyy').format(DateTime.now());
+    final monthLabel = hasPerfData
+        ? (perf['month'] as String? ?? DateFormat('MMMM yyyy').format(DateTime.now()))
+        : DateFormat('MMMM yyyy').format(DateTime.now());
 
-    final grossProfit = perf != null ? ((perf['gross_profit'] as num?) ?? 0).toDouble() : null;
-    final grossLoss = perf != null ? ((perf['gross_loss'] as num?) ?? 0).toDouble() : null;
-    final charges = perf != null ? ((perf['total_charges'] as num?) ?? 0).toDouble() : null;
-    final netPnl = perf != null ? ((perf['net_pnl'] as num?) ?? 0).toDouble() : null;
+    final grossProfit = hasPerfData ? ((perf['gross_profit'] as num?) ?? 0).toDouble() : null;
+    final grossLoss   = hasPerfData ? ((perf['gross_loss']   as num?) ?? 0).toDouble() : null;
+    final charges     = hasPerfData ? ((perf['total_charges'] as num?) ?? 0).toDouble() : null;
+    final netPnl      = hasPerfData ? ((perf['net_pnl']      as num?) ?? 0).toDouble() : null;
 
     return Card(
       elevation: 2,

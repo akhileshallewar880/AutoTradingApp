@@ -265,6 +265,32 @@ async def get_monthly_performance(
                 continue
             unrealized_pnl += u
 
+    # ── Step 5b: Add closed swing positions from DB for current month ─────────
+    # Zerodha tradebook misses swing CNC trades from previous days.
+    # Count EXPIRED swing positions closed this month as additional trades.
+    if user_id:
+        try:
+            from app.storage.database import db
+            swing_closed = await db.get_closed_swing_positions_for_month(
+                api_key=api_key, year=now.year, month=now.month
+            )
+            for sp in swing_closed:
+                fill   = float(sp.get("fill_price") or sp.get("entry_price") or 0)
+                avg    = float(sp.get("entry_price") or 0)
+                qty    = int(sp.get("quantity") or 0)
+                action = str(sp.get("action") or "BUY").upper()
+                if fill <= 0 or avg <= 0 or qty <= 0:
+                    continue
+                # For a BUY position exited at some point: P&L = (exit - entry) * qty
+                # We don't store the exit price currently, so we can count the trade
+                # but can't compute P&L here — just increment trade count
+                if zerodha_ok:
+                    # Avoid double counting if already in tradebook
+                    continue
+                today_trades += 1
+        except Exception as e:
+            logger.warning(f"[PERF] Swing position count failed: {e}")
+
     # ── Step 6: Use DB monthly totals if available, else fall back to today ───
     if has_history:
         realized_pnl = month_realized
