@@ -3,7 +3,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { AuthService } from './auth.service';
 
-const BASE = 'http://localhost:8000/api/v1';
+const BASE = 'https://api.vantrade.in/api/v1';
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
