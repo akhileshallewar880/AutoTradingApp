@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
 
+    # Frontend URL for OAuth redirects
+    FRONTEND_URL: str = "https://vantrade.in"
+
     # Admin Dashboard Config (kept for potential future use)
     ADMIN_JWT_SECRET: str = "your-secret-key-change-in-production"
 

@@ -1,8 +1,10 @@
 import hashlib
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from app.models.auth_models import LoginUrlResponse, SessionRequest, SessionResponse
 from app.services.zerodha_service import zerodha_service
 from app.core.logging import logger
+from app.core.config import get_settings
 
 router = APIRouter()
 
@@ -75,13 +77,16 @@ async def get_user_profile():
         )
 
 @router.get("/callback")
-async def zerodha_callback():
+async def zerodha_callback(request: Request):
     """
     Redirect URL registered in Kite Connect developer portal.
-    The Flutter WebView intercepts this URL to extract the request_token.
-    This endpoint just returns a placeholder response.
+    Forwards all query params (request_token, action, status) to the Angular frontend.
+    Flutter WebView intercepts before reaching here; browsers are redirected to the web app.
     """
-    return {"status": "ok", "message": "Login callback received. Return to the app."}
+    settings = get_settings()
+    query_string = str(request.url.query)
+    redirect_url = f"{settings.FRONTEND_URL}/login?{query_string}"
+    return RedirectResponse(url=redirect_url, status_code=302)
 
 @router.get("/validate-token")
 async def validate_token(
