@@ -211,8 +211,15 @@ const DEMO_STOCKS: StockAnalysis[] = [
         </div>
         <div class="form-row">
           <label>Capital (₹)</label>
-          <div class="input-field" style="background:var(--color-surface);color:var(--color-text-mid);cursor:default">
-            ₹{{ availBal() | number:'1.0-0' }}
+          <input class="input-field" type="number" min="1"
+                 [value]="capitalToUse()"
+                 (input)="capitalToUse.set(+$any($event.target).value)">
+          <div class="pct-btns">
+            @for (pct of [25,50,75,100]; track pct) {
+              <button type="button" class="pct-btn"
+                      [class.active]="capitalToUse() === +(availBal() * pct / 100).toFixed(0)"
+                      (click)="setCapitalPct(pct)">{{ pct }}%</button>
+            }
           </div>
         </div>
       </div>
@@ -682,9 +689,17 @@ const DEMO_STOCKS: StockAnalysis[] = [
   /* ── Analysis form ────────────────────────────────────────────── */
   .form-fields { display: flex; flex-direction: column; gap: 10px; }
   .form-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
     label { font-size: 12px; font-weight: 600; color: var(--color-text-high); flex-shrink: 0; width: 80px; }
-    .input-field { padding: 7px 10px; font-size: 13px; }
+    .input-field { padding: 7px 10px; font-size: 13px; flex: 1; min-width: 0; }
+  }
+  .pct-btns { display: flex; gap: 4px; width: 100%; padding-left: 88px; }
+  .pct-btn {
+    flex: 1; padding: 4px 0; font-size: 11px; font-weight: 600; border-radius: var(--radius-sm);
+    border: 1px solid var(--color-divider); background: var(--color-surface);
+    color: var(--color-text-mid); cursor: pointer; transition: all .15s ease;
+    &:hover { border-color: var(--color-primary); color: var(--color-primary); }
+    &.active { background: var(--color-primary); border-color: var(--color-primary); color: white; }
   }
   .error-msg {
     display: flex; align-items: center; gap: 8px;
@@ -880,6 +895,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   refreshing   = signal(false);
   analysing    = signal(false);
   analysisError = signal('');
+  capitalToUse = signal(0);
   toast        = signal<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   indices = signal<{ symbol: string; ltp: number; change: number; changePct: number }[]>([
@@ -943,13 +959,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
       this.positions.set(DEMO_POSITIONS);
       this.gtts.set(DEMO_GTTS);
       this.availBal.set(250000);
+      this.capitalToUse.set(250000);
       return;
     }
 
     // ── Dashboard summary (balance, positions, GTTs) ──
     this.api.getDashboardSummary().subscribe({
       next: (res: any) => {
-        this.availBal.set(res.available_balance ?? 0);
+        const bal = res.available_balance ?? 0;
+        this.availBal.set(bal);
+        this.capitalToUse.set(bal); // default to 100%
         this.positions.set((res.positions ?? res.open_positions ?? []).map((p: any) => ({
           tradingsymbol: p.symbol ?? p.tradingsymbol ?? '',
           product:       p.product ?? '',
@@ -1058,7 +1077,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
     this.analysing.set(true);
     this.analysisError.set('');
-    this.api.runAnalysis({ ...this.form, capital_to_use: this.availBal(), sectors: ['ALL'] }).subscribe({
+    this.api.runAnalysis({ ...this.form, capital_to_use: this.capitalToUse(), sectors: ['ALL'] }).subscribe({
       next: (res: any) => {
         this.analysisResult.set(res);
         this.analysing.set(false);
@@ -1089,6 +1108,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   executeOne(s: StockAnalysis) {
     this.showToast(`${s.action} ${s.stock_symbol} @ ₹${s.entry_price} — queued`, 'success');
+  }
+
+  setCapitalPct(pct: number) {
+    this.capitalToUse.set(Math.round(this.availBal() * pct / 100));
   }
 
   logout() { this.auth.logout(); this.router.navigate(['/login']); }

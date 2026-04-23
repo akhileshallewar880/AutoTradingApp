@@ -140,7 +140,11 @@ async def get_dashboard_summary(
         available_balance = 0.0
         if isinstance(margins_data, dict):
             equity = margins_data.get("equity", {})
-            available_balance = _safe_float(equity.get("available", {}).get("live_balance") or equity.get("net"))
+            avail  = equity.get("available", {})
+            # live_balance is 0 when market is closed; fall back to cash, then net
+            available_balance = _safe_float(
+                avail.get("live_balance") or avail.get("cash") or equity.get("net") or 0
+            )
 
         # ── Today's P&L from positions ───────────────────────────────────
         today_pnl = 0.0
