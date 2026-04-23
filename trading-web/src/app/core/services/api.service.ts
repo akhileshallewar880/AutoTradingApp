@@ -80,7 +80,7 @@ export class ApiService {
   }): Observable<any> {
     const { access_token, api_key } = this.creds;
     const u = this.auth.user()!;
-    return this.http.post<any>(`${BASE}/analysis/run`, {
+    return this.http.post<any>(`${BASE}/analysis/generate`, {
       ...params, access_token, api_key,
       user_id: Number(u.userId) || 1,
       analysis_date: new Date().toISOString().split('T')[0],

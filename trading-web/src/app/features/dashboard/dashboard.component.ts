@@ -903,7 +903,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   /* ── Computed ── */
   totalValue   = computed(() => this.holdings().reduce((s, h) => s + h.current_value, 0)
-                                + this.positions().reduce((s, p) => s + p.pnl, 0) + 500000);
+                                + this.availBal());
   totalInvested = computed(() => this.holdings().reduce((s, h) => s + h.invested, 0));
   totalPnl      = computed(() => this.holdings().reduce((s, h) => s + h.pnl, 0)
                                  + this.positions().reduce((s, p) => s + p.pnl, 0));
@@ -953,8 +953,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.api.getDashboardSummary().subscribe({
       next: (res: any) => {
         this.availBal.set(res.available_balance ?? 0);
-        this.positions.set(res.open_positions ?? []);
-        this.gtts.set(res.active_gtts ?? []);
+        this.positions.set((res.positions ?? res.open_positions ?? []).map((p: any) => ({
+          tradingsymbol: p.symbol ?? p.tradingsymbol ?? '',
+          product:       p.product ?? '',
+          quantity:      p.quantity ?? 0,
+          average_price: p.avg_price ?? p.average_price ?? 0,
+          last_price:    p.ltp ?? p.last_price ?? 0,
+          pnl:           p.pnl ?? 0,
+          realised:      p.realised ?? 0,
+          unrealised:    p.unrealised ?? p.pnl ?? 0,
+        })));
+        this.gtts.set(res.gtts ?? res.active_gtts ?? []);
         this.dataError.set('');
       },
       error: err => {
@@ -972,9 +981,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.api.getHoldings().subscribe({
       next: (res: any) => {
         const raw: any[] = res.holdings ?? [];
-        this.holdings.set(raw.map((h: any) => ({
-          tradingsymbol:   h.tradingsymbol,
-          company:         h.company_name ?? h.tradingsymbol,
+        // Backend returns "symbol" not "tradingsymbol"; "invested_value"/"current_value" pre-computed
+        this.holdings.set(raw.filter((h: any) => !!(h.symbol || h.tradingsymbol)).map((h: any) => ({
+          tradingsymbol:   h.symbol ?? h.tradingsymbol,
+          company:         h.company_name ?? h.symbol ?? h.tradingsymbol,
           quantity:        h.quantity ?? 0,
           average_price:   h.average_price ?? 0,
           last_price:      h.last_price ?? 0,
@@ -982,8 +992,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
           pnl_pct:         h.pnl_pct ?? h.day_change_percentage ?? 0,
           day_change:      h.day_change ?? 0,
           day_change_pct:  h.day_change_pct ?? 0,
-          invested:        (h.average_price ?? 0) * (h.quantity ?? 0),
-          current_value:   (h.last_price ?? 0) * (h.quantity ?? 0),
+          invested:        h.invested_value ?? (h.average_price ?? 0) * (h.quantity ?? 0),
+          current_value:   h.current_value ?? (h.last_price ?? 0) * (h.quantity ?? 0),
           stop_loss:       h.stop_loss ?? 0,
           target:          h.target ?? 0,
           max_profit:      h.max_profit ?? 0,
@@ -1094,6 +1104,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   symColor(sym: string): string {
     const colors = ['#388E3C','#1976D2','#303F9F','#F57C00','#E53935','#7B1FA2','#00796B','#C62828'];
+    if (!sym) return colors[0];
     return colors[sym.charCodeAt(0) % colors.length];
   }
 
