@@ -37,12 +37,13 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_PRODUCTION }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL_PRODUCTION }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          envs: OPENAI_API_KEY
+          envs: OPENAI_API_KEY,FRONTEND_URL
           script: |
             set -e
             cd ${{ secrets.VPS_APP_DIR }}
@@ -53,6 +54,12 @@ jobs:
             # ── Write env vars from GitHub Secrets into .env ─────────────────
             echo "🔑 Updating .env with secrets from GitHub..."
             sed -i "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$OPENAI_API_KEY|" .env
+            # Add or update FRONTEND_URL
+            if grep -q "^FRONTEND_URL=" .env; then
+              sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=$FRONTEND_URL|" .env
+            else
+              echo "FRONTEND_URL=$FRONTEND_URL" >> .env
+            fi
             echo "✅ .env updated"
 
             # ── Remove hardcoded env vars from systemd service file ──────────
