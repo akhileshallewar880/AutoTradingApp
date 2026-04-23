@@ -210,12 +210,10 @@ const DEMO_STOCKS: StockAnalysis[] = [
           </select>
         </div>
         <div class="form-row">
-          <label>Risk %</label>
-          <input class="input-field" type="number" [(ngModel)]="form.risk_percent" min="0.5" max="5" step="0.5">
-        </div>
-        <div class="form-row">
           <label>Capital (₹)</label>
-          <input class="input-field" type="number" [(ngModel)]="form.capital_to_use" min="0" placeholder="0 = full">
+          <div class="input-field" style="background:var(--color-surface);color:var(--color-text-mid);cursor:default">
+            ₹{{ availBal() | number:'1.0-0' }}
+          </div>
         </div>
       </div>
 
@@ -899,11 +897,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return total >= 555 && total < 915; // 9:15 – 15:15
   }
 
-  form = { num_stocks: 3, hold_duration_days: 0, risk_percent: 1, capital_to_use: 0 };
+  form = { num_stocks: 3, hold_duration_days: 0, risk_percent: 1 };
 
   /* ── Computed ── */
-  totalValue   = computed(() => this.holdings().reduce((s, h) => s + h.current_value, 0)
-                                + this.availBal());
+  totalValue   = computed(() => this.totalInvested() + this.totalPnl());
   totalInvested = computed(() => this.holdings().reduce((s, h) => s + h.invested, 0));
   totalPnl      = computed(() => this.holdings().reduce((s, h) => s + h.pnl, 0)
                                  + this.positions().reduce((s, p) => s + p.pnl, 0));
@@ -963,7 +960,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
           realised:      p.realised ?? 0,
           unrealised:    p.unrealised ?? p.pnl ?? 0,
         })));
-        this.gtts.set(res.gtts ?? res.active_gtts ?? []);
+        this.gtts.set((res.gtts ?? res.active_gtts ?? []).map((g: any) => ({
+          ...g,
+          tradingsymbol: g.symbol ?? g.tradingsymbol ?? '',
+          id:            g.gtt_id ?? g.id,
+        })));
         this.dataError.set('');
       },
       error: err => {
@@ -1057,7 +1058,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
     this.analysing.set(true);
     this.analysisError.set('');
-    this.api.runAnalysis({ ...this.form, sectors: ['ALL'] }).subscribe({
+    this.api.runAnalysis({ ...this.form, capital_to_use: this.availBal(), sectors: ['ALL'] }).subscribe({
       next: (res: any) => {
         this.analysisResult.set(res);
         this.analysing.set(false);
