@@ -75,7 +75,7 @@ const DEMO_STOCKS: StockAnalysis[] = [
     <!-- Index strip (scrolling) -->
     <div class="index-strip">
       <div class="ticker-track">
-        @for (idx of indices; track idx.symbol) {
+        @for (idx of indices(); track idx.symbol) {
           <div class="tick-item">
             <span class="sym">{{ idx.symbol }}</span>
             <span [class]="idx.change >= 0 ? 'text-profit' : 'text-loss'" class="val">
@@ -87,7 +87,7 @@ const DEMO_STOCKS: StockAnalysis[] = [
           </div>
         }
         <!-- duplicate for seamless loop -->
-        @for (idx of indices; track 'd'+idx.symbol) {
+        @for (idx of indices(); track 'd'+idx.symbol) {
           <div class="tick-item">
             <span class="sym">{{ idx.symbol }}</span>
             <span [class]="idx.change >= 0 ? 'text-profit' : 'text-loss'" class="val">
@@ -884,13 +884,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
   analysisError = signal('');
   toast        = signal<{ msg: string; type: 'success' | 'error' } | null>(null);
 
-  indices: { symbol: string; ltp: number; change: number; changePct: number }[] = [
+  indices = signal<{ symbol: string; ltp: number; change: number; changePct: number }[]>([
     { symbol: 'NIFTY 50',    ltp: 24850.30, change:  185.4, changePct:  0.75 },
     { symbol: 'BANKNIFTY',   ltp: 52318.60, change: -124.5, changePct: -0.24 },
     { symbol: 'NIFTY IT',    ltp: 41290.10, change:  320.8, changePct:  0.78 },
     { symbol: 'NIFTY FMCG',  ltp: 56840.20, change:   92.3, changePct:  0.16 },
     { symbol: 'SENSEX',      ltp: 81720.40, change:  540.2, changePct:  0.66 },
-  ];
+  ]);
 
   get marketOpen(): boolean {
     const now = new Date();
@@ -925,35 +925,106 @@ export class DashboardComponent implements OnInit, OnDestroy {
   confColor      = computed(() => this.overallConfPct() >= 80 ? '#388E3C' : this.overallConfPct() >= 70 ? '#F57C00' : '#E53935');
 
   private sub?: Subscription;
+  dataError = signal('');
 
   ngOnInit() {
     this.loadData();
-    // Refresh every 60 s
-    this.sub = interval(60000).subscribe(() => this.loadData());
+    this.loadIndexPrices();
+    // Auto-refresh every 60 s (market hours only)
+    this.sub = interval(60000).subscribe(() => {
+      this.loadData();
+      this.loadIndexPrices();
+    });
   }
 
   ngOnDestroy() { this.sub?.unsubscribe(); }
 
+  /** Load dashboard + holdings from the real backend (or demo seed data). */
   private loadData() {
-    if (this.auth.user()?.userId === 'demo') {
+    if (this.isDemo()) {
       this.holdings.set(DEMO_HOLDINGS);
       this.positions.set(DEMO_POSITIONS);
       this.gtts.set(DEMO_GTTS);
+      this.availBal.set(250000);
       return;
     }
+
+    // ── Dashboard summary (balance, positions, GTTs) ──
+    this.api.getDashboardSummary().subscribe({
+      next: (res: any) => {
+        this.availBal.set(res.available_balance ?? 0);
+        this.positions.set(res.open_positions ?? []);
+        this.gtts.set(res.active_gtts ?? []);
+        this.dataError.set('');
+      },
+      error: err => {
+        const msg: string = err?.error?.detail ?? '';
+        if (err.status === 401 || msg.toLowerCase().includes('session expired')) {
+          this.showToast('Session expired — please log in again.', 'error');
+          setTimeout(() => this.logout(), 2000);
+        } else {
+          this.dataError.set('Could not load dashboard data.');
+        }
+      }
+    });
+
+    // ── Holdings (separate endpoint, includes GTT stop/target) ──
     this.api.getHoldings().subscribe({
-      next: res => this.holdings.set(res.holdings ?? []),
+      next: (res: any) => {
+        const raw: any[] = res.holdings ?? [];
+        this.holdings.set(raw.map((h: any) => ({
+          tradingsymbol:   h.tradingsymbol,
+          company:         h.company_name ?? h.tradingsymbol,
+          quantity:        h.quantity ?? 0,
+          average_price:   h.average_price ?? 0,
+          last_price:      h.last_price ?? 0,
+          pnl:             h.pnl ?? 0,
+          pnl_pct:         h.pnl_pct ?? h.day_change_percentage ?? 0,
+          day_change:      h.day_change ?? 0,
+          day_change_pct:  h.day_change_pct ?? 0,
+          invested:        (h.average_price ?? 0) * (h.quantity ?? 0),
+          current_value:   (h.last_price ?? 0) * (h.quantity ?? 0),
+          stop_loss:       h.stop_loss ?? 0,
+          target:          h.target ?? 0,
+          max_profit:      h.max_profit ?? 0,
+          max_loss:        h.max_loss ?? 0,
+          has_gtt:         !!(h.has_gtt || h.gtt_id),
+          gtt_id:          h.gtt_id,
+        })));
+      },
       error: () => {}
     });
   }
 
+  /** Fetch NIFTY 50, BANKNIFTY live prices from the backend snapshot. */
+  private loadIndexPrices() {
+    if (this.isDemo()) return;
+    // NIFTY 50 = 256265, BANKNIFTY = 260105, NIFTY IT = 5633600
+    this.api.getSnapshot('256265,260105').subscribe({
+      next: (res: any) => {
+        const snap = res.snapshot ?? {};
+        const n50  = snap['256265'];
+        const bnk  = snap['260105'];
+        const updated = [...this.indices()];
+        if (n50) updated[0] = { symbol: 'NIFTY 50',  ltp: n50.last_price, change: n50.change ?? 0, changePct: n50.change_percent ?? 0 };
+        if (bnk) updated[1] = { symbol: 'BANKNIFTY', ltp: bnk.last_price, change: bnk.change ?? 0, changePct: bnk.change_percent ?? 0 };
+        this.indices.set(updated);
+      },
+      error: () => {}
+    });
+  }
+
+  private isDemo() { return this.auth.user()?.userId === 'demo'; }
+
   refresh() {
     this.refreshing.set(true);
-    setTimeout(() => { this.loadData(); this.refreshing.set(false); }, 800);
+    this.loadData();
+    this.loadIndexPrices();
+    setTimeout(() => this.refreshing.set(false), 1000);
   }
 
   runAnalysis() {
-    if (this.auth.user()?.userId === 'demo') {
+    if (this.isDemo()) {
       this.analysing.set(true);
       setTimeout(() => {
         this.analysisResult.set({
@@ -977,11 +1048,27 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.analysing.set(true);
     this.analysisError.set('');
     this.api.runAnalysis({ ...this.form, sectors: ['ALL'] }).subscribe({
-      next: res => { this.analysisResult.set(res); this.analysing.set(false); },
+      next: (res: any) => {
+        this.analysisResult.set(res);
+        this.analysing.set(false);
+      },
       error: err => {
         this.analysisError.set(err?.error?.detail ?? 'Analysis failed. Try again.');
         this.analysing.set(false);
       }
+    });
+  }
+
+  executeAll() {
+    const result = this.analysisResult();
+    if (!result) return;
+    if (this.isDemo()) {
+      this.showToast(`Demo: ${result.stocks.length} orders would be queued`, 'success');
+      return;
+    }
+    this.api.confirmAnalysis(result.analysis_id, this.form.hold_duration_days).subscribe({
+      next: () => this.showToast(`${result.stocks.length} orders queued for execution`, 'success'),
+      error: err => this.showToast(err?.error?.detail ?? 'Execution failed', 'error'),
     });
   }
 
@@ -990,11 +1077,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   executeOne(s: StockAnalysis) {
-    this.showToast(`Order queued: ${s.action} ${s.stock_symbol} @ ₹${s.entry_price}`, 'success');
-  }
-
-  executeAll() {
-    this.showToast(`${this.analysisResult()!.stocks.length} orders queued for execution`, 'success');
+    this.showToast(`${s.action} ${s.stock_symbol} @ ₹${s.entry_price} — queued`, 'success');
   }
 
   logout() { this.auth.logout(); this.router.navigate(['/login']); }
