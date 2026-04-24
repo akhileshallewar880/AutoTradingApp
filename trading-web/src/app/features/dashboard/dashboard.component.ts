@@ -913,7 +913,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return total >= 555 && total < 915; // 9:15 – 15:15
   }
 
-  form = { num_stocks: 3, hold_duration_days: 0, risk_percent: 1 };
+  form = { num_stocks: 3, hold_duration_days: 3, risk_percent: 1 };
 
   /* ── Computed ── */
   totalValue   = computed(() => this.totalInvested() + this.totalPnl());
