@@ -286,8 +286,12 @@ export class LoginComponent implements OnInit {
     const status       = this.route.snapshot.queryParamMap.get('status');
 
     if (requestToken && status === 'success') {
-      // Recover credentials saved before the redirect
-      const saved = sessionStorage.getItem('vt_pending');
+      const lsVal    = localStorage.getItem('vt_pending');
+      const ssVal    = sessionStorage.getItem('vt_pending');
+      const cookieMatch = document.cookie.match(/(?:^|;\s*)vt_pending=([^;]+)/);
+      const cookieVal   = cookieMatch ? decodeURIComponent(cookieMatch[1]) : null;
+      console.log('[VT] callback detected', { requestToken, lsVal, ssVal, cookieVal });
+      const saved = cookieVal ?? lsVal ?? ssVal;
       if (saved) {
         const { apiKey, apiSecret } = JSON.parse(saved);
         this.apiKey    = apiKey;
@@ -297,6 +301,11 @@ export class LoginComponent implements OnInit {
       } else {
         this.error.set('Session data lost. Please start over.');
       }
+    } else {
+      console.log('[VT] login page loaded (no callback)', {
+        requestToken, status,
+        lsPending: localStorage.getItem('vt_pending')
+      });
     }
   }
 
@@ -311,13 +320,16 @@ export class LoginComponent implements OnInit {
 
     this.api.getLoginUrl(this.apiKey.trim()).subscribe({
       next: res => {
-        // Save credentials in sessionStorage (tab-scoped, cleared when tab closes)
-        sessionStorage.setItem('vt_pending', JSON.stringify({
-          apiKey: this.apiKey.trim(),
-          apiSecret: this.apiSecret.trim(),
-        }));
+        const pending = JSON.stringify({ apiKey: this.apiKey.trim(), apiSecret: this.apiSecret.trim() });
+        // Use document.cookie as primary — survives cross-origin redirect chains even when
+        // localStorage/sessionStorage are partitioned or blocked by the browser.
+        document.cookie = `vt_pending=${encodeURIComponent(pending)}; path=/; max-age=300; SameSite=Lax`;
+        localStorage.setItem('vt_pending', pending); // fallback
+        console.log('[VT] credentials saved', {
+          cookie: document.cookie.includes('vt_pending'),
+          ls: localStorage.getItem('vt_pending') !== null,
+        });
         this.step.set(2);
-        // Small delay so user sees step 2 before redirect
         setTimeout(() => window.location.href = res.login_url, 600);
       },
       error: err => {
@@ -329,26 +341,31 @@ export class LoginComponent implements OnInit {
 
   /** Step 3: exchange request_token for access_token */
   private exchangeToken(requestToken: string) {
+    console.log('[VT] exchangeToken called', { apiKey: this.apiKey, requestToken });
     this.api.createSession(this.apiKey, this.apiSecret, requestToken).subscribe({
       next: res => {
-        // ── Store only what is needed for API calls ───────────────────────
-        // api_secret is intentionally NOT stored here
+        console.log('[VT] createSession success', res);
         this.auth.login({
           userId:      res.user_id,
           accessToken: res.access_token,
           apiKey:      res.api_key,
           name:        res.user_name,
         });
-        sessionStorage.removeItem('vt_pending'); // clean up
+        document.cookie = 'vt_pending=; path=/; max-age=0';
+        localStorage.removeItem('vt_pending');
+        console.log('[VT] navigating to dashboard');
         this.router.navigate(['/dashboard'], { replaceUrl: true });
       },
       error: err => {
+        console.error('[VT] createSession error', err);
         this.error.set(err?.error?.detail ?? 'Token exchange failed. Please try again.');
       }
     });
   }
 
   reset() {
+    document.cookie = 'vt_pending=; path=/; max-age=0';
+    localStorage.removeItem('vt_pending');
     sessionStorage.removeItem('vt_pending');
     this.step.set(1);
     this.error.set('');
