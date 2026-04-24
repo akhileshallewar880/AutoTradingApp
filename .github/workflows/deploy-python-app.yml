@@ -6,7 +6,7 @@ on:
       - master
 
 jobs:
-  # ── Job 1: syntax check runs on GitHub's cloud runner ──────────────────────
+  # ── Job 1: Python syntax check ──────────────────────────────────────────────
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -27,13 +27,60 @@ jobs:
         run: |
           python -c "from app.main import app; print('✅ App imports OK')"
 
-  # ── Job 2: deploy via SSH from GitHub's cloud runner ───────────────────────
+  # ── Job 2: Build Angular web app ────────────────────────────────────────────
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: trading-web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: trading-web
+        run: npm ci
+
+      - name: Build Angular (production)
+        working-directory: trading-web
+        run: npm run build -- --configuration production
+
+      - name: Upload web dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          # Angular 17+ outputs to dist/<project>/browser/ for client-only builds
+          path: trading-web/dist/trading-web/
+          retention-days: 1
+
+  # ── Job 3: Deploy backend + web app to VPS ──────────────────────────────────
   deploy:
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [lint, build-web]
 
     steps:
-      - name: Deploy to VPS via SSH
+      - uses: actions/checkout@v4
+
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web-dist/
+
+      - name: Copy web files to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          source: "web-dist/"
+          target: "/tmp/vantrade-web-upload/"
+          strip_components: 1
+
+      - name: Deploy backend + configure Nginx for web app
         uses: appleboy/ssh-action@v1.0.3
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_PRODUCTION }}
@@ -54,7 +101,6 @@ jobs:
             # ── Write env vars from GitHub Secrets into .env ─────────────────
             echo "🔑 Updating .env with secrets from GitHub..."
             sed -i "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$OPENAI_API_KEY|" .env
-            # Add or update FRONTEND_URL
             if grep -q "^FRONTEND_URL=" .env; then
               sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=$FRONTEND_URL|" .env
             else
@@ -63,8 +109,6 @@ jobs:
             echo "✅ .env updated"
 
             # ── Remove hardcoded env vars from systemd service file ──────────
-            # systemd Environment= lines take priority over .env — strip them
-            # so the app always reads secrets from .env (updated above)
             SERVICE_FILE="/etc/systemd/system/${{ secrets.VPS_SERVICE_NAME }}.service"
             if sudo grep -q "OPENAI_API_KEY" "$SERVICE_FILE" 2>/dev/null; then
               echo "🔧 Removing OPENAI_API_KEY from systemd service file..."
@@ -80,12 +124,9 @@ jobs:
               || echo "⚠️  add_daily_pnl_records already applied or skipped (non-fatal)"
 
             # ── Enforce single worker ────────────────────────────────────────
-            # The autonomous trading agent manager is in-memory state.
-            # Multiple uvicorn workers = multiple separate managers = duplicate
-            # agents for the same user. Must run with exactly 1 worker.
             SERVICE_FILE="/etc/systemd/system/${{ secrets.VPS_SERVICE_NAME }}.service"
             if grep -q "\-\-workers [2-9]" "$SERVICE_FILE" 2>/dev/null; then
-              echo "⚠️  Fixing --workers to 1 in service file (multi-worker causes duplicate agents)"
+              echo "⚠️  Fixing --workers to 1 in service file"
               sudo sed -i 's/--workers [0-9]*/--workers 1/g' "$SERVICE_FILE"
               sudo systemctl daemon-reload
               echo "✅ Service file updated"
@@ -94,13 +135,80 @@ jobs:
             sudo systemctl restart ${{ secrets.VPS_SERVICE_NAME }}
             sleep 3
             sudo systemctl is-active ${{ secrets.VPS_SERVICE_NAME }} \
-              && echo "✅ Service is running" \
+              && echo "✅ Backend service is running" \
               || (sudo journalctl -u ${{ secrets.VPS_SERVICE_NAME }} --no-pager -n 30 && exit 1)
 
-      - name: Smoke test health endpoint
+            # ── Deploy Angular web app ───────────────────────────────────────
+            echo "🌐 Deploying Angular web app..."
+            sudo mkdir -p /var/www/vantrade
+
+            # Angular 17+ puts browser files in browser/ subdirectory
+            if [ -d /tmp/vantrade-web-upload/browser ]; then
+              sudo rsync -a --delete /tmp/vantrade-web-upload/browser/ /var/www/vantrade/
+              echo "✅ Copied from browser/ subdirectory"
+            else
+              sudo rsync -a --delete /tmp/vantrade-web-upload/ /var/www/vantrade/
+              echo "✅ Copied from dist root"
+            fi
+
+            sudo chown -R www-data:www-data /var/www/vantrade
+            rm -rf /tmp/vantrade-web-upload
+            echo "✅ Web files deployed to /var/www/vantrade"
+
+            # ── Configure Nginx for vantrade.in ─────────────────────────────
+            echo "⚙️  Configuring Nginx..."
+            sudo tee /etc/nginx/sites-available/vantrade-web > /dev/null << 'NGINX_CONF'
+            server {
+                listen 80;
+                server_name vantrade.in www.vantrade.in;
+
+                root /var/www/vantrade;
+                index index.html;
+
+                # Angular SPA — redirect all routes to index.html
+                location / {
+                    try_files $uri $uri/ /index.html;
+                }
+
+                # Cache static assets aggressively (Angular hashes filenames)
+                location ~* \.(js|css|woff2?|ttf|eot|svg|png|jpg|ico)$ {
+                    expires 1y;
+                    add_header Cache-Control "public, immutable";
+                    access_log off;
+                }
+
+                # Never cache index.html (deployment versioning)
+                location = /index.html {
+                    add_header Cache-Control "no-cache, no-store, must-revalidate";
+                }
+            }
+            NGINX_CONF
+
+            sudo ln -sf /etc/nginx/sites-available/vantrade-web \
+                        /etc/nginx/sites-enabled/vantrade-web
+
+            sudo nginx -t && sudo systemctl reload nginx
+            echo "✅ Nginx configured and reloaded"
+
+            # ── Try to issue SSL cert if certbot is available ────────────────
+            if command -v certbot &>/dev/null; then
+              echo "🔒 Requesting SSL certificate via Certbot..."
+              sudo certbot --nginx -d vantrade.in -d www.vantrade.in \
+                --non-interactive --agree-tos --email akhileshallewar880@gmail.com \
+                --redirect \
+                && echo "✅ SSL certificate issued" \
+                || echo "⚠️  Certbot failed (DNS may not be pointed yet) — HTTP only for now"
+            else
+              echo "ℹ️  Certbot not installed — site running on HTTP"
+            fi
+
+      - name: Smoke test health endpoints
         run: |
           sleep 5
           curl -sf https://api.vantrade.in/health \
-            && echo "✅ Health check passed" \
-            || echo "⚠️ Health check failed (non-fatal)"
+            && echo "✅ Backend health check passed" \
+            || echo "⚠️ Backend health check failed (non-fatal)"
+          curl -sf http://vantrade.in \
+            && echo "✅ Frontend reachable" \
+            || echo "⚠️ Frontend not reachable (DNS may not be configured yet)"
         continue-on-error: true
