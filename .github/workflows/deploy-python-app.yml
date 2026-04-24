@@ -101,10 +101,15 @@ jobs:
             # ── Write env vars from GitHub Secrets into .env ─────────────────
             echo "🔑 Updating .env with secrets from GitHub..."
             sed -i "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$OPENAI_API_KEY|" .env
-            if grep -q "^FRONTEND_URL=" .env; then
-              sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=$FRONTEND_URL|" .env
+            if [ -n "$FRONTEND_URL" ]; then
+              if grep -q "^FRONTEND_URL=" .env; then
+                sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=$FRONTEND_URL|" .env
+              else
+                echo "FRONTEND_URL=$FRONTEND_URL" >> .env
+              fi
+              echo "✅ FRONTEND_URL set to $FRONTEND_URL"
             else
-              echo "FRONTEND_URL=$FRONTEND_URL" >> .env
+              echo "ℹ️  FRONTEND_URL_PRODUCTION secret not set — keeping existing .env value"
             fi
             echo "✅ .env updated"
 

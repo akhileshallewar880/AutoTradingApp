@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from functools import lru_cache
 from typing import Optional
 from pathlib import Path
@@ -38,6 +39,11 @@ class Settings(BaseSettings):
 
     # Frontend URL for OAuth redirects
     FRONTEND_URL: str = "https://vantrade.in"
+
+    @field_validator("FRONTEND_URL", mode="before")
+    @classmethod
+    def _nonempty_frontend_url(cls, v: str) -> str:
+        return v if v else "https://vantrade.in"
 
     # Admin Dashboard Config (kept for potential future use)
     ADMIN_JWT_SECRET: str = "your-secret-key-change-in-production"
