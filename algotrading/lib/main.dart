@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -11,12 +12,23 @@ import 'screens/api_settings_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
 
+/// Allows the app to connect to api.vantrade.in even when the device's trust
+/// store doesn't recognise the intermediate CA (common on older Android).
+class _TrustAllCerts extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (cert, host, port) => host.endsWith('vantrade.in');
+  }
+}
+
 /// Global route observer — lets HomeScreen detect when it regains focus.
 final RouteObserver<ModalRoute<void>> routeObserver =
     RouteObserver<ModalRoute<void>>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  HttpOverrides.global = _TrustAllCerts();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   runApp(const AlgoTradingApp());
