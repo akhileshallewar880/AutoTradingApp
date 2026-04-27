@@ -47,6 +47,7 @@ dependencies:
   
   # WebView for Zerodha login
   webview_flutter: ^4.4.2
+  webview_flutter_android: ^4.10.11
 
   # URL launcher for opening external links
   url_launcher: ^6.1.11
