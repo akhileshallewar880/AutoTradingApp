@@ -201,7 +201,7 @@ class Analysis(SQLModel, table=True):
     """
     __tablename__ = "vantrade_analyses"
 
-    analysis_id: Optional[str] = Field(default=None, primary_key=True, index=True)  # UUID string
+    analysis_id: Optional[str] = Field(default=None, sa_column=Column(String(36), primary_key=True))  # UUID string
     user_id: Optional[int] = Field(None, foreign_key="vantrade_users.user_id", index=True)  # Optional, analyses can exist without users
     status: AnalysisStatusEnum = Field(default=AnalysisStatusEnum.PENDING)
     hold_duration_days: int  # 0 = Intraday, >0 = Swing
@@ -235,7 +235,7 @@ class StockRecommendation(SQLModel, table=True):
     __tablename__ = "vantrade_stock_recommendations"
 
     recommendation_id: Optional[int] = Field(default=None, primary_key=True, index=True)
-    analysis_id: str = Field(foreign_key="vantrade_analyses.analysis_id", index=True)
+    analysis_id: str = Field(foreign_key="vantrade_analyses.analysis_id", index=True, max_length=36)
     stock_symbol: str = Field(index=True, max_length=20)
     action: ActionEnum  # BUY or SELL
     entry_price: Decimal = Field(sa_column=Column(Numeric(10, 2)))
@@ -290,7 +290,7 @@ class Order(SQLModel, table=True):
 
     order_id: Optional[int] = Field(default=None, primary_key=True, index=True)
     user_id: int = Field(foreign_key="vantrade_users.user_id", index=True)
-    analysis_id: str = Field(foreign_key="vantrade_analyses.analysis_id", index=True)
+    analysis_id: str = Field(foreign_key="vantrade_analyses.analysis_id", index=True, max_length=36)
     stock_symbol: str = Field(index=True, max_length=20)
     action: ActionEnum  # BUY or SELL
     quantity: int
@@ -359,7 +359,7 @@ class ExecutionUpdate(SQLModel, table=True):
     __tablename__ = "vantrade_execution_updates"
 
     update_id: Optional[int] = Field(default=None, primary_key=True, index=True)
-    analysis_id: str = Field(foreign_key="vantrade_analyses.analysis_id", index=True)
+    analysis_id: str = Field(foreign_key="vantrade_analyses.analysis_id", index=True, max_length=36)
     stock_symbol: str = Field(index=True, max_length=20)
     update_type: str  # Free-form string (ORDER_PLACING, ORDER_PLACED, GTT_PLACED, COMPLETED, ERROR, etc.)
     message: Optional[str] = Field(None, sa_column=Column(Text))
