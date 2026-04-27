@@ -354,6 +354,50 @@ class Database:
             logger.error(f"[DB] get_open_swing_positions_by_api_key failed: {e}")
             return []
 
+    def _sync_get_swing_expiry_by_api_key(self, api_key: str) -> dict:
+        """Return {stock_symbol: {days_left, expiry_date, hold_duration_days}} for open positions."""
+        from sqlalchemy import text
+        from datetime import date
+        sql = text("""
+            SELECT stock_symbol, hold_duration_days, expiry_date, created_at
+              FROM vantrade_swing_positions
+             WHERE api_key = :api_key
+               AND status  IN ('OPEN', 'AMO_PENDING')
+        """)
+        result = {}
+        with self._engine.connect() as conn:
+            rows = conn.execute(sql, {"api_key": api_key}).fetchall()
+        for row in rows:
+            sym, hold_days, expiry, created = row[0], row[1], row[2], row[3]
+            days_left = None
+            expiry_str = None
+            if expiry:
+                if hasattr(expiry, "date"):
+                    expiry = expiry.date()
+                today = date.today()
+                days_left = (expiry - today).days
+                expiry_str = expiry.isoformat()
+            result[sym] = {
+                "hold_duration_days": hold_days,
+                "days_left": days_left,
+                "expiry_date": expiry_str,
+            }
+        return result
+
+    async def get_swing_expiry_by_api_key(self, api_key: str) -> dict:
+        """Return {symbol: countdown_info} for all open swing positions of this api_key."""
+        self._ensure_engine()
+        if not self._ready:
+            return {}
+        try:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None, self._sync_get_swing_expiry_by_api_key, api_key
+            )
+        except Exception as e:
+            logger.error(f"[DB] get_swing_expiry_by_api_key failed: {e}")
+            return {}
+
     def _sync_get_closed_swing_positions_for_month(self, api_key: str, year: int, month: int) -> list:
         from sqlalchemy import text
         month_prefix = f"{year:04d}-{month:02d}"

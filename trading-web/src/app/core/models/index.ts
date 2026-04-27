@@ -15,6 +15,8 @@ export interface IndexPrice {
 export interface Holding {
   tradingsymbol: string;
   company?: string;
+  exchange?: string;
+  instrument_token?: number;
   quantity: number;
   average_price: number;
   last_price: number;
@@ -30,6 +32,9 @@ export interface Holding {
   max_loss?: number;
   has_gtt: boolean;
   gtt_id?: string;
+  hold_duration_days?: number;
+  days_left?: number | null;
+  expiry_date?: string | null;
 }
 
 export interface Position {

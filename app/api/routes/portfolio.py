@@ -117,12 +117,16 @@ async def get_holdings(
 
         loop = asyncio.get_event_loop()
 
-        # Fetch holdings and active GTTs in parallel
-        raw, raw_gtts = await asyncio.gather(
+        # Fetch holdings, active GTTs, and swing expiry data in parallel
+        from app.storage.database import db
+        raw, raw_gtts, swing_expiry = await asyncio.gather(
             loop.run_in_executor(None, kite.holdings),
             loop.run_in_executor(None, kite.get_gtts),
+            db.get_swing_expiry_by_api_key(api_key),
             return_exceptions=True,
         )
+        if isinstance(swing_expiry, Exception):
+            swing_expiry = {}
 
         if isinstance(raw, Exception):
             raise raw
@@ -191,10 +195,12 @@ async def get_holdings(
             total_pnl      += pnl
 
             symbol = h.get("tradingsymbol", "")
+            swing = swing_expiry.get(symbol, {}) if isinstance(swing_expiry, dict) else {}
             entry: dict = {
                 "symbol": symbol,
                 "exchange": h.get("exchange", "NSE"),
                 "isin": h.get("isin", ""),
+                "instrument_token": int(h.get("instrument_token", 0) or 0),
                 "quantity": total_qty,   # show effective qty (settled + T+1)
                 "t1_quantity": t1_qty,
                 "average_price": round(avg, 2),
@@ -207,6 +213,10 @@ async def get_holdings(
                 "invested_value": round(invested, 2),
                 "current_value": round(current, 2),
                 "product": h.get("product", "CNC"),
+                # Holding period countdown (from DB swing positions)
+                "hold_duration_days": swing.get("hold_duration_days"),
+                "days_left": swing.get("days_left"),
+                "expiry_date": swing.get("expiry_date"),
                 # GTT fields — populated below if an active GTT exists
                 "stop_loss": None,
                 "target": None,
@@ -256,6 +266,123 @@ async def get_holdings(
         _check_permission_error(e)
         logger.error(f"[Holdings] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Holdings fetch failed: {e}")
+
+
+# ── POST /portfolio/exit/{symbol} ────────────────────────────────────────────
+
+@router.post("/exit/{symbol}")
+async def exit_holding(
+    symbol: str,
+    api_key: str = Query(...),
+    access_token: str = Query(...),
+):
+    """
+    Place a SELL MARKET order for the full CNC holding of the given symbol.
+    Uses kite.place_order — free Kite Connect API.
+    """
+    try:
+        from kiteconnect import KiteConnect
+        kite = KiteConnect(api_key=api_key)
+        kite.set_access_token(access_token)
+
+        loop = asyncio.get_event_loop()
+        holdings = await loop.run_in_executor(None, kite.holdings)
+
+        target = next(
+            (h for h in holdings if h.get("tradingsymbol", "").upper() == symbol.upper()),
+            None,
+        )
+        if not target:
+            raise HTTPException(status_code=404, detail=f"Holding '{symbol}' not found")
+
+        qty = int(target.get("quantity", 0) or 0) + int(target.get("t1_quantity", 0) or 0)
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail=f"No quantity available to exit for '{symbol}'")
+
+        exch = target.get("exchange", "NSE")
+        order_id = await loop.run_in_executor(None, lambda: kite.place_order(
+            variety=kite.VARIETY_REGULAR,
+            exchange=exch,
+            tradingsymbol=symbol.upper(),
+            transaction_type=kite.TRANSACTION_TYPE_SELL,
+            quantity=qty,
+            product=kite.PRODUCT_CNC,
+            order_type=kite.ORDER_TYPE_MARKET,
+        ))
+
+        logger.info(f"[Exit] {symbol} SELL MARKET qty={qty} order_id={order_id}")
+        return {
+            "success": True,
+            "order_id": str(order_id),
+            "symbol": symbol.upper(),
+            "quantity": qty,
+            "exchange": exch,
+            "message": f"Exit order placed for {qty} shares of {symbol}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        _check_permission_error(e)
+        logger.error(f"[Exit] {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Exit order failed: {e}")
+
+
+# ── POST /portfolio/exit-all ──────────────────────────────────────────────────
+
+@router.post("/exit-all")
+async def exit_all_holdings(
+    api_key: str = Query(...),
+    access_token: str = Query(...),
+):
+    """
+    Place SELL MARKET orders for every CNC holding sequentially.
+    Returns per-symbol results including any individual failures.
+    Uses kite.place_order — free Kite Connect API.
+    """
+    try:
+        from kiteconnect import KiteConnect
+        kite = KiteConnect(api_key=api_key)
+        kite.set_access_token(access_token)
+
+        loop = asyncio.get_event_loop()
+        holdings = await loop.run_in_executor(None, kite.holdings)
+
+        results = []
+        errors = []
+
+        for h in (holdings or []):
+            qty = int(h.get("quantity", 0) or 0) + int(h.get("t1_quantity", 0) or 0)
+            if qty <= 0:
+                continue
+            sym  = h.get("tradingsymbol", "")
+            exch = h.get("exchange", "NSE")
+            try:
+                order_id = await loop.run_in_executor(None, lambda: kite.place_order(
+                    variety=kite.VARIETY_REGULAR,
+                    exchange=exch,
+                    tradingsymbol=sym,
+                    transaction_type=kite.TRANSACTION_TYPE_SELL,
+                    quantity=qty,
+                    product=kite.PRODUCT_CNC,
+                    order_type=kite.ORDER_TYPE_MARKET,
+                ))
+                results.append({"symbol": sym, "quantity": qty, "order_id": str(order_id)})
+                logger.info(f"[ExitAll] {sym} SELL MARKET qty={qty} order_id={order_id}")
+            except Exception as e:
+                errors.append({"symbol": sym, "error": str(e)})
+                logger.error(f"[ExitAll] {sym}: {e}")
+
+        return {
+            "success": len(results) > 0,
+            "orders_placed": len(results),
+            "orders_failed": len(errors),
+            "results": results,
+            "errors": errors,
+        }
+    except Exception as e:
+        _check_permission_error(e)
+        logger.error(f"[ExitAll] {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Exit all failed: {e}")
 
 
 # ── GET /portfolio/quote ──────────────────────────────────────────────────────

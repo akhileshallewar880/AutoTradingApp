@@ -62,6 +62,20 @@ export class ApiService {
     });
   }
 
+  exitHolding(symbol: string): Observable<any> {
+    const { access_token, api_key } = this.creds;
+    return this.http.post<any>(`${BASE}/portfolio/exit/${encodeURIComponent(symbol)}`, null, {
+      params: new HttpParams({ fromObject: { access_token, api_key } })
+    });
+  }
+
+  exitAllHoldings(): Observable<any> {
+    const { access_token, api_key } = this.creds;
+    return this.http.post<any>(`${BASE}/portfolio/exit-all`, null, {
+      params: new HttpParams({ fromObject: { access_token, api_key } })
+    });
+  }
+
   // ── Ticker ────────────────────────────────────────────────────────────────
 
   /** One-shot price snapshot for given instrument tokens */

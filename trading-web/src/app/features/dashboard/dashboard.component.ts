@@ -4,7 +4,7 @@ import {
 import { CommonModule, DecimalPipe, CurrencyPipe, PercentPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { interval, Subscription } from 'rxjs';
+import { interval, Subscription, forkJoin } from 'rxjs';
 import { switchMap, startWith } from 'rxjs/operators';
 import { AuthService } from '../../core/services/auth.service';
 import { ApiService  } from '../../core/services/api.service';
@@ -250,11 +250,19 @@ const DEMO_STOCKS: StockAnalysis[] = [
         <span class="material-icons-round icon-indigo">business_center</span>
         <h4>Holdings</h4>
         <span class="count-badge">{{ holdings().length }}</span>
+        <span class="live-dot-wrap" title="Live prices refreshing every 30s">
+          <span class="live-dot"></span><span class="live-lbl">LIVE</span>
+        </span>
         @if (gttCount() > 0) {
-          <span class="badge info" style="margin-left:auto;font-size:10px">
+          <span class="badge info" style="font-size:10px">
             <span class="material-icons-round" style="font-size:12px">verified</span>
-            {{ gttCount() }} GTT active
+            {{ gttCount() }} GTT
           </span>
+        }
+        @if (holdings().length > 0) {
+          <button class="btn btn-danger btn-sm exit-all-btn" (click)="exitAll()" style="margin-left:auto">
+            <span class="material-icons-round">logout</span> Exit All
+          </button>
         }
       </div>
 
@@ -287,7 +295,13 @@ const DEMO_STOCKS: StockAnalysis[] = [
               </div>
               <div>
                 <div class="h-sym">{{ h.tradingsymbol }}</div>
-                <div class="h-co">{{ h.company }}</div>
+                <div class="h-co">{{ h.company ?? h.tradingsymbol }}</div>
+                @if (daysLeft(h) !== null) {
+                  <div [class]="'h-days ' + daysLeftClass(h)">
+                    <span class="material-icons-round" style="font-size:11px">schedule</span>
+                    {{ daysLeft(h)! > 0 ? daysLeft(h) + 'd left' : daysLeft(h) === 0 ? 'Exits today' : 'Expired' }}
+                  </div>
+                }
               </div>
             </div>
 
@@ -298,11 +312,17 @@ const DEMO_STOCKS: StockAnalysis[] = [
               </div>
               <div class="h-stat">
                 <div class="hs-label">Avg</div>
-                <div class="hs-val">₹{{ h.average_price | number:'1.0-0' }}</div>
+                <div class="hs-val">₹{{ h.average_price | number:'1.2-2' }}</div>
               </div>
               <div class="h-stat">
                 <div class="hs-label">LTP</div>
-                <div class="hs-val">₹{{ h.last_price | number:'1.0-0' }}</div>
+                <div class="hs-val text-bold">₹{{ h.last_price | number:'1.2-2' }}</div>
+              </div>
+              <div class="h-stat">
+                <div class="hs-label">Day</div>
+                <div class="hs-val" [class]="(h.day_change ?? 0) >= 0 ? 'text-profit' : 'text-loss'">
+                  {{ (h.day_change ?? 0) >= 0 ? '+' : '' }}{{ h.day_change_pct | number:'1.2-2' }}%
+                </div>
               </div>
               <div class="h-stat">
                 <div class="hs-label">P&amp;L</div>
@@ -312,18 +332,23 @@ const DEMO_STOCKS: StockAnalysis[] = [
               </div>
             </div>
 
-            @if (h.has_gtt) {
-              <div class="gtt-chips">
-                <span class="gtt-chip profit">
-                  <span class="material-icons-round">north</span>₹{{ h.max_profit! | number:'1.0-0' }}
-                </span>
-                <span class="gtt-chip loss">
-                  <span class="material-icons-round">south</span>₹{{ h.max_loss! | number:'1.0-0' }}
-                </span>
-              </div>
-            } @else {
-              <span class="no-gtt">No GTT</span>
-            }
+            <div class="holding-right">
+              @if (h.has_gtt) {
+                <div class="gtt-chips">
+                  <span class="gtt-chip profit">
+                    <span class="material-icons-round">north</span>₹{{ h.max_profit! | number:'1.0-0' }}
+                  </span>
+                  <span class="gtt-chip loss">
+                    <span class="material-icons-round">south</span>₹{{ h.max_loss! | number:'1.0-0' }}
+                  </span>
+                </div>
+              } @else {
+                <span class="no-gtt">No GTT</span>
+              }
+              <button class="btn btn-danger btn-xs exit-btn" (click)="exitHolding(h); $event.stopPropagation()" title="Exit position">
+                <span class="material-icons-round">logout</span>
+              </button>
+            </div>
           </div>
         }
       </div>
@@ -714,6 +739,40 @@ const DEMO_STOCKS: StockAnalysis[] = [
     border-top-color: white; border-radius: 50%; animation: spin .7s linear infinite;
   }
 
+  /* ── Live badge ──────────────────────────────────────────────── */
+  .live-dot-wrap { display: flex; align-items: center; gap: 4px; margin-left: 6px; }
+  .live-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--color-primary); animation: pulse-dot 1.4s ease-in-out infinite;
+  }
+  .live-lbl { font-size: 9px; font-weight: 700; color: var(--color-primary); letter-spacing: .8px; }
+
+  /* ── Exit buttons ─────────────────────────────────────────────── */
+  .btn-danger { background: var(--color-danger); color: white; border: none; &:hover { background: #c62828; } }
+  .exit-all-btn { font-size: 11px; padding: 4px 10px; }
+  .btn-xs {
+    padding: 3px 6px; min-width: 28px; height: 26px;
+    border-radius: var(--radius-sm); font-size: 11px;
+    .material-icons-round { font-size: 14px; }
+  }
+  .exit-btn { opacity: 0; transition: opacity .15s ease; }
+  .holding-row:hover .exit-btn { opacity: 1; }
+
+  /* ── Holding right col ───────────────────────────────────────── */
+  .holding-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+
+  /* ── Days-left countdown ─────────────────────────────────────── */
+  .h-days {
+    display: flex; align-items: center; gap: 3px;
+    font-size: 10px; font-weight: 600; margin-top: 2px;
+    .material-icons-round { font-size: 11px; }
+  }
+  .days-ok      { color: var(--color-primary); }
+  .days-warn    { color: var(--color-warning); }
+  .days-urgent  { color: var(--color-danger); animation: pulse-text 1s ease-in-out infinite; }
+  .days-expired { color: var(--color-text-low); }
+  @keyframes pulse-text { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+
   /* ── Holdings ─────────────────────────────────────────────────── */
   .gtt-summary {
     display: flex; gap: 10px; margin-bottom: 16px;
@@ -736,7 +795,7 @@ const DEMO_STOCKS: StockAnalysis[] = [
     animation: fadeSlideUp var(--duration-slow) var(--ease) both;
     &:hover { background: var(--color-background); border-color: var(--color-divider); }
   }
-  .holding-left { display: flex; align-items: center; gap: 10px; flex: 0 0 180px; }
+  .holding-left { display: flex; align-items: flex-start; gap: 10px; flex: 0 0 190px; }
   .sym-circle {
     width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
@@ -744,7 +803,7 @@ const DEMO_STOCKS: StockAnalysis[] = [
   }
   .h-sym { font-size: 13px; font-weight: 700; }
   .h-co  { font-size: 11px; color: var(--color-text-mid); }
-  .holding-stats { display: flex; gap: 12px; flex: 1; }
+  .holding-stats { display: flex; gap: 10px; flex: 1; align-items: center; }
   .h-stat { text-align: right; }
   .hs-label { font-size: 10px; color: var(--color-text-low); }
   .hs-val   { font-size: 13px; font-weight: 600; }
@@ -938,19 +997,26 @@ export class DashboardComponent implements OnInit, OnDestroy {
   confColor      = computed(() => this.overallConfPct() >= 80 ? '#388E3C' : this.overallConfPct() >= 70 ? '#F57C00' : '#E53935');
 
   private sub?: Subscription;
+  private ltpSub?: Subscription;
   dataError = signal('');
+  exiting = signal<string | null>(null); // symbol currently being exited
 
   ngOnInit() {
     this.loadData();
     this.loadIndexPrices();
-    // Auto-refresh every 60 s (market hours only)
+    // Refresh full data every 60 s
     this.sub = interval(60000).subscribe(() => {
       this.loadData();
       this.loadIndexPrices();
     });
+    // Refresh live LTPs every 30 s (lighter — tokens only)
+    this.ltpSub = interval(30000).subscribe(() => this.refreshLtps());
   }
 
-  ngOnDestroy() { this.sub?.unsubscribe(); }
+  ngOnDestroy() {
+    this.sub?.unsubscribe();
+    this.ltpSub?.unsubscribe();
+  }
 
   /** Load dashboard + holdings from the real backend (or demo seed data). */
   private loadData() {
@@ -1003,23 +1069,28 @@ export class DashboardComponent implements OnInit, OnDestroy {
         const raw: any[] = res.holdings ?? [];
         // Backend returns "symbol" not "tradingsymbol"; "invested_value"/"current_value" pre-computed
         this.holdings.set(raw.filter((h: any) => !!(h.symbol || h.tradingsymbol)).map((h: any) => ({
-          tradingsymbol:   h.symbol ?? h.tradingsymbol,
-          company:         h.company_name ?? h.symbol ?? h.tradingsymbol,
-          quantity:        h.quantity ?? 0,
-          average_price:   h.average_price ?? 0,
-          last_price:      h.last_price ?? 0,
-          pnl:             h.pnl ?? 0,
-          pnl_pct:         h.pnl_pct ?? h.day_change_percentage ?? 0,
-          day_change:      h.day_change ?? 0,
-          day_change_pct:  h.day_change_pct ?? 0,
-          invested:        h.invested_value ?? (h.average_price ?? 0) * (h.quantity ?? 0),
-          current_value:   h.current_value ?? (h.last_price ?? 0) * (h.quantity ?? 0),
-          stop_loss:       h.stop_loss ?? 0,
-          target:          h.target ?? 0,
-          max_profit:      h.max_profit ?? 0,
-          max_loss:        h.max_loss ?? 0,
-          has_gtt:         !!(h.has_gtt || h.gtt_id),
-          gtt_id:          h.gtt_id,
+          tradingsymbol:     h.symbol ?? h.tradingsymbol,
+          company:           h.company_name ?? h.symbol ?? h.tradingsymbol,
+          exchange:          h.exchange ?? 'NSE',
+          instrument_token:  h.instrument_token ?? 0,
+          quantity:          h.quantity ?? 0,
+          average_price:     h.average_price ?? 0,
+          last_price:        h.last_price ?? 0,
+          pnl:               h.pnl ?? 0,
+          pnl_pct:           h.pnl_pct ?? h.day_change_percentage ?? 0,
+          day_change:        h.day_change ?? 0,
+          day_change_pct:    h.day_change_pct ?? 0,
+          invested:          h.invested_value ?? (h.average_price ?? 0) * (h.quantity ?? 0),
+          current_value:     h.current_value ?? (h.last_price ?? 0) * (h.quantity ?? 0),
+          stop_loss:         h.stop_loss ?? 0,
+          target:            h.target ?? 0,
+          max_profit:        h.max_profit ?? 0,
+          max_loss:          h.max_loss ?? 0,
+          has_gtt:           !!(h.has_gtt || h.gtt_id),
+          gtt_id:            h.gtt_id,
+          hold_duration_days: h.hold_duration_days ?? null,
+          days_left:         h.days_left ?? null,
+          expiry_date:       h.expiry_date ?? null,
         })));
       },
       error: () => {}
@@ -1130,6 +1201,106 @@ export class DashboardComponent implements OnInit, OnDestroy {
     const colors = ['#388E3C','#1976D2','#303F9F','#F57C00','#E53935','#7B1FA2','#00796B','#C62828'];
     if (!sym) return colors[0];
     return colors[sym.charCodeAt(0) % colors.length];
+  }
+
+  /** Refresh live LTPs for all holdings using instrument tokens (free API). */
+  private refreshLtps() {
+    if (this.isDemo()) return;
+    const tokens = this.holdings()
+      .filter(h => h.instrument_token && h.instrument_token > 0)
+      .map(h => h.instrument_token!)
+      .join(',');
+    if (!tokens) return;
+
+    this.api.getSnapshot(tokens).subscribe({
+      next: (res: any) => {
+        const snap: Record<string, any> = res.snapshot ?? {};
+        this.holdings.update(hs => hs.map(h => {
+          const d = snap[String(h.instrument_token ?? '')];
+          if (!d) return h;
+          const ltp = d.last_price ?? h.last_price;
+          const pnl = (ltp - h.average_price) * h.quantity;
+          const pnlPct = h.average_price > 0
+            ? (ltp - h.average_price) / h.average_price * 100 : 0;
+          return {
+            ...h,
+            last_price:    Math.round(ltp * 100) / 100,
+            pnl:           Math.round(pnl * 100) / 100,
+            pnl_pct:       Math.round(pnlPct * 100) / 100,
+            current_value: Math.round(ltp * h.quantity * 100) / 100,
+          };
+        }));
+      },
+      error: () => {}
+    });
+  }
+
+  /** Days remaining until holding expiry (from DB swing position). */
+  daysLeft(h: Holding): number | null {
+    if (h.days_left === undefined || h.days_left === null) return null;
+    return h.days_left;
+  }
+
+  daysLeftClass(h: Holding): string {
+    const d = this.daysLeft(h);
+    if (d === null) return '';
+    if (d <= 0) return 'days-expired';
+    if (d <= 2) return 'days-urgent';
+    if (d <= 5) return 'days-warn';
+    return 'days-ok';
+  }
+
+  /** Exit a single holding — places SELL MARKET CNC order. */
+  exitHolding(h: Holding) {
+    if (this.isDemo()) {
+      this.showToast(`Demo: would exit ${h.tradingsymbol}`, 'success');
+      return;
+    }
+    if (!confirm(
+      `Exit ${h.tradingsymbol}?\n\nThis places a SELL MARKET order for ${h.quantity} shares at the current market price.`
+    )) return;
+
+    this.exiting.set(h.tradingsymbol);
+    this.api.exitHolding(h.tradingsymbol).subscribe({
+      next: (res: any) => {
+        this.exiting.set(null);
+        this.showToast(`Exit order placed for ${h.tradingsymbol} (${h.quantity} shares)`, 'success');
+        setTimeout(() => this.loadData(), 3000);
+      },
+      error: err => {
+        this.exiting.set(null);
+        this.showToast(err?.error?.detail ?? `Failed to exit ${h.tradingsymbol}`, 'error');
+      }
+    });
+  }
+
+  /** Exit all holdings at once. */
+  exitAll() {
+    if (this.isDemo()) {
+      this.showToast(`Demo: would exit all ${this.holdings().length} holdings`, 'success');
+      return;
+    }
+    const count = this.holdings().length;
+    if (!count) return;
+    if (!confirm(
+      `Exit ALL ${count} holdings?\n\nThis places SELL MARKET orders for every CNC position. This cannot be undone.`
+    )) return;
+
+    this.api.exitAllHoldings().subscribe({
+      next: (res: any) => {
+        const placed = res.orders_placed ?? 0;
+        const failed = res.orders_failed ?? 0;
+        if (failed > 0) {
+          this.showToast(`${placed} exits placed, ${failed} failed — check orders`, 'error');
+        } else {
+          this.showToast(`All ${placed} exit orders placed successfully`, 'success');
+        }
+        setTimeout(() => this.loadData(), 3000);
+      },
+      error: err => {
+        this.showToast(err?.error?.detail ?? 'Exit all failed', 'error');
+      }
+    });
   }
 
   private showToast(msg: string, type: 'success' | 'error') {
