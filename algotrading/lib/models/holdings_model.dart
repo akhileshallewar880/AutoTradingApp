@@ -23,6 +23,12 @@ class Holding {
   final bool hasGtt;
   final String? gttId;
 
+  // Live / expiry fields
+  final int? instrumentToken;
+  final int? holdDurationDays;
+  final int? daysLeft;
+  final String? expiryDate;
+
   Holding({
     required this.symbol,
     required this.exchange,
@@ -45,6 +51,10 @@ class Holding {
     this.maxLoss,
     this.hasGtt = false,
     this.gttId,
+    this.instrumentToken,
+    this.holdDurationDays,
+    this.daysLeft,
+    this.expiryDate,
   });
 
   factory Holding.fromJson(Map<String, dynamic> json) {
@@ -70,6 +80,41 @@ class Holding {
       maxLoss: json['max_loss'] != null ? (json['max_loss'] as num).toDouble() : null,
       hasGtt: json['has_gtt'] ?? false,
       gttId: json['gtt_id']?.toString(),
+      instrumentToken: json['instrument_token'] != null ? (json['instrument_token'] as num).toInt() : null,
+      holdDurationDays: json['hold_duration_days'] != null ? (json['hold_duration_days'] as num).toInt() : null,
+      daysLeft: json['days_left'] != null ? (json['days_left'] as num).toInt() : null,
+      expiryDate: json['expiry_date']?.toString(),
+    );
+  }
+
+  Holding copyWith({
+    double? lastPrice,
+    double? pnl,
+    double? pnlPct,
+    double? currentValue,
+    double? dayChange,
+    double? dayChangePct,
+  }) {
+    return Holding(
+      symbol: symbol, exchange: exchange, isin: isin,
+      quantity: quantity, t1Quantity: t1Quantity,
+      averagePrice: averagePrice,
+      lastPrice: lastPrice ?? this.lastPrice,
+      closePrice: closePrice,
+      pnl: pnl ?? this.pnl,
+      pnlPct: pnlPct ?? this.pnlPct,
+      dayChange: dayChange ?? this.dayChange,
+      dayChangePct: dayChangePct ?? this.dayChangePct,
+      investedValue: investedValue,
+      currentValue: currentValue ?? this.currentValue,
+      product: product,
+      stopLoss: stopLoss, target: target,
+      maxProfit: maxProfit, maxLoss: maxLoss,
+      hasGtt: hasGtt, gttId: gttId,
+      instrumentToken: instrumentToken,
+      holdDurationDays: holdDurationDays,
+      daysLeft: daysLeft,
+      expiryDate: expiryDate,
     );
   }
 }

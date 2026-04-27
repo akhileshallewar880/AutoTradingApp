@@ -42,8 +42,10 @@ class ApiConfig {
   static const String backtestRunUrl = '$baseUrl/backtest/run';
   static const String backtestUniverseUrl = '$baseUrl/backtest/universe';
 
-  // Portfolio endpoints (paid Kite API)
+  // Portfolio endpoints
   static const String holdingsUrl = '$baseUrl/portfolio/holdings';
+  static String exitHoldingUrl(String symbol) => '$baseUrl/portfolio/exit/${Uri.encodeComponent(symbol)}';
+  static const String exitAllHoldingsUrl = '$baseUrl/portfolio/exit-all';
   static const String quoteUrl = '$baseUrl/portfolio/quote';
   static const String orderMarginsUrl = '$baseUrl/portfolio/order-margins';
   static const String convertPositionUrl = '$baseUrl/portfolio/convert-position';
