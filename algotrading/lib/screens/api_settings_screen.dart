@@ -55,54 +55,40 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
       return;
     }
 
+    if (apiKey.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('API key looks too short. Please check and try again.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isValidating = true);
 
     try {
       final authProvider = context.read<AuthProvider>();
-
-      // Validate credentials by making a test API call
-      final isValid = await authProvider.validateApiCredentials(
-        apiKey,
-        apiSecret,
-      );
+      await authProvider.saveApiCredentials(apiKey, apiSecret);
 
       if (!mounted) return;
 
-      if (isValid) {
-        // Save credentials securely
-        await authProvider.saveApiCredentials(apiKey, apiSecret);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ API credentials saved! Proceed to login with Zerodha.'),
+          backgroundColor: Colors.green,
+        ),
+      );
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ API credentials saved successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        // Navigate to login screen
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, '/login');
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              '❌ Invalid API credentials. Please check and try again.',
-            ),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      Navigator.pushReplacementNamed(context, '/login');
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Error saving credentials: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isValidating = false);
-      }
+      if (mounted) setState(() => _isValidating = false);
     }
   }
 
@@ -399,7 +385,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                             ),
                           )
                         : const Text(
-                            'Validate & Save Credentials',
+                            'Save & Continue',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
