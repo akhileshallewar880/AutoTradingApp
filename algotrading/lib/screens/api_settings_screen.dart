@@ -298,7 +298,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                             const SizedBox(height: 6),
                             _buildAppDetailField(
                               'Redirect URL:',
-                              'https://vantradeapp-h6axgng8hkd9aqba.centralindia-01.azurewebsites.net/api',
+                              'https://api.vantrade.in/api/v1/auth/callback',
                               isCopyable: true,
                             ),
                             const SizedBox(height: 6),
