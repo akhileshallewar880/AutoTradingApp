@@ -119,10 +119,14 @@ async def generate_analysis(request: AnalysisRequest):
 
         if not stocks_data:
             logger.error(f"[ANALYSIS-SCREEN-FAIL] screen_and_enrich returned EMPTY list. No stocks found for criteria: sectors={request.sectors}, hold={request.hold_duration_days}d")
-            raise HTTPException(
-                status_code=404,
-                detail="No stocks found matching criteria. Try different sectors or dates."
-            )
+            if request.hold_duration_days == 0:
+                detail = (
+                    "Intraday analysis requires an open market. NSE appears to be closed or on a holiday — "
+                    "try swing analysis (1W or longer) instead."
+                )
+            else:
+                detail = "No stocks found matching the selected criteria. Try different sectors or a different date."
+            raise HTTPException(status_code=422, detail=detail)
 
         logger.info(f"[ANALYSIS-SCREEN-OK] Screen returned {len(stocks_data)} enriched candidates for LLM")
 

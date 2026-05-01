@@ -171,7 +171,7 @@ class AnalysisProvider with ChangeNotifier {
       }
       _error = null;
     } catch (e) {
-      _error = e.toString();
+      _error = e.toString().replaceFirst('Exception: ', '');
       rethrow;
     } finally {
       _isLoading = false;

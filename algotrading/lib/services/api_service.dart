@@ -112,7 +112,9 @@ class ApiService {
       final data = jsonDecode(response.body);
       return AnalysisResponseModel.fromJson(data);
     } else {
-      throw Exception('Failed to generate analysis: ${response.body}');
+      final body = jsonDecode(response.body) as Map<String, dynamic>? ?? {};
+      final detail = body['detail'] as String? ?? response.body;
+      throw Exception(detail);
     }
   }
 

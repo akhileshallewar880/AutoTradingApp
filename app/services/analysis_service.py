@@ -5,7 +5,7 @@ from app.core.logging import logger
 from typing import List, Dict, Optional
 import pandas as pd
 import pytz
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 
 
 # ── Last-resort fallback universe (only used if NSE CSV download and dynamic
@@ -150,6 +150,19 @@ class AnalysisService:
         """
         from app.services.zerodha_service import ZerodhaService
         from app.engines.strategy_engine import strategy_engine
+
+        # Early exit when NSE is closed — avoids running the full pipeline only to return []
+        now_ist = datetime.now(self.IST)
+        market_open = (
+            now_ist.weekday() < 5
+            and time(9, 15) <= now_ist.time() <= time(15, 30)
+        )
+        if not market_open:
+            logger.warning(
+                f"[Intraday-MARKET-CLOSED] NSE is closed at "
+                f"{now_ist.strftime('%H:%M IST, %A')}. Intraday pipeline skipped."
+            )
+            return []
 
         # Create user-specific Zerodha service with their credentials
         kite_instance = None
