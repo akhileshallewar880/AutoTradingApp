@@ -30,6 +30,10 @@ class AnalysisRequest(BaseModel):
         le=5,
         description="MIS leverage multiplier (1–5x). Only applicable for intraday trades."
     )
+    symbols: Optional[List[str]] = Field(
+        default=None,
+        description="Specific NSE symbols to analyse. When provided, sector screening is skipped."
+    )
 
 
 class StockAnalysis(BaseModel):

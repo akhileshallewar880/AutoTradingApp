@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'vt_colors.dart';
 
 /// Canonical VanTrade type system.
 /// Headings + financial data: Space Grotesk — geometric, precise, premium fintech feel.
@@ -14,7 +13,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w700,
     letterSpacing: -0.6,
     height: 1.25,
-    color: VtColors.textPrimary,
   );
 
   /// Section headers inside screens.
@@ -23,7 +21,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w600,
     letterSpacing: -0.3,
     height: 1.3,
-    color: VtColors.textPrimary,
   );
 
   /// Card headers, subsection labels.
@@ -32,7 +29,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w600,
     letterSpacing: -0.1,
     height: 1.4,
-    color: VtColors.textPrimary,
   );
 
   // ── Interface prose: Inter ────────────────────────────────────────────────
@@ -43,7 +39,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w400,
     letterSpacing: 0,
     height: 1.6,
-    color: VtColors.textPrimary,
   );
 
   /// Standard body. Card content, descriptions.
@@ -52,7 +47,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w400,
     letterSpacing: 0,
     height: 1.55,
-    color: VtColors.textPrimary,
   );
 
   /// Labels, chips, tab text, button text.
@@ -61,7 +55,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w500,
     letterSpacing: 0.05,
     height: 1.4,
-    color: VtColors.textPrimary,
   );
 
   /// Meta, timestamps, sub-labels.
@@ -70,7 +63,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w400,
     letterSpacing: 0.1,
     height: 1.45,
-    color: VtColors.textSecondary,
   );
 
   /// Disclaimers, footnotes. Smallest readable size.
@@ -79,7 +71,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w400,
     letterSpacing: 0.2,
     height: 1.5,
-    color: VtColors.textTertiary,
   );
 
   /// Status words only: OPEN, CLOSED, PENDING, BUY, SELL.
@@ -100,7 +91,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w700,
     letterSpacing: -1.0,
     height: 1.15,
-    color: VtColors.textPrimary,
     fontFeatures: const [FontFeature.tabularFigures()],
   );
 
@@ -110,7 +100,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w600,
     letterSpacing: -0.6,
     height: 1.2,
-    color: VtColors.textPrimary,
     fontFeatures: const [FontFeature.tabularFigures()],
   );
 
@@ -120,7 +109,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w600,
     letterSpacing: -0.3,
     height: 1.3,
-    color: VtColors.textPrimary,
     fontFeatures: const [FontFeature.tabularFigures()],
   );
 
@@ -130,7 +118,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w500,
     letterSpacing: -0.1,
     height: 1.35,
-    color: VtColors.textPrimary,
     fontFeatures: const [FontFeature.tabularFigures()],
   );
 
@@ -140,7 +127,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w400,
     letterSpacing: 0,
     height: 1.4,
-    color: VtColors.textPrimary,
     fontFeatures: const [FontFeature.tabularFigures()],
   );
 
@@ -150,7 +136,6 @@ abstract final class VtType {
     fontWeight: FontWeight.w400,
     letterSpacing: 0,
     height: 1.4,
-    color: VtColors.textSecondary,
     fontFeatures: const [FontFeature.tabularFigures()],
   );
 }

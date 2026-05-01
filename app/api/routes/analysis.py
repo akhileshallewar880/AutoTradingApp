@@ -115,6 +115,7 @@ async def generate_analysis(request: AnalysisRequest):
             hold_duration_days=request.hold_duration_days,
             user_api_key=request.api_key,
             user_access_token=request.access_token,
+            symbols=request.symbols,
         )
 
         if not stocks_data:

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'vt_colors.dart';
 import 'vt_typography.dart';
 
 /// Backward-compatible text style constants.
@@ -23,10 +22,8 @@ abstract final class AppTextStyles {
   /// Standard body text.
   static final TextStyle body = VtType.body;
 
-  /// Body text in secondary color.
-  static final TextStyle bodySecondary = VtType.body.copyWith(
-    color: VtColors.textSecondary,
-  );
+  /// Body text in secondary color — callers should override with context.vt.textSecondary.
+  static final TextStyle bodySecondary = VtType.body;
 
   /// Labels, chips, button text.
   static final TextStyle label = VtType.label;
@@ -54,24 +51,6 @@ abstract final class AppTextStyles {
   /// Section-level totals.
   static final TextStyle monoXl = VtType.dataXL;
 
-  // ── Convenience ───────────────────────────────────────────────────────────
-
-  /// Shorthand: any DM Sans text in secondary color.
-  static TextStyle secondary(TextStyle base) =>
-      base.copyWith(color: VtColors.textSecondary);
-
-  /// Shorthand: any DM Sans text in tertiary color.
-  static TextStyle tertiary(TextStyle base) =>
-      base.copyWith(color: VtColors.textTertiary);
-
-  /// Profit-colored data value.
-  static TextStyle profit(TextStyle base) =>
-      base.copyWith(color: VtColors.profit);
-
-  /// Loss-colored data value.
-  static TextStyle loss(TextStyle base) =>
-      base.copyWith(color: VtColors.loss);
-
   // ── Legacy aliases (kept for backward compatibility) ─────────────────────
   // Screens that reference these continue to compile unchanged.
 
@@ -85,6 +64,5 @@ abstract final class AppTextStyles {
     fontWeight: FontWeight.w600,
     letterSpacing: -0.3,
     height: 1.3,
-    color: VtColors.textPrimary,
   );
 }

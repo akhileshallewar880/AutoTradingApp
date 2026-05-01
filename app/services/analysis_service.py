@@ -47,33 +47,49 @@ class AnalysisService:
         hold_duration_days: int = 0,
         user_api_key: Optional[str] = None,
         user_access_token: Optional[str] = None,
+        symbols: Optional[List[str]] = None,
     ) -> List[Dict]:
         """
         Full pipeline — branches on hold_duration_days:
           0  → intraday Zerodha pipeline (live prices + 5min candles)
           >0 → swing yfinance pipeline  (60-day daily candles)
+        When `symbols` is provided the sector-screening step is skipped and
+        those specific symbols are enriched directly.
         """
         if hold_duration_days == 0:
             return await self.screen_and_enrich_intraday(
                 limit=limit,
                 user_api_key=user_api_key,
                 user_access_token=user_access_token,
+                symbols=symbols,
             )
 
         # ── Swing / Delivery pipeline ──────────────────────────────────────
         try:
-            # For swing, we do NOT use the Zerodha live-quote screener.
-            # Zerodha historical_data is rate-limited to 3 req/sec during market
-            # hours; sequential calls for 60+ stocks cause throttling errors.
-            # yfinance daily data is sufficient for multi-day swing analysis
-            # and handles concurrent calls without rate issues.
             screen_limit = min(limit * 3, 150)
-            candidates = await self.ds.screen_top_movers(
-                limit=screen_limit,
-                sectors=sectors,
-                hold_duration_days=hold_duration_days,
-                kite_instance=None,   # yfinance screener — no rate limits
-            )
+
+            # When the caller passes specific symbols, bypass the screener
+            # and build the candidate list directly from those symbols.
+            if symbols:
+                logger.info(f"[Swing-MANUAL] Using {len(symbols)} user-specified symbols: {symbols}")
+                candidates = [
+                    {"symbol": s.upper(), "company_name": s.upper(), "last_price": 0,
+                     "volume": 0, "volume_ratio": 1.0, "day_change_pct": 0.0,
+                     "momentum_5d_pct": 0.0, "volatility_5d": 0.0}
+                    for s in symbols
+                ]
+            else:
+                # For swing, we do NOT use the Zerodha live-quote screener.
+                # Zerodha historical_data is rate-limited to 3 req/sec during market
+                # hours; sequential calls for 60+ stocks cause throttling errors.
+                # yfinance daily data is sufficient for multi-day swing analysis
+                # and handles concurrent calls without rate issues.
+                candidates = await self.ds.screen_top_movers(
+                    limit=screen_limit,
+                    sectors=sectors,
+                    hold_duration_days=hold_duration_days,
+                    kite_instance=None,   # yfinance screener — no rate limits
+                )
 
             if not candidates:
                 logger.warning("Screener returned no candidates, falling back to NIFTY 50")
@@ -137,6 +153,7 @@ class AnalysisService:
         limit: int,
         user_api_key: Optional[str] = None,
         user_access_token: Optional[str] = None,
+        symbols: Optional[List[str]] = None,
     ) -> List[Dict]:
         """
         Intraday pipeline:
@@ -179,17 +196,22 @@ class AnalysisService:
             user_zerodha = zerodha_service
             logger.warning("[Intraday-CREDS] No user credentials provided, using global zerodha_service (may fail!)")
 
-        # ── Step 1: Dynamic screening from full NSE universe ───────────────
-        logger.info("[Intraday] Dynamically screening top intraday candidates from NSE universe...")
-
-        pre_screened = await self.ds.screen_top_movers(limit=80, hold_duration_days=0)
-
-        if not pre_screened:
-            logger.warning("[Intraday] Dynamic screening returned no candidates, using last-resort list")
-            pre_screened = [{"symbol": s, "company_name": s, "last_price": 0,
+        # ── Step 1: Build candidate universe ──────────────────────────────
+        if symbols:
+            logger.info(f"[Intraday-MANUAL] Using {len(symbols)} user-specified symbols: {symbols}")
+            pre_screened = [{"symbol": s.upper(), "company_name": s.upper(), "last_price": 0,
                              "volume": 0, "volume_ratio": 1.0, "day_change_pct": 0.0,
                              "momentum_5d_pct": 0.0, "volatility_5d": 0.0}
-                            for s in _INTRADAY_LAST_RESORT]
+                            for s in symbols]
+        else:
+            logger.info("[Intraday] Dynamically screening top intraday candidates from NSE universe...")
+            pre_screened = await self.ds.screen_top_movers(limit=80, hold_duration_days=0)
+            if not pre_screened:
+                logger.warning("[Intraday] Dynamic screening returned no candidates, using last-resort list")
+                pre_screened = [{"symbol": s, "company_name": s, "last_price": 0,
+                                 "volume": 0, "volume_ratio": 1.0, "day_change_pct": 0.0,
+                                 "momentum_5d_pct": 0.0, "volatility_5d": 0.0}
+                                for s in _INTRADAY_LAST_RESORT]
 
         universe = [c["symbol"] for c in pre_screened]
         logger.info(f"[Intraday] Screened {len(universe)} candidates from NSE universe")

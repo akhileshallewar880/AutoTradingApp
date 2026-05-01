@@ -138,6 +138,7 @@ class AnalysisProvider with ChangeNotifier {
     List<String>? sectors,
     double capitalToUse = 0,
     int leverage = 1,
+    List<String>? symbols,
   }) async {
     _isLoading = true;
     _error = null;
@@ -160,6 +161,7 @@ class AnalysisProvider with ChangeNotifier {
           holdDurationDays: _holdDurationDays,
           capitalToUse: capitalToUse,
           leverage: leverage,
+          symbols: symbols,
         );
         _currentAnalysis = analysis;
       }
