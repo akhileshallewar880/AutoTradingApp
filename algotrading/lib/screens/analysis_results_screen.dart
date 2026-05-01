@@ -1,10 +1,16 @@
+import '../theme/vt_color_scheme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/analysis_provider.dart';
 import '../models/analysis_model.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
+import '../widgets/status_badge.dart';
 import '../widgets/stock_card.dart';
+import '../widgets/vt_button.dart';
 import 'execution_tracking_screen.dart';
 
 class AnalysisResultsScreen extends StatefulWidget {
@@ -25,302 +31,104 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
 
     if (analysis == null) {
       return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
-          title: const Text('Analysis Results'),
-          backgroundColor: Colors.green[700],
-          foregroundColor: Colors.white,
+          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+          title: Text('AI Results', style: AppTextStyles.h2),
         ),
-        body: const Center(child: Text('No analysis data available')),
+        body: Center(
+          child: Text('No analysis data available',
+              style: AppTextStyles.bodySecondary),
+        ),
       );
     }
 
-    // Show friendly message if no trades found
     if (analysis.stocks.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('AI Analysis Results'),
-          backgroundColor: Colors.green[700],
-          foregroundColor: Colors.white,
-        ),
-        body: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Illustration Icon
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: Colors.blue[50],
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.trending_flat,
-                    size: 60,
-                    color: Colors.blue[700],
-                  ),
-                ),
-                const SizedBox(height: 32),
-
-                // Heading
-                const Text(
-                  'No Trades Found Today',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-
-                const SizedBox(height: 16),
-
-                // Message
-                Text(
-                  'GenAI analyzed the market but couldn\'t find any suitable trading opportunities for you today.',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.grey[600],
-                    height: 1.5,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-
-                const SizedBox(height: 24),
-
-                // Reasons Box
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.amber[50],
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.amber[200]!),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.info_outline,
-                            color: Colors.amber[700],
-                            size: 20,
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Why no trades?',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.amber[900],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      _buildReasonItem(
-                        '📉',
-                        'Market volatility is low',
-                        'GenAI prefers to wait for clearer signals',
-                      ),
-                      const SizedBox(height: 8),
-                      _buildReasonItem(
-                        '⚡',
-                        'Risk/reward ratio not favorable',
-                        'Better opportunities might appear later',
-                      ),
-                      const SizedBox(height: 8),
-                      _buildReasonItem(
-                        '🎯',
-                        'Technical indicators not aligned',
-                        'GenAI follows strict entry criteria',
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 32),
-
-                // Action Buttons
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      analysisProvider.clearAnalysis();
-                      Navigator.of(context).pop();
-                    },
-                    icon: const Icon(Icons.refresh, size: 20),
-                    label: const Text(
-                      'Try Different Settings',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green[700],
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-
-                // Secondary Action
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                    },
-                    icon: const Icon(Icons.home_outlined, size: 20),
-                    label: const Text(
-                      'Back to Dashboard',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.green[700],
-                      side: BorderSide(color: Colors.green[700]!, width: 2),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Encouragement Text
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue[50],
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.blue[100]!),
-                  ),
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.lightbulb_outline,
-                        color: Colors.blue[700],
-                        size: 24,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Come back tomorrow',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue[900],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Market conditions change daily. Better opportunities might be available tomorrow!',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.blue[700],
-                          height: 1.4,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
+      return _buildEmptyState(analysisProvider);
     }
 
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('AI Analysis Results'),
-        backgroundColor: Colors.green[700],
-        foregroundColor: Colors.white,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        title: Row(
+          children: [
+            Text('AI Results', style: AppTextStyles.h2),
+            const SizedBox(width: Sp.sm),
+            StatusBadge(
+              label: '${analysis.stocks.length} Picks',
+              type: BadgeType.ai,
+            ),
+          ],
+        ),
       ),
       body: Column(
         children: [
-          _buildMetricsCard(context, analysis, analysisProvider),
+          // ── Metrics strip ──────────────────────────────────────────────────
+          _buildMetricsStrip(analysis, analysisProvider),
+
+          // ── Selection controls + disclaimer ────────────────────────────────
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding:
+                EdgeInsets.symmetric(horizontal: Sp.base, vertical: Sp.xs),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
                   '${analysisProvider.selectedStockCount} of ${analysis.stocks.length} selected',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey[700],
+                  style: AppTextStyles.caption
+                      .copyWith(color: context.vt.textSecondary),
+                ),
+                SizedBox(width: Sp.xs),
+                Text('·',
+                    style: AppTextStyles.caption
+                        .copyWith(color: context.vt.textTertiary)),
+                SizedBox(width: Sp.xs),
+                Expanded(
+                  child: Text(
+                    'Not financial advice.',
+                    style: AppTextStyles.caption
+                        .copyWith(color: context.vt.textTertiary, fontSize: 11),
                   ),
                 ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Expand All / Collapse All
-                    IconButton(
-                      onPressed: () {
-                        setState(() {
-                          _allExpanded = !_allExpanded;
-                        });
-                      },
-                      icon: Icon(
-                        _allExpanded ? Icons.unfold_less : Icons.unfold_more,
-                        size: 20,
-                        color: Colors.green[700],
-                      ),
-                      tooltip: _allExpanded ? 'Collapse All' : 'Expand All',
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    // Select All / Deselect All
-                    TextButton.icon(
-                      onPressed: () {
-                        if (analysisProvider.selectedStockCount ==
-                            analysis.stocks.length) {
-                          analysisProvider.deselectAllStocks();
-                        } else {
-                          analysisProvider.selectAllStocks();
-                        }
-                      },
-                      icon: Icon(
-                        analysisProvider.selectedStockCount ==
-                                analysis.stocks.length
-                            ? Icons.deselect
-                            : Icons.select_all,
-                        size: 18,
-                      ),
-                      label: Text(
-                        analysisProvider.selectedStockCount ==
-                                analysis.stocks.length
-                            ? 'Deselect All'
-                            : 'Select All',
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.green[700],
-                      ),
-                    ),
-                  ],
+                GestureDetector(
+                  onTap: () => setState(() => _allExpanded = !_allExpanded),
+                  child: Icon(
+                    _allExpanded
+                        ? Icons.unfold_less_rounded
+                        : Icons.unfold_more_rounded,
+                    size: 18,
+                    color: context.vt.textSecondary,
+                  ),
+                ),
+                SizedBox(width: Sp.sm),
+                GestureDetector(
+                  onTap: () {
+                    if (analysisProvider.selectedStockCount ==
+                        analysis.stocks.length) {
+                      analysisProvider.deselectAllStocks();
+                    } else {
+                      analysisProvider.selectAllStocks();
+                    }
+                  },
+                  child: Text(
+                    analysisProvider.selectedStockCount == analysis.stocks.length
+                        ? 'Deselect All'
+                        : 'Select All',
+                    style: AppTextStyles.caption.copyWith(
+                        color: context.vt.accentGreen,
+                        fontWeight: FontWeight.w600),
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 4),
+          Divider(height: 1, color: context.vt.divider),
+          const SizedBox(height: Sp.xs),
+
+          // ── Stock list ──────────────────────────────────────────────────────
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: Sp.base),
               itemCount: analysis.stocks.length,
               itemBuilder: (context, index) {
                 return StockCard(
@@ -338,218 +146,266 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: _buildBottomBar(context, analysis, analysisProvider),
+      bottomNavigationBar:
+          _buildBottomBar(context, analysis, analysisProvider),
     );
   }
 
-  Widget _buildMetricsCard(
-    BuildContext context,
+  // ── Portfolio summary card ─────────────────────────────────────────────────
+
+  Widget _buildMetricsStrip(
     AnalysisResponseModel analysis,
     AnalysisProvider provider,
   ) {
     final metrics = analysis.portfolioMetrics;
-    final currencyFormat = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
+    final currency = NumberFormat.currency(symbol: '₹', decimalDigits: 0);
     final holdDays = provider.holdDurationDays;
-    final holdLabel = _holdLabel(holdDays);
 
-    // Overall confidence = average of all stock confidence scores
+    final totalInvestment =
+        ((metrics['total_investment'] ?? 0) as num).toDouble();
+    final maxProfit = ((metrics['max_profit'] ?? 0) as num).toDouble();
+    final maxLoss = ((metrics['max_loss'] ?? 0) as num).toDouble();
+    final profitPct =
+        totalInvestment > 0 ? maxProfit / totalInvestment * 100 : 0.0;
+    final lossPct =
+        totalInvestment > 0 ? maxLoss / totalInvestment * 100 : 0.0;
+
     final double overallConfidence = analysis.stocks.isEmpty
         ? 0.0
-        : analysis.stocks.map((s) => s.confidenceScore).reduce((a, b) => a + b) /
+        : analysis.stocks
+                .map((s) => s.confidenceScore)
+                .reduce((a, b) => a + b) /
             analysis.stocks.length;
     final int confPct = (overallConfidence * 100).round();
     final Color confColor = confPct >= 80
-        ? Colors.green[700]!
+        ? context.vt.accentGreen
         : confPct >= 70
-            ? Colors.orange[700]!
-            : Colors.red[600]!;
-    final String confLabel = confPct >= 80
-        ? 'High'
-        : confPct >= 70
-            ? 'Moderate'
-            : 'Low';
+            ? context.vt.warning
+            : context.vt.danger;
 
-    return Card(
-      margin: const EdgeInsets.all(16),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return Padding(
+      padding: EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, 0),
+      child: Container(
+        decoration: BoxDecoration(
+          color: context.vt.surface1,
+          borderRadius: BorderRadius.circular(Rad.lg),
+          border: Border.all(color: context.vt.divider),
+          boxShadow: AppColors.ambientShadow,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Portfolio Overview',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                // Hold duration badge
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
+            // ── Header ──────────────────────────────────────────────────
+            Padding(
+              padding: EdgeInsets.fromLTRB(Sp.base, Sp.md, Sp.base, Sp.sm),
+              child: Row(
+                children: [
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: context.vt.accentPurpleDim,
+                      borderRadius: BorderRadius.circular(Rad.sm),
+                    ),
+                    child: Icon(Icons.auto_awesome_rounded,
+                        size: 14, color: context.vt.accentPurple),
                   ),
-                  decoration: BoxDecoration(
-                    color: Colors.blue[50],
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.blue[200]!),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.timer_outlined, size: 13, color: Colors.blue[700]),
-                      const SizedBox(width: 4),
-                      Text(
-                        holdLabel,
-                        style: TextStyle(
-                          fontSize: 12,
+                  SizedBox(width: Sp.sm),
+                  Text('Portfolio Summary', style: AppTextStyles.h3),
+                  Spacer(),
+                  // Hold badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: Sp.sm, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: context.vt.accentPurpleDim,
+                      borderRadius: BorderRadius.circular(Rad.pill),
+                    ),
+                    child: Text(
+                      _holdLabel(holdDays),
+                      style: AppTextStyles.caption.copyWith(
+                          color: context.vt.accentPurple,
                           fontWeight: FontWeight.w600,
-                          color: Colors.blue[700],
-                        ),
+                          fontSize: 11),
+                    ),
+                  ),
+                  SizedBox(width: Sp.xs),
+                  // Picks count
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: Sp.sm, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: context.vt.surface2,
+                      borderRadius: BorderRadius.circular(Rad.pill),
+                      border: Border.all(color: context.vt.divider),
+                    ),
+                    child: Text(
+                      '${analysis.stocks.length} picks',
+                      style: AppTextStyles.caption.copyWith(
+                          color: context.vt.textSecondary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            Divider(height: 1, color: context.vt.divider),
+
+            // ── Investment hero ──────────────────────────────────────────
+            Padding(
+              padding: EdgeInsets.fromLTRB(Sp.base, Sp.md, Sp.base, Sp.sm),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('TOTAL CAPITAL AT RISK',
+                      style: AppTextStyles.caption.copyWith(
+                          fontSize: 10,
+                          letterSpacing: 0.8,
+                          color: context.vt.textTertiary)),
+                  const SizedBox(height: 4),
+                  Text(
+                    currency.format(totalInvestment),
+                    style: AppTextStyles.display.copyWith(fontSize: 30),
+                  ),
+                ],
+              ),
+            ),
+
+            // ── Profit / Loss row ────────────────────────────────────────
+            Padding(
+              padding:
+                  EdgeInsets.symmetric(horizontal: Sp.base),
+              child: Row(
+                children: [
+                  // Max Profit
+                  Expanded(
+                    child: Container(
+                      padding: EdgeInsets.all(Sp.sm),
+                      decoration: BoxDecoration(
+                        color: context.vt.accentGreen.withValues(alpha: 0.07),
+                        borderRadius: BorderRadius.circular(Rad.md),
+                        border: Border.all(
+                            color:
+                                context.vt.accentGreen.withValues(alpha: 0.18)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            Icon(Icons.trending_up_rounded,
+                                size: 12, color: context.vt.accentGreen),
+                            SizedBox(width: 4),
+                            Text('MAX PROFIT',
+                                style: AppTextStyles.caption.copyWith(
+                                    color: context.vt.accentGreen,
+                                    fontSize: 9,
+                                    letterSpacing: 0.6)),
+                          ]),
+                          SizedBox(height: 5),
+                          Text(currency.format(maxProfit),
+                              style: AppTextStyles.mono.copyWith(
+                                  color: context.vt.accentGreen,
+                                  fontWeight: FontWeight.w700)),
+                          SizedBox(height: 2),
+                          Text('+${profitPct.toStringAsFixed(1)}%',
+                              style: AppTextStyles.caption.copyWith(
+                                  color: context.vt.accentGreen,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: Sp.sm),
+                  // Max Loss
+                  Expanded(
+                    child: Container(
+                      padding: EdgeInsets.all(Sp.sm),
+                      decoration: BoxDecoration(
+                        color: context.vt.danger.withValues(alpha: 0.07),
+                        borderRadius: BorderRadius.circular(Rad.md),
+                        border: Border.all(
+                            color: context.vt.danger.withValues(alpha: 0.18)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            Icon(Icons.trending_down_rounded,
+                                size: 12, color: context.vt.danger),
+                            SizedBox(width: 4),
+                            Text('MAX LOSS',
+                                style: AppTextStyles.caption.copyWith(
+                                    color: context.vt.danger,
+                                    fontSize: 9,
+                                    letterSpacing: 0.6)),
+                          ]),
+                          SizedBox(height: 5),
+                          Text(currency.format(maxLoss),
+                              style: AppTextStyles.mono.copyWith(
+                                  color: context.vt.danger,
+                                  fontWeight: FontWeight.w700)),
+                          SizedBox(height: 2),
+                          Text('-${lossPct.toStringAsFixed(1)}%',
+                              style: AppTextStyles.caption.copyWith(
+                                  color: context.vt.danger,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // ── Confidence bar ───────────────────────────────────────────
+            Padding(
+              padding: EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, Sp.md),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('AI CONFIDENCE',
+                          style: AppTextStyles.caption.copyWith(
+                              fontSize: 10,
+                              letterSpacing: 0.6,
+                              color: context.vt.textTertiary)),
+                      Row(
+                        children: [
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: confColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Text('$confPct%',
+                              style: AppTextStyles.monoSm.copyWith(
+                                  color: confColor,
+                                  fontWeight: FontWeight.w700)),
+                        ],
                       ),
                     ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            // ── Overall Confidence Banner ─────────────────────────────────
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: confColor.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: confColor.withValues(alpha: 0.3)),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.verified_outlined, color: confColor, size: 22),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Overall Confidence — $confLabel',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: confColor,
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(
-                            value: overallConfidence,
-                            backgroundColor: confColor.withValues(alpha: 0.15),
-                            color: confColor,
-                            minHeight: 6,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    '$confPct%',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: confColor,
+                  SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(Rad.pill),
+                    child: LinearProgressIndicator(
+                      value: overallConfidence,
+                      minHeight: 5,
+                      backgroundColor: context.vt.divider,
+                      valueColor: AlwaysStoppedAnimation<Color>(confColor),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            // Available Balance
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.green[50],
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Available Balance',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                  ),
-                  Text(
-                    currencyFormat.format(
-                      metrics['available_balance'] ?? 100000,
-                    ),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green[700],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildMetric(
-                  'Total Investment',
-                  currencyFormat.format(metrics['total_investment'] ?? 0),
-                  Colors.blue,
-                ),
-                _buildMetric(
-                  'Total Risk',
-                  currencyFormat.format(metrics['total_risk'] ?? 0),
-                  Colors.orange,
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildMetric(
-                  'Max Profit',
-                  currencyFormat.format(metrics['max_profit'] ?? 0),
-                  Colors.green,
-                  pct: (metrics['total_investment'] ?? 0) > 0
-                      ? (metrics['max_profit'] ?? 0) /
-                            (metrics['total_investment'] as num) *
-                            100
-                      : null,
-                ),
-                _buildMetric(
-                  'Max Loss',
-                  currencyFormat.format(metrics['max_loss'] ?? 0),
-                  Colors.red,
-                  pct: (metrics['total_investment'] ?? 0) > 0
-                      ? (metrics['max_loss'] ?? 0) /
-                            (metrics['total_investment'] as num) *
-                            100
-                      : null,
-                ),
-              ],
-            ),
-            // Sectors badge row
-            if (provider.selectedSectors.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 6,
-                children: provider.selectedSectors.map((s) {
-                  return Chip(
-                    label: Text(s, style: const TextStyle(fontSize: 11)),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    padding: EdgeInsets.zero,
-                    backgroundColor: Colors.green[50],
-                    side: BorderSide(color: Colors.green[200]!),
-                    labelPadding: const EdgeInsets.symmetric(horizontal: 6),
-                  );
-                }).toList(),
-              ),
-            ],
           ],
         ),
       ),
@@ -561,61 +417,21 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
       case 0:
         return 'Intraday';
       case 1:
-        return '1 Day Hold';
+        return '1 Day';
       case 3:
-        return '3 Days Hold';
+        return '3 Days';
       case 7:
-        return '1 Week Hold';
+        return '1 Week';
       case 14:
-        return '2 Weeks Hold';
+        return '2 Weeks';
       case 30:
-        return '1 Month Hold';
+        return '1 Month';
       default:
-        return '$days Days Hold';
+        return '$days Days';
     }
   }
 
-  Widget _buildMetric(String label, String value, Color color, {double? pct}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
-            if (pct != null) ...[
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '${pct.toStringAsFixed(1)}%',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: color,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ],
-    );
-  }
+  // ── Bottom bar ─────────────────────────────────────────────────────────────
 
   Widget _buildBottomBar(
     BuildContext context,
@@ -625,137 +441,257 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final selectedCount = analysisProvider.selectedStockCount;
     final hasSelection = selectedCount > 0;
-    final currencyFormat = NumberFormat.currency(symbol: '₹', decimalDigits: 0);
+    final currency =
+        NumberFormat.currency(symbol: '₹', decimalDigits: 0);
 
-    // Calculate total investment for selected stocks only
     double selectedInvestment = 0;
     for (final stock in analysisProvider.selectedStocks) {
       selectedInvestment += stock.entryPrice * stock.quantity;
     }
 
     return Container(
-      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomPadding),
+      padding:
+          EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, Sp.sm + bottomPadding),
       decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, -3),
-          ),
-        ],
+        color: context.vt.surface1,
+        border: Border(top: BorderSide(color: context.vt.divider)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_confirmError != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+              padding: EdgeInsets.only(bottom: Sp.sm),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: EdgeInsets.all(Sp.md),
                 decoration: BoxDecoration(
-                  color: Colors.red[50],
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.red[200]!),
+                  color: context.vt.dangerDim,
+                  borderRadius: BorderRadius.circular(Rad.md),
+                  border: Border.all(
+                      color: context.vt.danger.withValues(alpha: 0.3)),
                 ),
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.error_outline, color: Colors.red[700], size: 18),
-                    const SizedBox(width: 8),
+                    Icon(Icons.error_outline,
+                        color: context.vt.danger, size: 16),
+                    SizedBox(width: Sp.sm),
                     Expanded(
                       child: Text(
                         _confirmError!,
-                        style: TextStyle(fontSize: 13, color: Colors.red[800]),
+                        style: AppTextStyles.caption
+                            .copyWith(color: context.vt.danger),
                       ),
                     ),
                     GestureDetector(
                       onTap: () => setState(() => _confirmError = null),
-                      child: Icon(Icons.close, size: 16, color: Colors.red[400]),
+                      child: Icon(Icons.close,
+                          size: 14, color: context.vt.danger),
                     ),
                   ],
                 ),
               ),
             ),
-          if (hasSelection && _confirmError == null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+          Row(
+            children: [
+              // Cancel
+              VtButton(
+                label: 'Cancel',
+                onPressed: () => _handleCancel(context),
+                variant: VtButtonVariant.ghost,
+                width: 90,
+              ),
+              const SizedBox(width: Sp.sm),
+              // Execute
+              Expanded(
+                child: VtButton(
+                  label: hasSelection
+                      ? 'Execute $selectedCount Trade${selectedCount == 1 ? '' : 's'}'
+                      : 'Select Trades',
+                  onPressed:
+                      hasSelection ? () => _handleConfirm(context, analysis) : null,
+                  icon: hasSelection
+                      ? const Icon(Icons.rocket_launch_rounded,
+                          size: 16, color: Colors.white)
+                      : null,
+                ),
+              ),
+            ],
+          ),
+          if (hasSelection) ...[
+            SizedBox(height: Sp.xs),
+            Text(
+              '${currency.format(selectedInvestment)} total investment',
+              style: AppTextStyles.caption
+                  .copyWith(color: context.vt.textTertiary),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Empty state ────────────────────────────────────────────────────────────
+
+  Widget _buildEmptyState(AnalysisProvider analysisProvider) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppBar(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        title: Text('AI Results', style: AppTextStyles.h2),
+      ),
+      body: SingleChildScrollView(
+        padding:
+            EdgeInsets.symmetric(horizontal: Sp.xl, vertical: Sp.xxl),
+        child: Column(
+          children: [
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                color: context.vt.accentPurpleDim,
+                shape: BoxShape.circle,
+                border: Border.all(
+                    color: context.vt.accentPurple.withValues(alpha: 0.2),
+                    width: 1.5),
+              ),
+              child: Icon(Icons.search_off_rounded,
+                  size: 44, color: context.vt.accentPurple),
+            ),
+            SizedBox(height: Sp.xl),
+            Text(
+              'No Trades Found',
+              style: AppTextStyles.h1,
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: Sp.sm),
+            Text(
+              "Market conditions aren't favorable right now. Our AI skips low-confidence setups to protect your capital.",
+              style: AppTextStyles.bodySecondary.copyWith(height: 1.6),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: Sp.xxl),
+
+            // Reasons
+            Container(
+              padding: EdgeInsets.all(Sp.base),
+              decoration: BoxDecoration(
+                color: context.vt.surface1,
+                borderRadius: BorderRadius.circular(Rad.lg),
+                border: Border.all(color: context.vt.divider),
+              ),
+              child: Column(
                 children: [
-                  Icon(Icons.info_outline, size: 14, color: Colors.grey[600]),
-                  const SizedBox(width: 6),
-                  Text(
-                    '$selectedCount stock${selectedCount == 1 ? '' : 's'} · ${currencyFormat.format(selectedInvestment)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[700],
-                      fontWeight: FontWeight.w500,
+                  _buildReasonTile(
+                    Icons.show_chart_rounded,
+                    context.vt.textSecondary,
+                    'Low momentum signals',
+                    'AI prefers to wait for clearer directional moves',
+                  ),
+                  Divider(height: Sp.base, color: context.vt.divider),
+                  _buildReasonTile(
+                    Icons.balance_rounded,
+                    context.vt.warning,
+                    'Risk/reward not favorable',
+                    'Entry price vs. stop-loss creates unfavorable ratio',
+                  ),
+                  Divider(height: Sp.base, color: context.vt.divider),
+                  _buildReasonTile(
+                    Icons.align_vertical_center_rounded,
+                    context.vt.danger,
+                    'Indicators not aligned',
+                    'AI follows strict multi-indicator entry criteria',
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: Sp.xxl),
+            VtButton(
+              label: 'Adjust Parameters',
+              onPressed: () {
+                analysisProvider.clearCurrentAnalysis();
+                Navigator.of(context).pop();
+              },
+              icon: const Icon(Icons.tune_rounded,
+                  size: 16, color: Colors.white),
+            ),
+            SizedBox(height: Sp.sm),
+            VtButton(
+              label: 'Back to Dashboard',
+              onPressed: () => Navigator.of(context).pop(),
+              variant: VtButtonVariant.ghost,
+            ),
+
+            SizedBox(height: Sp.xl),
+            Container(
+              padding: EdgeInsets.all(Sp.md),
+              decoration: BoxDecoration(
+                color: context.vt.surface1,
+                borderRadius: BorderRadius.circular(Rad.md),
+                border: Border.all(color: context.vt.divider),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.lightbulb_outline_rounded,
+                      color: context.vt.accentGold, size: 18),
+                  SizedBox(width: Sp.sm),
+                  Expanded(
+                    child: Text(
+                      'Market conditions change daily. Better setups often appear at different times or sectors.',
+                      style: AppTextStyles.caption
+                          .copyWith(color: context.vt.textSecondary),
                     ),
                   ),
                 ],
               ),
             ),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => _handleCancel(context),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    side: BorderSide(color: Colors.grey[400]!),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton.icon(
-                  onPressed: hasSelection
-                      ? () => _handleConfirm(context, analysis)
-                      : null,
-                  icon: const Icon(Icons.rocket_launch_rounded, size: 18),
-                  label: Text(
-                    hasSelection
-                        ? 'Execute $selectedCount Trade${selectedCount == 1 ? '' : 's'}'
-                        : 'Select Trades',
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[700],
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: Colors.grey[300],
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 2,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
+
+  Widget _buildReasonTile(
+      IconData icon, Color color, String title, String body) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(Rad.sm),
+          ),
+          child: Icon(icon, size: 16, color: color),
+        ),
+        const SizedBox(width: Sp.sm),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: AppTextStyles.body
+                      .copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 2),
+              Text(body, style: AppTextStyles.caption),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Business logic (unchanged) ─────────────────────────────────────────────
 
   Future<void> _handleCancel(BuildContext context) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Cancel Analysis'),
-        content: const Text('Are you sure you want to cancel this analysis?'),
+        content:
+            const Text('Are you sure you want to cancel this analysis?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -775,20 +711,20 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     }
   }
 
-  /// Returns true if NSE is currently open (Mon–Fri, 9:15–15:30 IST).
   bool _isMarketOpen() {
     final now = DateTime.now();
-    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) return false;
+    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) {
+      return false;
+    }
     final minuteOfDay = now.hour * 60 + now.minute;
     return minuteOfDay >= 9 * 60 + 15 && minuteOfDay < 15 * 60 + 30;
   }
 
-  /// True when Zerodha's AMO window is open.
-  /// Weekends: always (executes next trading day).
-  /// Weekdays: after 3:45 PM or before 9:15 AM (full non-market window).
   bool _isAmoWindow() {
     final now = DateTime.now();
-    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) return true;
+    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) {
+      return true;
+    }
     final minuteOfDay = now.hour * 60 + now.minute;
     return minuteOfDay >= 15 * 60 + 45 || minuteOfDay < 9 * 60 + 15;
   }
@@ -810,31 +746,26 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     return 'Market is closed for today (current time: $timeStr).\nNSE closed at 3:30 PM IST. Try again tomorrow.';
   }
 
-  Future<void> _showMarketClosedDialog(BuildContext context, String reason) {
+  Future<void> _showMarketClosedDialog(
+      BuildContext context, String reason) {
     return showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(8),
+              padding: EdgeInsets.all(Sp.sm),
               decoration: BoxDecoration(
-                color: Colors.orange[50],
+                color: context.vt.warning.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
-              child: Icon(
-                Icons.access_time_rounded,
-                color: Colors.orange[700],
-                size: 24,
-              ),
+              child: Icon(Icons.access_time_rounded,
+                  color: context.vt.warning, size: 22),
             ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Market Closed',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
+            const SizedBox(width: Sp.md),
+            Expanded(
+              child: Text('Market Closed',
+                  style: AppTextStyles.h2),
             ),
           ],
         ),
@@ -842,23 +773,23 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(reason, style: const TextStyle(fontSize: 14, height: 1.5)),
-            const SizedBox(height: 16),
+            Text(reason, style: AppTextStyles.body),
+            SizedBox(height: Sp.base),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(Sp.md),
               decoration: BoxDecoration(
-                color: Colors.blue[50],
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.blue[200]!),
+                color: context.vt.surface2,
+                borderRadius: BorderRadius.circular(Rad.md),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, size: 16, color: Colors.blue[700]),
-                  const SizedBox(width: 8),
-                  const Expanded(
+                  Icon(Icons.info_outline,
+                      size: 14, color: context.vt.textSecondary),
+                  const SizedBox(width: Sp.sm),
+                  Expanded(
                     child: Text(
                       'NSE market hours:\nMonday – Friday, 9:15 AM – 3:30 PM IST',
-                      style: TextStyle(fontSize: 12, height: 1.4),
+                      style: AppTextStyles.caption,
                     ),
                   ),
                 ],
@@ -900,21 +831,21 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     return await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             title: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: EdgeInsets.all(Sp.sm),
                   decoration: BoxDecoration(
-                    color: Colors.indigo[50],
+                    color: context.vt.accentPurpleDim,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.schedule_rounded, color: Colors.indigo[700], size: 24),
+                  child: Icon(Icons.schedule_rounded,
+                      color: context.vt.accentPurple, size: 22),
                 ),
-                const SizedBox(width: 12),
-                const Expanded(
+                const SizedBox(width: Sp.md),
+                Expanded(
                   child: Text('Place After Market Order?',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                      style: AppTextStyles.h2),
                 ),
               ],
             ),
@@ -922,33 +853,34 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  _amoDialogBody(),
-                  style: const TextStyle(fontSize: 14, height: 1.5),
-                ),
-                const SizedBox(height: 14),
+                Text(_amoDialogBody(), style: AppTextStyles.body),
+                SizedBox(height: Sp.md),
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: EdgeInsets.all(Sp.md),
                   decoration: BoxDecoration(
-                    color: Colors.amber[50],
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.amber[300]!),
+                    color: context.vt.warning.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(Rad.md),
+                    border: Border.all(
+                        color: context.vt.warning.withValues(alpha: 0.3)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(children: [
-                        Icon(Icons.warning_amber_rounded, size: 16, color: Colors.amber[800]),
-                        const SizedBox(width: 6),
+                        Icon(Icons.warning_amber_rounded,
+                            size: 14, color: context.vt.warning),
+                        SizedBox(width: Sp.xs),
                         Text('After order fills at market open:',
-                            style: TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber[900])),
+                            style: AppTextStyles.caption.copyWith(
+                                color: context.vt.warning,
+                                fontWeight: FontWeight.w600)),
                       ]),
-                      const SizedBox(height: 6),
+                      SizedBox(height: Sp.xs),
                       Text(
                         '• Open Zerodha app and set Stop Loss + Target\n'
                         '  via GTT or SL order to protect your position.',
-                        style: TextStyle(fontSize: 12, color: Colors.amber[900], height: 1.4),
+                        style: AppTextStyles.caption
+                            .copyWith(color: context.vt.warning),
                       ),
                     ],
                   ),
@@ -963,8 +895,8 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
               ElevatedButton(
                 onPressed: () => Navigator.pop(ctx, true),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.indigo[700],
-                  foregroundColor: Colors.white,
+                  backgroundColor: context.vt.accentPurple,
+                  foregroundColor: context.vt.surface0,
                 ),
                 child: const Text('Place AMO'),
               ),
@@ -984,12 +916,10 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     final isSwing = analysisProvider.holdDurationDays > 0;
 
     if (!_isMarketOpen()) {
-      // Swing trades: allow AMO placement after market hours
       if (isSwing && _isAmoWindow()) {
         final proceed = await _showAmoConfirmDialog(context);
         if (!proceed || !context.mounted) return;
       } else {
-        // Intraday or outside AMO window — block
         if (context.mounted) {
           await _showMarketClosedDialog(context, _marketClosedReason());
         }
@@ -1022,9 +952,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
       if (!context.mounted) return;
 
       final errorMsg = e.toString().toLowerCase();
-      // HTTP 423 from backend = market closed; also catch keyword-based detection
-      final isMarketClosed =
-          errorMsg.contains('423') ||
+      final isMarketClosed = errorMsg.contains('423') ||
           (errorMsg.contains('market') &&
               (errorMsg.contains('closed') ||
                   errorMsg.contains('open') ||
@@ -1047,38 +975,5 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
       }
     }
   }
-
-  Widget _buildReasonItem(String emoji, String title, String description) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(emoji, style: const TextStyle(fontSize: 16)),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.amber[900],
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                description,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.amber[700],
-                  height: 1.3,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 }
+

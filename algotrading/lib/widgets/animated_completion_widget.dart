@@ -1,12 +1,14 @@
+import '../theme/vt_color_scheme.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../theme/app_text_styles.dart';
 
 /// A stat item to display below the completion animation.
 class CompletionStatItem {
   final String label;
   final String value;
   final Color? color;
-  const CompletionStatItem(this.label, this.value, {this.color});
+  CompletionStatItem(this.label, this.value, {this.color});
 }
 
 /// Animated completion widget shown when order execution finishes.
@@ -72,7 +74,7 @@ class _AnimatedCompletionWidgetState extends State<AnimatedCompletionWidget>
       curve: Curves.easeIn,
     );
     _statsSlide = Tween<Offset>(
-      begin: const Offset(0, 0.3),
+      begin: Offset(0, 0.3),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _statsController, curve: Curves.easeOut));
 
@@ -94,7 +96,7 @@ class _AnimatedCompletionWidgetState extends State<AnimatedCompletionWidget>
 
   @override
   Widget build(BuildContext context) {
-    final color = widget.isSuccess ? Colors.green[700]! : Colors.red[600]!;
+    final color = widget.isSuccess ? context.vt.accentGreen : context.vt.danger;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -127,20 +129,13 @@ class _AnimatedCompletionWidgetState extends State<AnimatedCompletionWidget>
               children: [
                 Text(
                   widget.title,
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
+                  style: AppTextStyles.h2.copyWith(color: color),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
                 Text(
                   widget.subtitle,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[600],
-                  ),
+                  style: AppTextStyles.caption,
                   textAlign: TextAlign.center,
                 ),
                 if (widget.stats.isNotEmpty) ...[
@@ -163,15 +158,14 @@ class _AnimatedCompletionWidgetState extends State<AnimatedCompletionWidget>
           children: [
             Text(
               s.value,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: s.color ?? Colors.black87,
+              style: AppTextStyles.monoLg.copyWith(
+                color: s.color ?? context.vt.textPrimary,
+                fontWeight: FontWeight.w700,
               ),
             ),
             Text(
               s.label,
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              style: AppTextStyles.caption,
             ),
           ],
         );
@@ -200,7 +194,7 @@ class _CompletionPainter extends CustomPainter {
 
     // Background circle (light)
     final bgPaint = Paint()
-      ..color = color.withOpacity(0.1)
+      ..color = color.withValues(alpha: 0.1)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, radius, bgPaint);
 
@@ -286,8 +280,8 @@ extension AnimatedCompletionWidgetFactory on AnimatedCompletionWidget {
       title: title,
       subtitle: subtitle,
       stats: [
-        CompletionStatItem('Completed', '$completed', color: Colors.green[700]),
-        CompletionStatItem('Failed', '$failed', color: Colors.red[600]),
+        CompletionStatItem('Completed', '$completed', color: const Color(0xFF00D4AA)),
+        CompletionStatItem('Failed', '$failed', color: const Color(0xFFFF4757)),
       ],
     );
   }
@@ -303,8 +297,8 @@ extension AnimatedCompletionWidgetFactory on AnimatedCompletionWidget {
       title: title,
       subtitle: subtitle,
       stats: [
-        CompletionStatItem('Completed', '$completed', color: Colors.green[700]),
-        CompletionStatItem('Failed', '$failed', color: Colors.red[600]),
+        CompletionStatItem('Completed', '$completed', color: const Color(0xFF00D4AA)),
+        CompletionStatItem('Failed', '$failed', color: const Color(0xFFFF4757)),
       ],
     );
   }

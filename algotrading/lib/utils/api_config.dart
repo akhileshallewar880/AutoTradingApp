@@ -26,6 +26,10 @@ class ApiConfig {
   // Performance endpoint
   static const String monthlyPerformanceUrl = '$baseUrl/monthly-performance';
 
+  // Options monitor resume (re-attach AI monitoring after server restart)
+  static String optionsMonitorResumeUrl(String analysisId) =>
+      '$baseUrl/live-trading/options/$analysisId/resume';
+
   // Live trading (autonomous agent) endpoints
   static const String liveAgentStartUrl = '$baseUrl/live-trading/start';
   static const String liveAgentStopUrl = '$baseUrl/live-trading/stop';

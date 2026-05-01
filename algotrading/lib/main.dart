@@ -1,16 +1,19 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
 import 'providers/analysis_provider.dart';
 import 'providers/dashboard_provider.dart';
+import 'providers/theme_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/api_settings_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
+import 'theme/app_theme.dart';
 
 /// Allows the app to connect to api.vantrade.in even when the device's trust
 /// store doesn't recognise the intermediate CA (common on older Android).
@@ -31,9 +34,14 @@ void main() async {
   HttpOverrides.global = _TrustAllCerts();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
-  runApp(const AlgoTradingApp());
+  Animate.restartOnHotReload = true;
 
-  // Notifications: set up AFTER runApp so permission dialog appears over splash
+  // Load persisted theme before first frame
+  final themeProvider = ThemeProvider();
+  await themeProvider.load();
+
+  runApp(AlgoTradingApp(themeProvider: themeProvider));
+
   NotificationService.instance.initialize().then((_) {
     NotificationService.initializeTimezone().then((_) {
       NotificationService.instance.scheduleWeekdayLoginReminders();
@@ -42,39 +50,35 @@ void main() async {
 }
 
 class AlgoTradingApp extends StatelessWidget {
-  const AlgoTradingApp({super.key});
+  const AlgoTradingApp({super.key, required this.themeProvider});
+  final ThemeProvider themeProvider;
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        ChangeNotifierProvider.value(value: themeProvider),
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => AnalysisProvider()),
         ChangeNotifierProvider(create: (_) => DashboardProvider()),
       ],
-      child: MaterialApp(
-        title: 'VanTrade',
-        debugShowCheckedModeBanner: false,
-        navigatorObservers: [routeObserver],
-        theme: ThemeData(
-          primarySwatch: Colors.green,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.green,
-            primary: Colors.green[700]!,
-          ),
-          useMaterial3: true,
-          cardTheme: const CardThemeData(
-            elevation: 2,
-          ),
+      child: Consumer<ThemeProvider>(
+        builder: (_, tp, _) => MaterialApp(
+          title: 'VanTrade',
+          debugShowCheckedModeBanner: false,
+          navigatorObservers: [routeObserver],
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: tp.mode,
+          initialRoute: '/',
+          routes: {
+            '/': (context) => const SplashScreen(),
+            '/onboarding': (context) => const OnboardingScreen(),
+            '/login': (context) => const LoginScreen(),
+            '/api-settings': (context) => const ApiSettingsScreen(),
+            '/home': (context) => const HomeScreen(),
+          },
         ),
-        initialRoute: '/',
-        routes: {
-          '/': (context) => const SplashScreen(),
-          '/onboarding': (context) => const OnboardingScreen(),
-          '/login': (context) => const LoginScreen(),
-          '/api-settings': (context) => const ApiSettingsScreen(),
-          '/home': (context) => const HomeScreen(),
-        },
       ),
     );
   }

@@ -1,3 +1,4 @@
+import '../theme/vt_color_scheme.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -6,7 +7,12 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart' show AuthProvider, kDemoAccessToken;
 import '../models/holdings_model.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 import '../utils/api_config.dart';
+import '../widgets/status_badge.dart';
+import '../widgets/vt_button.dart';
 
 class HoldingsScreen extends StatefulWidget {
   const HoldingsScreen({super.key});
@@ -29,7 +35,8 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   void initState() {
     super.initState();
     _fetchHoldings();
-    _ltpTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refreshLtps());
+    _ltpTimer =
+        Timer.periodic(Duration(seconds: 30), (_) => _refreshLtps());
   }
 
   @override
@@ -38,19 +45,27 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     super.dispose();
   }
 
-  // ── Data Fetching ─────────────────────────────────────────────────────────
+  // ── Data Fetching ──────────────────────────────────────────────────────────
 
   Future<void> _fetchHoldings() async {
     final auth = context.read<AuthProvider>();
     if (auth.user == null) {
-      if (mounted) setState(() { _loading = false; _error = 'Not logged in.'; });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Not logged in.';
+        });
+      }
       return;
     }
 
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
 
     if (auth.user!.accessToken == kDemoAccessToken) {
-      await Future.delayed(const Duration(milliseconds: 400));
+      await Future.delayed(Duration(milliseconds: 400));
       if (!mounted) return;
       setState(() {
         _holdings = _demoHoldings();
@@ -61,11 +76,12 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     }
 
     try {
-      final uri = Uri.parse(ApiConfig.holdingsUrl).replace(queryParameters: {
+      final uri =
+          Uri.parse(ApiConfig.holdingsUrl).replace(queryParameters: {
         'api_key': auth.user!.apiKey,
         'access_token': auth.user!.accessToken,
       });
-      final resp = await http.get(uri).timeout(const Duration(seconds: 20));
+      final resp = await http.get(uri).timeout(Duration(seconds: 20));
 
       if (!mounted) return;
       if (resp.statusCode == 200) {
@@ -84,14 +100,27 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           _loading = false;
         });
       } else if (resp.statusCode == 403) {
-        setState(() { _error = '__UPGRADE_REQUIRED__'; _loading = false; });
+        setState(() {
+          _error = '__UPGRADE_REQUIRED__';
+          _loading = false;
+        });
       } else {
         String msg = 'Failed to load holdings';
-        try { msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg; } catch (_) {}
-        setState(() { _error = msg; _loading = false; });
+        try {
+          msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg;
+        } catch (_) {}
+        setState(() {
+          _error = msg;
+          _loading = false;
+        });
       }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -107,48 +136,61 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     if (tokens.isEmpty) return;
 
     try {
-      final uri = Uri.parse(ApiConfig.tickerSnapshotUrl).replace(queryParameters: {
+      final uri =
+          Uri.parse(ApiConfig.tickerSnapshotUrl).replace(queryParameters: {
         'api_key': auth.user!.apiKey,
         'access_token': auth.user!.accessToken,
         'tokens': tokens,
       });
-      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
+      final resp = await http.get(uri).timeout(Duration(seconds: 10));
       if (!mounted || resp.statusCode != 200) return;
 
-      final snap = (jsonDecode(resp.body) as Map<String, dynamic>)['snapshot'] as Map<String, dynamic>? ?? {};
+      final snap = (jsonDecode(resp.body) as Map<String, dynamic>)['snapshot']
+              as Map<String, dynamic>? ??
+          {};
       setState(() {
         _holdings = _holdings.map((h) {
-          final d = snap[h.instrumentToken?.toString() ?? ''] as Map<String, dynamic>?;
+          final d = snap[h.instrumentToken?.toString() ?? '']
+              as Map<String, dynamic>?;
           if (d == null) return h;
-          final ltp = (d['last_price'] as num?)?.toDouble() ?? h.lastPrice;
+          final ltp =
+              (d['last_price'] as num?)?.toDouble() ?? h.lastPrice;
           final pnl = (ltp - h.averagePrice) * h.quantity;
-          final pnlPct = h.averagePrice > 0 ? (ltp - h.averagePrice) / h.averagePrice * 100 : 0.0;
+          final pnlPct = h.averagePrice > 0
+              ? (ltp - h.averagePrice) / h.averagePrice * 100
+              : 0.0;
           return h.copyWith(
             lastPrice: double.parse(ltp.toStringAsFixed(2)),
             pnl: double.parse(pnl.toStringAsFixed(2)),
             pnlPct: double.parse(pnlPct.toStringAsFixed(2)),
-            currentValue: double.parse((ltp * h.quantity).toStringAsFixed(2)),
+            currentValue:
+                double.parse((ltp * h.quantity).toStringAsFixed(2)),
           );
         }).toList();
       });
     } catch (_) {}
   }
 
-  // ── Exit Actions ──────────────────────────────────────────────────────────
+  // ── Exit Actions ───────────────────────────────────────────────────────────
 
   Future<void> _exitHolding(Holding h) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Exit Holding'),
+        title: Text('Exit Holding'),
         content: Text(
-          'Sell all ${h.quantity} shares of ${h.symbol} at market price?\n\n'
-          'This cannot be undone.',
+          'Sell all ${h.quantity} shares of ${h.symbol} at current price (limit order).\n\n'
+          'The order will fill immediately for liquid stocks. This cannot be undone.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[600], foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: context.vt.danger,
+                foregroundColor: context.vt.textPrimary),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Exit Now'),
           ),
@@ -161,33 +203,32 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
 
     try {
       final auth = context.read<AuthProvider>();
-      final uri = Uri.parse(ApiConfig.exitHoldingUrl(h.symbol)).replace(queryParameters: {
+      final uri =
+          Uri.parse(ApiConfig.exitHoldingUrl(h.symbol)).replace(queryParameters: {
         'api_key': auth.user!.apiKey,
         'access_token': auth.user!.accessToken,
       });
-      final resp = await http.post(uri).timeout(const Duration(seconds: 20));
+      final resp = await http.post(uri).timeout(Duration(seconds: 20));
 
       if (!mounted) return;
       if (resp.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${h.symbol} exit order placed successfully'),
-            backgroundColor: Colors.green[700],
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${h.symbol} exit order placed successfully'),
+          backgroundColor: context.vt.accentGreen,
+        ));
         _fetchHoldings();
       } else {
         String msg = 'Exit failed';
-        try { msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg; } catch (_) {}
+        try {
+          msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg;
+        } catch (_) {}
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), backgroundColor: Colors.red[700]),
-        );
+            SnackBar(content: Text(msg), backgroundColor: context.vt.danger));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red[700]),
-        );
+            SnackBar(content: Text(e.toString()), backgroundColor: context.vt.danger));
       }
     } finally {
       if (mounted) setState(() => _exitingSymbol = null);
@@ -198,15 +239,20 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Exit All Holdings'),
+        title: Text('Exit All Holdings'),
         content: Text(
           'Sell all ${_holdings.length} holdings at market price?\n\n'
           'This will place ${_holdings.length} SELL orders. This cannot be undone.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[700], foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: context.vt.danger,
+                foregroundColor: context.vt.textPrimary),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Exit All'),
           ),
@@ -219,40 +265,39 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
 
     try {
       final auth = context.read<AuthProvider>();
-      final uri = Uri.parse(ApiConfig.exitAllHoldingsUrl).replace(queryParameters: {
+      final uri =
+          Uri.parse(ApiConfig.exitAllHoldingsUrl).replace(queryParameters: {
         'api_key': auth.user!.apiKey,
         'access_token': auth.user!.accessToken,
       });
-      final resp = await http.post(uri).timeout(const Duration(seconds: 30));
+      final resp = await http.post(uri).timeout(Duration(seconds: 30));
 
       if (!mounted) return;
       if (resp.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Exit orders placed for all holdings'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Exit orders placed for all holdings'),
+          backgroundColor: context.vt.accentGreen,
+        ));
         _fetchHoldings();
       } else {
         String msg = 'Exit all failed';
-        try { msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg; } catch (_) {}
+        try {
+          msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg;
+        } catch (_) {}
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), backgroundColor: Colors.red[700]),
-        );
+            SnackBar(content: Text(msg), backgroundColor: context.vt.danger));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red[700]),
-        );
+            SnackBar(content: Text(e.toString()), backgroundColor: context.vt.danger));
       }
     } finally {
       if (mounted) setState(() => _exitingSymbol = null);
     }
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -260,177 +305,167 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     final isDemo = auth.user?.accessToken == kDemoAccessToken;
 
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         title: Row(
           children: [
-            const Text('Holdings'),
+            Text('Holdings', style: AppTextStyles.h2),
             if (!isDemo) ...[
-              const SizedBox(width: 8),
-              _liveBadge(),
+              const SizedBox(width: Sp.sm),
+              const StatusBadge(
+                label: 'LIVE',
+                type: BadgeType.success,
+                pulseDot: true,
+              ),
             ],
           ],
         ),
-        backgroundColor: Colors.indigo[700],
-        foregroundColor: Colors.white,
         actions: [
-          if (_holdings.isNotEmpty && !isDemo)
-            _exitingSymbol == '__ALL__'
-                ? const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
-                  )
-                : TextButton.icon(
-                    onPressed: _exitAll,
-                    icon: const Icon(Icons.exit_to_app, size: 16, color: Colors.white70),
-                    label: const Text('Exit All', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                  ),
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: Icon(Icons.refresh_rounded,
+                color: context.vt.accentGreen, size: 20),
             onPressed: _fetchHoldings,
           ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: CircularProgressIndicator(color: context.vt.accentGreen))
           : _error != null
               ? _buildError()
               : _holdings.isEmpty
                   ? _buildEmpty()
-                  : RefreshIndicator(
-                      onRefresh: _fetchHoldings,
-                      child: CustomScrollView(
-                        slivers: [
-                          SliverToBoxAdapter(child: _buildSummaryCard()),
-                          SliverPadding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            sliver: SliverList(
-                              delegate: SliverChildBuilderDelegate(
-                                (ctx, i) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 10),
-                                  child: _buildHoldingCard(_holdings[i], isDemo),
+                  : Column(
+                      children: [
+                        Expanded(
+                          child: RefreshIndicator(
+                            color: context.vt.accentGreen,
+                            backgroundColor: context.vt.surface1,
+                            onRefresh: _fetchHoldings,
+                            child: CustomScrollView(
+                              slivers: [
+                                SliverToBoxAdapter(
+                                    child: _buildSummaryCard()),
+                                SliverPadding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: Sp.base),
+                                  sliver: SliverList(
+                                    delegate: SliverChildBuilderDelegate(
+                                      (ctx, i) => Padding(
+                                        padding: const EdgeInsets.only(
+                                            bottom: Sp.sm),
+                                        child: _buildHoldingCard(
+                                            _holdings[i], isDemo),
+                                      ),
+                                      childCount: _holdings.length,
+                                    ),
+                                  ),
                                 ),
-                                childCount: _holdings.length,
-                              ),
+                                const SliverToBoxAdapter(
+                                    child: SizedBox(height: Sp.xxl)),
+                              ],
                             ),
                           ),
-                          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-                        ],
-                      ),
+                        ),
+                        // Sticky "Exit All" bar
+                        if (_holdings.isNotEmpty && !isDemo)
+                          _buildExitAllBar(),
+                      ],
                     ),
     );
   }
 
-  Widget _liveBadge() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: Colors.green[400],
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 5, height: 5,
-            decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 3),
-          const Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-
-  // ── Summary Card ────────────────────────────────────────────────────────────
+  // ── Summary Card ───────────────────────────────────────────────────────────
 
   Widget _buildSummaryCard() {
-    if (_summary == null) return const SizedBox.shrink();
+    if (_summary == null) return SizedBox.shrink();
     final s = _summary!;
     final isProfit = s.totalPnl >= 0;
+    final pnlColor =
+        isProfit ? context.vt.accentGreen : context.vt.danger;
 
-    final gttHoldings = _holdings.where((h) => h.hasGtt && h.maxProfit != null && h.maxLoss != null).toList();
-    final totalExpectedProfit = gttHoldings.fold(0.0, (sum, h) => sum + h.maxProfit!);
-    final totalExpectedLoss   = gttHoldings.fold(0.0, (sum, h) => sum + h.maxLoss!);
+    final gttHoldings = _holdings
+        .where((h) => h.hasGtt && h.maxProfit != null && h.maxLoss != null)
+        .toList();
+    final totalExpectedProfit =
+        gttHoldings.fold(0.0, (sum, h) => sum + h.maxProfit!);
+    final totalExpectedLoss =
+        gttHoldings.fold(0.0, (sum, h) => sum + h.maxLoss!);
     final gttCount = gttHoldings.length;
 
     return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.all(Sp.base),
+      padding: EdgeInsets.all(Sp.base),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.indigo[700]!, Colors.indigo[500]!],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
+        color: context.vt.surface1,
+        borderRadius: BorderRadius.circular(Rad.lg),
+        border: Border.all(
+            color: pnlColor.withValues(alpha: 0.2)),
+        boxShadow: isProfit ? AppColors.greenGlow : AppColors.dangerGlow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Portfolio Holdings',
-              style: TextStyle(color: Colors.white70, fontSize: 13)),
-          const SizedBox(height: 4),
+          Text('Portfolio Holdings', style: AppTextStyles.caption),
+          const SizedBox(height: Sp.xs),
           Text(
             _currency.format(s.totalCurrentValue),
-            style: const TextStyle(
-                color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+            style: AppTextStyles.display.copyWith(fontSize: 32),
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: Sp.md),
           Row(
             children: [
-              _summaryPill(
-                'Invested',
-                _currency.format(s.totalInvested),
-                Colors.white.withValues(alpha: 0.25),
-              ),
-              const SizedBox(width: 8),
+              _summaryPill('Invested', _currency.format(s.totalInvested),
+                  context.vt.textSecondary),
+              const SizedBox(width: Sp.sm),
               _summaryPill(
                 isProfit ? 'Total Gain' : 'Total Loss',
                 '${isProfit ? '+' : ''}${_currency.format(s.totalPnl)} '
                     '(${s.overallPnlPct.toStringAsFixed(1)}%)',
-                isProfit
-                    ? Colors.green.withValues(alpha: 0.35)
-                    : Colors.red.withValues(alpha: 0.35),
+                pnlColor,
               ),
             ],
           ),
           if (gttCount > 0) ...[
-            const SizedBox(height: 10),
+            SizedBox(height: Sp.md),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: EdgeInsets.all(Sp.md),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
+                color: context.vt.surface2,
+                borderRadius: BorderRadius.circular(Rad.md),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.shield_outlined, size: 12, color: Colors.white70),
-                      const SizedBox(width: 5),
+                      Icon(Icons.shield_outlined,
+                          size: 12, color: context.vt.accentGreen),
+                      SizedBox(width: Sp.xs),
                       Text(
-                        'GTT Protection ($gttCount of ${_holdings.length} holdings)',
-                        style: const TextStyle(color: Colors.white70, fontSize: 11),
+                        'GTT Protection · $gttCount of ${_holdings.length} holdings',
+                        style: AppTextStyles.caption
+                            .copyWith(color: context.vt.accentGreen),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: Sp.sm),
                   Row(
                     children: [
                       Expanded(
                         child: _gttSummaryTile(
                           label: 'Expected Profit',
                           value: '+${_currency.format(totalExpectedProfit)}',
-                          color: Colors.greenAccent[100]!,
+                          color: context.vt.accentGreen,
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      SizedBox(width: Sp.sm),
                       Expanded(
                         child: _gttSummaryTile(
                           label: 'Expected Loss',
                           value: _currency.format(totalExpectedLoss),
-                          color: Colors.red[200]!,
+                          color: context.vt.danger,
                         ),
                       ),
                     ],
@@ -444,189 +479,244 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     );
   }
 
-  Widget _gttSummaryTile({required String label, required String value, required Color color}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(color: color.withValues(alpha: 0.85), fontSize: 10)),
-        const SizedBox(height: 2),
-        Text(value, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
-      ],
-    );
-  }
-
-  Widget _summaryPill(String label, String value, Color bg) {
+  Widget _summaryPill(String label, String value, Color color) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
+        padding: const EdgeInsets.symmetric(
+            horizontal: Sp.md, vertical: Sp.sm),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(Rad.md),
+          border: Border.all(color: color.withValues(alpha: 0.15)),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
-            const SizedBox(height: 3),
-            Text(value, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+            Text(label, style: AppTextStyles.caption.copyWith(fontSize: 10)),
+            const SizedBox(height: 2),
+            Text(value,
+                style: AppTextStyles.monoSm.copyWith(
+                    color: color, fontWeight: FontWeight.w700),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
           ],
         ),
       ),
     );
   }
 
-  // ── Holding Card ─────────────────────────────────────────────────────────────
+  Widget _gttSummaryTile(
+      {required String label, required String value, required Color color}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: AppTextStyles.caption
+                .copyWith(color: color, fontSize: 10)),
+        const SizedBox(height: 2),
+        Text(value,
+            style: AppTextStyles.monoSm
+                .copyWith(color: color, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+
+  // ── Holding Card ───────────────────────────────────────────────────────────
 
   Widget _buildHoldingCard(Holding h, bool isDemo) {
     final isProfit = h.pnl >= 0;
     final isDayUp = h.dayChange >= 0;
-    final profitColor = isProfit ? Colors.green[700]! : Colors.red[700]!;
-    final dayColor = isDayUp ? Colors.green[600]! : Colors.red[600]!;
+    final accentColor =
+        isProfit ? context.vt.accentGreen : context.vt.danger;
+    final dayColor = isDayUp ? context.vt.accentGreen : context.vt.danger;
     final isExiting = _exitingSymbol == h.symbol;
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(Rad.lg),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ── Header ────────────────────────────────────────────────────
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Symbol + exchange + countdown
-                Expanded(
+            Container(width: 4, color: accentColor),
+            Expanded(
+              child: Container(
+                color: context.vt.surface1,
+                child: Padding(
+                  padding: EdgeInsets.all(Sp.md),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(h.symbol,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      Text(
-                        '${h.exchange} · ${h.quantity} qty',
-                        style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                      ),
-                      if (h.daysLeft != null) ...[
-                        const SizedBox(height: 4),
-                        _daysLeftBadge(h.daysLeft!),
-                      ],
-                    ],
-                  ),
-                ),
-                // Price + day change + exit button
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      _currency.format(h.lastPrice),
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    Row(
-                      children: [
-                        Icon(
-                          isDayUp ? Icons.arrow_upward : Icons.arrow_downward,
-                          size: 12, color: dayColor,
-                        ),
-                        Text(
-                          '${h.dayChangePct.abs().toStringAsFixed(2)}% today',
-                          style: TextStyle(color: dayColor, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                    if (!isDemo) ...[
-                      const SizedBox(height: 6),
-                      isExiting
-                          ? const SizedBox(
-                              width: 20, height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : GestureDetector(
-                              onTap: () => _exitHolding(h),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.red[50],
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: Colors.red[300]!),
+                      // ── Header ────────────────────────────────────────
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(h.symbol, style: AppTextStyles.h3),
+                                Text(
+                                  '${h.exchange} · ${h.quantity} qty',
+                                  style: AppTextStyles.caption,
                                 ),
-                                child: Text(
-                                  'Exit',
-                                  style: TextStyle(
-                                    color: Colors.red[700],
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
+                                if (h.daysLeft != null) ...[
+                                  const SizedBox(height: Sp.xs),
+                                  _daysLeftBadge(h.daysLeft!),
+                                ],
+                              ],
                             ),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                _currency.format(h.lastPrice),
+                                style: AppTextStyles.mono.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15),
+                              ),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    isDayUp
+                                        ? Icons.arrow_upward_rounded
+                                        : Icons.arrow_downward_rounded,
+                                    size: 10,
+                                    color: dayColor,
+                                  ),
+                                  Text(
+                                    '${h.dayChangePct.abs().toStringAsFixed(2)}%',
+                                    style: AppTextStyles.caption.copyWith(
+                                        color: dayColor, fontSize: 11),
+                                  ),
+                                ],
+                              ),
+                              if (!isDemo) ...[
+                                SizedBox(height: Sp.xs),
+                                isExiting
+                                    ? SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: context.vt.danger,
+                                        ),
+                                      )
+                                    : GestureDetector(
+                                        onTap: () => _exitHolding(h),
+                                        child: Container(
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                  horizontal: Sp.sm,
+                                                  vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: context.vt.danger
+                                                .withValues(alpha: 0.1),
+                                            borderRadius:
+                                                BorderRadius.circular(
+                                                    Rad.sm),
+                                            border: Border.all(
+                                              color: context.vt.danger
+                                                  .withValues(alpha: 0.4),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Exit',
+                                            style: AppTextStyles.label
+                                                .copyWith(
+                                                    color: context.vt.danger,
+                                                    fontSize: 11),
+                                          ),
+                                        ),
+                                      ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: Sp.md),
+                      Divider(height: 1, color: context.vt.divider),
+                      const SizedBox(height: Sp.md),
+
+                      // ── Metrics row ────────────────────────────────────
+                      Row(
+                        children: [
+                          _metric('Avg Buy',
+                              _currency.format(h.averagePrice)),
+                          _metric(
+                              'Invested', _currency.format(h.investedValue)),
+                          _metric(
+                              'Current', _currency.format(h.currentValue)),
+                        ],
+                      ),
+                      SizedBox(height: Sp.sm),
+
+                      // ── P&L bar ────────────────────────────────────────
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: Sp.md, vertical: Sp.sm),
+                        decoration: BoxDecoration(
+                          color: accentColor.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(Rad.md),
+                          border: Border.all(
+                              color: accentColor.withValues(alpha: 0.2)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment:
+                              MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              isProfit ? 'Total Gain' : 'Total Loss',
+                              style: AppTextStyles.caption
+                                  .copyWith(color: accentColor),
+                            ),
+                            Text(
+                              '${isProfit ? '+' : ''}${_currency.format(h.pnl)} '
+                              '(${h.pnlPct.toStringAsFixed(1)}%)',
+                              style: AppTextStyles.mono.copyWith(
+                                  color: accentColor,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // ── GTT expected P&L ────────────────────────────────
+                      SizedBox(height: Sp.sm),
+                      if (h.hasGtt &&
+                          h.maxProfit != null &&
+                          h.maxLoss != null)
+                        _buildExpectedPnl(h)
+                      else
+                        _buildNoGttHint(),
+
+                      // ── T+1 badge ──────────────────────────────────────
+                      if (h.t1Quantity > 0) ...[
+                        SizedBox(height: Sp.sm),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: Sp.sm, vertical: Sp.xs),
+                          decoration: BoxDecoration(
+                            color: context.vt.warning.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(Rad.sm),
+                            border: Border.all(
+                                color:
+                                    context.vt.warning.withValues(alpha: 0.3)),
+                          ),
+                          child: Text(
+                            'T+1: ${h.t1Quantity} shares pending settlement',
+                            style: AppTextStyles.caption.copyWith(
+                                color: context.vt.warning),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-
-            // ── Metrics row ───────────────────────────────────────────────
-            Row(
-              children: [
-                _metric('Avg Buy', _currency.format(h.averagePrice)),
-                _metric('Invested', _currency.format(h.investedValue)),
-                _metric('Current', _currency.format(h.currentValue)),
-              ],
-            ),
-            const SizedBox(height: 10),
-
-            // ── P&L bar ──────────────────────────────────────────────────
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: profitColor.withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: profitColor.withValues(alpha: 0.25)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    isProfit ? 'Total Gain' : 'Total Loss',
-                    style: TextStyle(color: profitColor, fontSize: 13),
                   ),
-                  Text(
-                    '${isProfit ? '+' : ''}${_currency.format(h.pnl)} '
-                    '(${h.pnlPct.toStringAsFixed(1)}%)',
-                    style: TextStyle(
-                        color: profitColor,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14),
-                  ),
-                ],
+                ),
               ),
             ),
-
-            // ── Expected Profit / Loss (from active GTT) ─────────────────
-            const SizedBox(height: 10),
-            if (h.hasGtt && h.maxProfit != null && h.maxLoss != null)
-              _buildExpectedPnl(h)
-            else
-              _buildNoGttHint(),
-
-            // ── T+1 badge ─────────────────────────────────────────────────
-            if (h.t1Quantity > 0) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.amber[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.amber[300]!),
-                ),
-                child: Text(
-                  'T+1: ${h.t1Quantity} shares pending settlement',
-                  style: TextStyle(fontSize: 11, color: Colors.amber[900]),
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -634,61 +724,65 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   }
 
   Widget _daysLeftBadge(int daysLeft) {
-    Color bg, fg;
+    Color color;
     String label;
     if (daysLeft < 0) {
-      bg = Colors.grey[100]!; fg = Colors.grey[600]!;
+      color = context.vt.textTertiary;
       label = 'Expired';
     } else if (daysLeft <= 2) {
-      bg = Colors.red[50]!; fg = Colors.red[700]!;
-      label = daysLeft == 0 ? 'Expires today!' : '$daysLeft day${daysLeft == 1 ? '' : 's'} left';
+      color = context.vt.danger;
+      label = daysLeft == 0
+          ? 'Expires today!'
+          : '$daysLeft day${daysLeft == 1 ? '' : 's'} left';
     } else if (daysLeft <= 5) {
-      bg = Colors.orange[50]!; fg = Colors.orange[800]!;
+      color = context.vt.warning;
       label = '$daysLeft days left';
     } else {
-      bg = Colors.green[50]!; fg = Colors.green[700]!;
+      color = context.vt.accentGreen;
       label = '$daysLeft days left';
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 2),
       decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: fg.withValues(alpha: 0.4)),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(Rad.pill),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.schedule, size: 10, color: fg),
+          Icon(Icons.schedule_rounded, size: 10, color: color),
           const SizedBox(width: 3),
-          Text(label, style: TextStyle(fontSize: 10, color: fg, fontWeight: FontWeight.w600)),
+          Text(label,
+              style: AppTextStyles.caption.copyWith(
+                  color: color,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600)),
         ],
       ),
     );
   }
 
   Widget _buildExpectedPnl(Holding h) {
-    final profit = h.maxProfit!;
-    final loss = h.maxLoss!;
     return Row(
       children: [
         Expanded(
           child: _pnlTile(
             label: 'Expected Profit',
-            amount: profit,
+            amount: h.maxProfit!,
             price: h.target!,
-            color: Colors.green[700]!,
+            color: context.vt.accentGreen,
             icon: Icons.trending_up_rounded,
           ),
         ),
-        const SizedBox(width: 8),
+        SizedBox(width: Sp.sm),
         Expanded(
           child: _pnlTile(
             label: 'Expected Loss',
-            amount: loss,
+            amount: h.maxLoss!,
             price: h.stopLoss!,
-            color: Colors.red[600]!,
+            color: context.vt.danger,
             icon: Icons.trending_down_rounded,
           ),
         ),
@@ -705,31 +799,35 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   }) {
     final sign = amount >= 0 ? '+' : '';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      padding: const EdgeInsets.symmetric(
+          horizontal: Sp.sm, vertical: Sp.sm),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.22)),
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(Rad.md),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, size: 13, color: color),
-              const SizedBox(width: 4),
+              Icon(icon, size: 11, color: color),
+              const SizedBox(width: 3),
               Text(label,
-                  style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600)),
+                  style: AppTextStyles.caption
+                      .copyWith(color: color, fontSize: 10)),
             ],
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: 3),
           Text(
             '$sign${_currency.format(amount)}',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color),
+            style: AppTextStyles.monoSm
+                .copyWith(color: color, fontWeight: FontWeight.w700),
           ),
           Text(
             '@ ${_currency.format(price)}',
-            style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+            style: AppTextStyles.caption
+                .copyWith(color: context.vt.textTertiary, fontSize: 10),
           ),
         ],
       ),
@@ -739,11 +837,13 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   Widget _buildNoGttHint() {
     return Row(
       children: [
-        Icon(Icons.info_outline, size: 13, color: Colors.grey[400]),
-        const SizedBox(width: 4),
+        Icon(Icons.info_outline_rounded,
+            size: 12, color: context.vt.textTertiary),
+        SizedBox(width: Sp.xs),
         Text(
           'No active GTT — Expected P&L unavailable',
-          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+          style: AppTextStyles.caption
+              .copyWith(color: context.vt.textTertiary, fontSize: 11),
         ),
       ],
     );
@@ -754,44 +854,113 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-          Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          Text(label,
+              style: AppTextStyles.caption.copyWith(fontSize: 10)),
+          Text(value,
+              style: AppTextStyles.monoSm
+                  .copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
         ],
       ),
     );
   }
 
-  // ── Demo Data ─────────────────────────────────────────────────────────────
+  // ── Exit All bar ────────────────────────────────────────────────────────────
+
+  Widget _buildExitAllBar() {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+          Sp.base, Sp.sm, Sp.base, Sp.sm + bottomPadding),
+      decoration: BoxDecoration(
+        color: context.vt.surface1,
+        border: Border(top: BorderSide(color: context.vt.divider)),
+      ),
+      child: _exitingSymbol == '__ALL__'
+          ? Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: context.vt.danger),
+              ),
+            )
+          : VtButton(
+              label: 'Exit All Holdings',
+              onPressed: _exitAll,
+              variant: VtButtonVariant.danger,
+              icon: Icon(Icons.exit_to_app_rounded,
+                  size: 16, color: context.vt.textPrimary),
+            ),
+    );
+  }
+
+  // ── Demo Data ──────────────────────────────────────────────────────────────
 
   List<Holding> _demoHoldings() => [
         Holding(
-          symbol: 'RELIANCE', exchange: 'NSE', isin: 'INE002A01018',
-          quantity: 10, t1Quantity: 0, averagePrice: 2750.0, lastPrice: 2875.50,
-          closePrice: 2860.0, pnl: 1255.0, pnlPct: 4.56,
-          dayChange: 15.5, dayChangePct: 0.54,
-          investedValue: 27500.0, currentValue: 28755.0, product: 'CNC',
-          stopLoss: 2600.0, target: 3050.0,
-          maxProfit: 3000.0, maxLoss: -1500.0,
-          hasGtt: true, gttId: 'demo-1',
+          symbol: 'RELIANCE',
+          exchange: 'NSE',
+          isin: 'INE002A01018',
+          quantity: 10,
+          t1Quantity: 0,
+          averagePrice: 2750.0,
+          lastPrice: 2875.50,
+          closePrice: 2860.0,
+          pnl: 1255.0,
+          pnlPct: 4.56,
+          dayChange: 15.5,
+          dayChangePct: 0.54,
+          investedValue: 27500.0,
+          currentValue: 28755.0,
+          product: 'CNC',
+          stopLoss: 2600.0,
+          target: 3050.0,
+          maxProfit: 3000.0,
+          maxLoss: -1500.0,
+          hasGtt: true,
+          gttId: 'demo-1',
           daysLeft: 8,
         ),
         Holding(
-          symbol: 'TCS', exchange: 'NSE', isin: 'INE467B01029',
-          quantity: 5, t1Quantity: 0, averagePrice: 4100.0, lastPrice: 4389.75,
-          closePrice: 4350.0, pnl: 1448.75, pnlPct: 7.07,
-          dayChange: 39.75, dayChangePct: 0.91,
-          investedValue: 20500.0, currentValue: 21948.75, product: 'CNC',
-          stopLoss: 3900.0, target: 4600.0,
-          maxProfit: 2500.0, maxLoss: -1000.0,
-          hasGtt: true, gttId: 'demo-2',
+          symbol: 'TCS',
+          exchange: 'NSE',
+          isin: 'INE467B01029',
+          quantity: 5,
+          t1Quantity: 0,
+          averagePrice: 4100.0,
+          lastPrice: 4389.75,
+          closePrice: 4350.0,
+          pnl: 1448.75,
+          pnlPct: 7.07,
+          dayChange: 39.75,
+          dayChangePct: 0.91,
+          investedValue: 20500.0,
+          currentValue: 21948.75,
+          product: 'CNC',
+          stopLoss: 3900.0,
+          target: 4600.0,
+          maxProfit: 2500.0,
+          maxLoss: -1000.0,
+          hasGtt: true,
+          gttId: 'demo-2',
           daysLeft: 3,
         ),
         Holding(
-          symbol: 'INFY', exchange: 'NSE', isin: 'INE009A01021',
-          quantity: 15, t1Quantity: 5, averagePrice: 1820.0, lastPrice: 1890.75,
-          closePrice: 1875.0, pnl: 1061.25, pnlPct: 3.88,
-          dayChange: 15.75, dayChangePct: 0.84,
-          investedValue: 27300.0, currentValue: 28361.25, product: 'CNC',
+          symbol: 'INFY',
+          exchange: 'NSE',
+          isin: 'INE009A01021',
+          quantity: 15,
+          t1Quantity: 5,
+          averagePrice: 1820.0,
+          lastPrice: 1890.75,
+          closePrice: 1875.0,
+          pnl: 1061.25,
+          pnlPct: 3.88,
+          dayChange: 15.75,
+          dayChangePct: 0.84,
+          investedValue: 27300.0,
+          currentValue: 28361.25,
+          product: 'CNC',
           daysLeft: 1,
         ),
       ];
@@ -808,22 +977,23 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   Widget _buildEmpty() {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: EdgeInsets.all(Sp.xxl),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.account_balance_outlined, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            const Text('No Holdings',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            Icon(Icons.account_balance_outlined,
+                size: 56, color: context.vt.textTertiary),
+            const SizedBox(height: Sp.base),
+            Text('No Holdings',
+                style: AppTextStyles.h2, textAlign: TextAlign.center),
+            const SizedBox(height: Sp.sm),
             Text(
               'No CNC delivery holdings found in your Zerodha account.\n\n'
               '• Holdings appear here after T+2 settlement\n'
               '• Intraday MIS positions are not shown here\n'
               '• Stocks bought today may appear tomorrow',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+              style: AppTextStyles.bodySecondary.copyWith(height: 1.6),
             ),
           ],
         ),
@@ -835,19 +1005,22 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     if (_error == '__UPGRADE_REQUIRED__') return _buildUpgradeCard();
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: EdgeInsets.all(Sp.xxl),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 48, color: Colors.red[400]),
-            const SizedBox(height: 12),
+            Icon(Icons.error_outline_rounded,
+                size: 44, color: context.vt.danger),
+            SizedBox(height: Sp.md),
             Text(_error ?? 'Error',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.red[700])),
-            const SizedBox(height: 16),
-            ElevatedButton(
+                style: AppTextStyles.bodySecondary
+                    .copyWith(color: context.vt.danger)),
+            const SizedBox(height: Sp.base),
+            VtButton(
+              label: 'Retry',
               onPressed: _fetchHoldings,
-              child: const Text('Retry'),
+              variant: VtButtonVariant.secondary,
             ),
           ],
         ),
@@ -858,47 +1031,40 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   Widget _buildUpgradeCard() {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.amber[50],
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.amber[300]!),
+        padding: EdgeInsets.all(Sp.xxl),
+        child: Container(
+          padding: EdgeInsets.all(Sp.xl),
+          decoration: BoxDecoration(
+            color: context.vt.surface1,
+            borderRadius: BorderRadius.circular(Rad.lg),
+            border: Border.all(
+                color: context.vt.accentGold.withValues(alpha: 0.3)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.workspace_premium_rounded,
+                  size: 48, color: context.vt.accentGold),
+              const SizedBox(height: Sp.base),
+              Text('Kite Connect Paid Plan Required',
+                  style: AppTextStyles.h2, textAlign: TextAlign.center),
+              const SizedBox(height: Sp.sm),
+              Text(
+                'Portfolio holdings require the Zerodha Kite Connect paid API subscription (₹2000/month). '
+                'Enable it from your Kite developer console.',
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodySecondary,
               ),
-              child: Column(
-                children: [
-                  Icon(Icons.workspace_premium, size: 56, color: Colors.amber[700]),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Kite Connect Paid Plan Required',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Portfolio holdings require the Zerodha Kite Connect paid API subscription (₹2000/month). '
-                    'Enable it from your Kite developer console.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    onPressed: _fetchHoldings,
-                    icon: const Icon(Icons.refresh, size: 16),
-                    label: const Text('Retry'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.amber[700],
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ],
+              SizedBox(height: Sp.xl),
+              VtButton(
+                label: 'Retry',
+                onPressed: _fetchHoldings,
+                variant: VtButtonVariant.secondary,
+                icon: Icon(Icons.refresh_rounded,
+                    size: 16, color: context.vt.textSecondary),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

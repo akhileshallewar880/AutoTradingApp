@@ -1,8 +1,12 @@
+import '../theme/vt_color_scheme.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 import '../utils/api_config.dart';
 
 /// Shown after a server restart when the user has an open trade.
@@ -32,8 +36,6 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
   String? _error;
   String? _success;
 
-  final _purple = const Color(0xFF7C3AED);
-
   @override
   void dispose() {
     for (final c in [
@@ -52,7 +54,6 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
 
     setState(() { _isLoading = true; _error = null; _success = null; });
 
-    // Use a random UUID as analysis_id for resumed sessions
     final analysisId = DateTime.now().millisecondsSinceEpoch.toString();
 
     try {
@@ -76,7 +77,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
         Uri.parse(ApiConfig.optionsMonitorResumeUrl(analysisId)),
         headers: {'Content-Type': 'application/json'},
         body: body,
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(Duration(seconds: 20));
 
       if (!mounted) return;
 
@@ -99,13 +100,15 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Resume AI Monitoring'),
-        backgroundColor: _purple,
-        foregroundColor: Colors.white,
+        title: Text('Resume AI Monitoring', style: AppTextStyles.h2),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        foregroundColor: context.vt.textPrimary,
+        elevation: 0,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(Sp.base),
         child: Form(
           key: _formKey,
           child: Column(
@@ -113,29 +116,32 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
             children: [
               // ── Info banner ──────────────────────────────────────────
               Container(
-                padding: const EdgeInsets.all(14),
+                padding: EdgeInsets.all(Sp.md),
                 decoration: BoxDecoration(
-                  color: Colors.orange[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.orange[300]!),
+                  color: context.vt.warning.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(Rad.md),
+                  border: Border.all(
+                      color: context.vt.warning.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.info_outline, color: Colors.orange[800], size: 20),
-                    const SizedBox(width: 10),
+                    Icon(Icons.info_outline,
+                        color: context.vt.warning, size: 20),
+                    SizedBox(width: Sp.sm),
                     Expanded(
                       child: Text(
                         'Server restarted. Your SL and target orders are still '
                         'active on Zerodha. Enter the details from your Zerodha '
                         'order book to re-attach AI monitoring and trailing SL.',
-                        style: TextStyle(fontSize: 12, color: Colors.orange[900]),
+                        style: AppTextStyles.caption.copyWith(
+                            color: context.vt.warning, height: 1.5),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
+              SizedBox(height: Sp.lg),
 
               // ── Symbol + option type ─────────────────────────────────
               _section('Position Details', Icons.candlestick_chart_outlined),
@@ -152,26 +158,42 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                           v!.trim().isEmpty ? 'Required' : null,
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  SizedBox(width: Sp.md),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Type',
-                            style: TextStyle(
-                                fontSize: 12, color: Colors.grey[600])),
-                        const SizedBox(height: 6),
+                        Text('Type', style: AppTextStyles.caption),
+                        SizedBox(height: 6),
                         DropdownButtonFormField<String>(
                           initialValue: _optionType,
+                          dropdownColor: context.vt.surface2,
+                          style: AppTextStyles.body,
                           decoration: InputDecoration(
+                            filled: true,
+                            fillColor: context.vt.surface2,
                             border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10)),
+                              borderRadius: BorderRadius.circular(Rad.md),
+                              borderSide: BorderSide.none,
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(Rad.md),
+                              borderSide: BorderSide(
+                                  color: context.vt.divider),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(Rad.md),
+                              borderSide: BorderSide(
+                                  color: context.vt.accentPurple, width: 1.5),
+                            ),
                             contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 14),
+                                horizontal: Sp.md, vertical: Sp.md),
                           ),
                           items: ['CE', 'PE']
                               .map((t) => DropdownMenuItem(
-                                  value: t, child: Text(t)))
+                                  value: t,
+                                  child: Text(t,
+                                      style: AppTextStyles.body)))
                               .toList(),
                           onChanged: (v) =>
                               setState(() => _optionType = v!),
@@ -181,7 +203,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: Sp.md),
               Row(
                 children: [
                   Expanded(
@@ -194,7 +216,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                           int.tryParse(v ?? '') == null ? 'Integer' : null,
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: Sp.md),
                   Expanded(
                     child: _field(
                       controller: _fillPriceCtrl,
@@ -207,7 +229,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: Sp.lg),
 
               // ── Order IDs ────────────────────────────────────────────
               _section('Zerodha Order IDs', Icons.receipt_long_outlined),
@@ -217,14 +239,14 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                 hint: '260402001234567',
                 validator: (v) => v!.trim().isEmpty ? 'Required' : null,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: Sp.md),
               _field(
                 controller: _targetOrderCtrl,
                 label: 'Target Order ID',
                 hint: '260402001234568',
                 validator: (v) => v!.trim().isEmpty ? 'Required' : null,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: Sp.lg),
 
               // ── Price levels ─────────────────────────────────────────
               _section('Price Levels', Icons.price_change_outlined),
@@ -240,7 +262,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                           double.tryParse(v ?? '') == null ? 'Number' : null,
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: Sp.md),
                   Expanded(
                     child: _field(
                       controller: _slLimitCtrl,
@@ -253,7 +275,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: Sp.md),
               _field(
                 controller: _targetPriceCtrl,
                 label: 'Target Premium ₹',
@@ -262,7 +284,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                 validator: (v) =>
                     double.tryParse(v ?? '') == null ? 'Number' : null,
               ),
-              const SizedBox(height: 20),
+              SizedBox(height: Sp.lg),
 
               // ── WebSocket token (optional) ────────────────────────────
               _section('WebSocket (optional)', Icons.wifi_outlined),
@@ -271,81 +293,88 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
                 label: 'Instrument Token',
                 hint: '10425858  (from Zerodha instruments list)',
                 numeric: true,
-                // Optional — 0 means fall back to REST polling
               ),
-              const SizedBox(height: 28),
+              SizedBox(height: Sp.xxl),
 
               // ── Submit ───────────────────────────────────────────────
-              ElevatedButton.icon(
-                onPressed: _isLoading ? null : _submit,
-                icon: _isLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.play_circle_outline),
-                label: Text(
-                  _isLoading ? 'Restarting…' : 'Resume AI Monitoring',
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _purple,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
+              SizedBox(
+                height: 56,
+                child: ElevatedButton.icon(
+                  onPressed: _isLoading ? null : _submit,
+                  icon: _isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white),
+                        )
+                      : Icon(Icons.play_circle_outline),
+                  label: Text(
+                    _isLoading ? 'Restarting…' : 'Resume AI Monitoring',
+                    style: AppTextStyles.body.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: context.vt.accentPurple,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(Rad.lg)),
+                  ),
                 ),
               ),
 
               // ── Feedback ─────────────────────────────────────────────
               if (_success != null) ...[
-                const SizedBox(height: 16),
+                SizedBox(height: Sp.base),
                 Container(
-                  padding: const EdgeInsets.all(14),
+                  padding: EdgeInsets.all(Sp.md),
                   decoration: BoxDecoration(
-                    color: Colors.green[50],
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.green[200]!),
+                    color: context.vt.accentGreen.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(Rad.md),
+                    border: Border.all(
+                        color: context.vt.accentGreen.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     children: [
                       Icon(Icons.check_circle_outline,
-                          color: Colors.green[700], size: 20),
-                      const SizedBox(width: 10),
+                          color: context.vt.accentGreen, size: 20),
+                      SizedBox(width: Sp.sm),
                       Expanded(
                         child: Text(_success!,
-                            style: TextStyle(color: Colors.green[800])),
+                            style: AppTextStyles.body.copyWith(
+                                color: context.vt.accentGreen)),
                       ),
                     ],
                   ),
                 ),
               ],
               if (_error != null) ...[
-                const SizedBox(height: 16),
+                SizedBox(height: Sp.base),
                 Container(
-                  padding: const EdgeInsets.all(14),
+                  padding: EdgeInsets.all(Sp.md),
                   decoration: BoxDecoration(
-                    color: Colors.red[50],
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.red[200]!),
+                    color: context.vt.danger.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(Rad.md),
+                    border: Border.all(
+                        color: context.vt.danger.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     children: [
                       Icon(Icons.error_outline,
-                          color: Colors.red[700], size: 20),
-                      const SizedBox(width: 10),
+                          color: context.vt.danger, size: 20),
+                      SizedBox(width: Sp.sm),
                       Expanded(
                         child: Text(_error!,
-                            style: TextStyle(color: Colors.red[700])),
+                            style: AppTextStyles.body.copyWith(
+                                color: context.vt.danger)),
                       ),
                     ],
                   ),
                 ),
               ],
-              const SizedBox(height: 32),
+              const SizedBox(height: Sp.xxl),
             ],
           ),
         ),
@@ -355,14 +384,12 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
 
   Widget _section(String title, IconData icon) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.only(bottom: Sp.md),
       child: Row(
         children: [
-          Icon(icon, color: _purple, size: 18),
-          const SizedBox(width: 8),
-          Text(title,
-              style: const TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.bold)),
+          Icon(icon, color: context.vt.accentPurple, size: 18),
+          const SizedBox(width: Sp.sm),
+          Text(title, style: AppTextStyles.h3),
         ],
       ),
     );
@@ -379,20 +406,41 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
     return TextFormField(
       controller: controller,
       keyboardType: numeric
-          ? const TextInputType.numberWithOptions(decimal: true)
+          ? TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
       textCapitalization:
           caps ? TextCapitalization.characters : TextCapitalization.none,
+      style: AppTextStyles.body,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+        labelStyle: AppTextStyles.caption,
+        hintStyle: AppTextStyles.caption,
+        filled: true,
+        fillColor: context.vt.surface2,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(Rad.md),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(Rad.md),
+          borderSide: BorderSide(color: context.vt.divider),
+        ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: _purple),
+          borderRadius: BorderRadius.circular(Rad.md),
+          borderSide:
+              BorderSide(color: context.vt.accentPurple, width: 1.5),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(Rad.md),
+          borderSide: BorderSide(color: context.vt.danger),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(Rad.md),
+          borderSide: BorderSide(color: context.vt.danger, width: 1.5),
         ),
         contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            const EdgeInsets.symmetric(horizontal: Sp.md, vertical: Sp.md),
       ),
       validator: validator,
     );

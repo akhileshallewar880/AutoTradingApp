@@ -1,220 +1,209 @@
+import '../theme/vt_color_scheme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 import '../widgets/vantrade_logo.dart';
+import '../widgets/vt_button.dart';
 import 'login_webview_screen.dart';
 
-class LoginScreen extends StatelessWidget {
+class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
   @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _glowCtrl;
+  late final Animation<double> _glowAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _glowCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat(reverse: true);
+    _glowAnim = Tween<double>(begin: 0.08, end: 0.22).animate(
+      CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _glowCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: SafeArea(
           child: Column(
             children: [
-              // ── Scrollable content (logo, features, error) ──────────────────
+              // ── Scrollable: logo + features + error ──────────────────────
               Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                  padding: const EdgeInsets.symmetric(horizontal: Sp.xl),
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const VanTradeLogoWidget(size: 100),
-                      const SizedBox(height: 24),
-                      const Text(
-                        'VanTrade',
-                        style: TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
+                      SizedBox(height: Sp.xxxl),
+
+                      // Logo with pulsing glow ring
+                      AnimatedBuilder(
+                        animation: _glowAnim,
+                        builder: (context, child) {
+                          return Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // Glow ring
+                              Container(
+                                width: 120,
+                                height: 120,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: context.vt.accentGreen
+                                          .withValues(alpha: _glowAnim.value),
+                                      blurRadius: 40,
+                                      spreadRadius: 4,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              child!,
+                            ],
+                          );
+                        },
+                        child: const VanTradeLogoWidget(size: 88),
                       ),
-                      const SizedBox(height: 8),
+
+                      const SizedBox(height: Sp.xl),
+
+                      Text('VanTrade', style: AppTextStyles.h1),
+                      const SizedBox(height: Sp.sm),
                       Text(
                         'Intelligent stock analysis powered by AI',
-                        style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                        style: AppTextStyles.bodySecondary,
                         textAlign: TextAlign.center,
                       ),
-                      const SizedBox(height: 48),
-                      _buildFeatureItem(
-                        icon: Icons.analytics,
-                        title: 'AI Analysis',
-                        description: 'Get AI-powered stock recommendations',
+
+                      SizedBox(height: Sp.xxxl),
+
+                      // Feature pills row
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _FeaturePill(
+                              icon: Icons.auto_awesome_outlined,
+                              label: 'AI Picks'),
+                          const SizedBox(width: Sp.sm),
+                          _FeaturePill(
+                              icon: Icons.bolt_outlined,
+                              label: 'Auto Trade'),
+                          const SizedBox(width: Sp.sm),
+                          _FeaturePill(
+                              icon: Icons.show_chart,
+                              label: 'Real-time'),
+                        ],
                       ),
-                      const SizedBox(height: 16),
-                      _buildFeatureItem(
-                        icon: Icons.auto_graph,
-                        title: 'Automated Trading',
-                        description: 'Automatic order placement and GTT',
-                      ),
-                      const SizedBox(height: 16),
-                      _buildFeatureItem(
-                        icon: Icons.track_changes,
-                        title: 'Real-time Tracking',
-                        description: 'Monitor execution in real-time',
-                      ),
-                      const SizedBox(height: 32),
-                      if (context.watch<AuthProvider>().error != null)
+
+                      // Error banner
+                      if (auth.error != null) ...[
+                        SizedBox(height: Sp.base),
                         Container(
-                          padding: const EdgeInsets.all(12),
+                          padding: EdgeInsets.all(Sp.md),
                           decoration: BoxDecoration(
-                            color: Colors.red[50],
-                            border: Border.all(color: Colors.red[300]!),
-                            borderRadius: BorderRadius.circular(8),
+                            color: context.vt.dangerDim,
+                            borderRadius: BorderRadius.circular(Rad.md),
+                            border: Border.all(
+                                color: context.vt.danger.withValues(alpha: 0.3)),
                           ),
                           child: Text(
-                            context.watch<AuthProvider>().error!,
-                            style: const TextStyle(
-                              color: Colors.red,
-                              fontSize: 14,
-                            ),
+                            auth.error!,
+                            style: AppTextStyles.caption
+                                .copyWith(color: context.vt.danger),
                             textAlign: TextAlign.center,
                           ),
                         ),
+                      ],
+
+                      const SizedBox(height: Sp.xxl),
                     ],
                   ),
                 ),
               ),
 
-              // ── Fixed buttons at bottom (always visible) ────────────────────
+              // ── Fixed bottom: CTAs + trust copy ──────────────────────────
               Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Consumer<AuthProvider>(
-                  builder: (context, authProvider, child) {
-                    if (authProvider.isLoading) {
-                      return const SizedBox(
-                        height: 48,
-                        child: CircularProgressIndicator(),
-                      );
-                    }
-
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // ── Primary: Zerodha login ──────────────────────
-                        SizedBox(
-                          width: double.infinity,
-                          height: 56,
-                          child: ElevatedButton(
-                            onPressed: () =>
-                                _handleLogin(context, authProvider),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green[700],
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text(
-                              'Login with Zerodha',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                padding: const EdgeInsets.fromLTRB(
+                    Sp.xl, Sp.base, Sp.xl, Sp.xl),
+                child: auth.isLoading
+                    ? Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: context.vt.accentGreen,
                           ),
                         ),
-
-                        const SizedBox(height: 12),
-
-                        // ── Secondary: Demo mode ────────────────────────
-                        SizedBox(
-                          width: double.infinity,
-                          height: 54,
-                          child: OutlinedButton.icon(
-                            onPressed: () =>
-                                _handleDemoLogin(context, authProvider),
-                            icon: Icon(
-                              Icons.science_outlined,
-                              color: Colors.green[700],
-                              size: 20,
-                            ),
-                            label: const Text(
-                              'Test with Dummy Data',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.green[700],
-                              side: BorderSide(
-                                color: Colors.green[700]!,
-                                width: 1.5,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
+                      )
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          VtButton(
+                            label: 'Connect Zerodha',
+                            icon: const Icon(Icons.link_rounded,
+                                size: 18, color: Colors.white),
+                            onPressed: () => _handleLogin(context, auth),
                           ),
-                        ),
-
-                        const SizedBox(height: 8),
-                        Text(
-                          'No Zerodha account needed • Sample data only',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[500],
+                          SizedBox(height: Sp.sm),
+                          VtButton(
+                            label: 'Try Demo Mode',
+                            icon: Icon(Icons.science_outlined,
+                                size: 18, color: context.vt.textSecondary),
+                            onPressed: () => _handleDemoLogin(context, auth),
+                            variant: VtButtonVariant.ghost,
                           ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
+                          SizedBox(height: Sp.md),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.lock_outline,
+                                  size: 11, color: context.vt.textTertiary),
+                              SizedBox(width: 4),
+                              Text(
+                                '256-bit encrypted · Your credentials never leave your device',
+                                style: AppTextStyles.caption.copyWith(
+                                    color: context.vt.textTertiary,
+                                    fontSize: 11),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
               ),
             ],
           ),
         ),
-      ), // Scaffold
-    ); // PopScope
-  }
-
-  Widget _buildFeatureItem({
-    required IconData icon,
-    required String title,
-    required String description,
-  }) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.green[50],
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: Colors.green[700], size: 24),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                description,
-                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 
   Future<void> _handleDemoLogin(
-    BuildContext context,
-    AuthProvider authProvider,
-  ) async {
+      BuildContext context, AuthProvider authProvider) async {
     await authProvider.loginWithDemoData();
     if (context.mounted) {
       Navigator.pushReplacementNamed(context, '/home');
@@ -222,9 +211,7 @@ class LoginScreen extends StatelessWidget {
   }
 
   Future<void> _handleLogin(
-    BuildContext context,
-    AuthProvider authProvider,
-  ) async {
+      BuildContext context, AuthProvider authProvider) async {
     try {
       final loginUrl = await authProvider.getLoginUrl();
       if (context.mounted) {
@@ -238,52 +225,80 @@ class LoginScreen extends StatelessWidget {
     } catch (e) {
       if (context.mounted) {
         final errorMsg = e.toString();
-        // Check if error is about missing credentials
         if (errorMsg.contains('API credentials not found')) {
           showDialog(
             context: context,
-            builder: (context) => AlertDialog(
+            builder: (ctx) => AlertDialog(
               title: const Text('API Credentials Required'),
               content: const Text(
-                'Your Zerodha API credentials are missing or have been cleared. '
+                'Your Zerodha API credentials are missing. '
                 'Please set them up to continue.',
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () => Navigator.pop(ctx),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
                   onPressed: () {
-                    Navigator.pop(context);
+                    Navigator.pop(ctx);
                     Navigator.pushReplacementNamed(context, '/api-settings');
                   },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[700],
-                  ),
-                  child: const Text(
-                    'Set Up Credentials',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                  child: const Text('Set Up Credentials'),
                 ),
               ],
             ),
           );
         } else {
-          final msg = e.toString().contains('TimeoutException') ||
+          final msg = (e.toString().contains('TimeoutException') ||
                   e.toString().contains('Connection refused') ||
-                  e.toString().contains('SocketException')
-              ? 'Could not reach the server. Please check your internet connection and try again.'
-              : 'Login failed: $e';
+                  e.toString().contains('SocketException'))
+              ? 'Could not reach the server. Check your connection and try again.'
+              : 'Login failed: ${e.toString().replaceFirst('Exception: ', '')}';
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(msg),
-              backgroundColor: Colors.red[700],
+              backgroundColor: context.vt.danger,
               duration: const Duration(seconds: 5),
             ),
           );
         }
       }
     }
+  }
+}
+
+// Compact feature pill chip
+class _FeaturePill extends StatelessWidget {
+  _FeaturePill({required this.icon, required this.label});
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: Sp.md, vertical: Sp.sm),
+      decoration: BoxDecoration(
+        color: context.vt.surface2,
+        borderRadius: BorderRadius.circular(Rad.pill),
+        border: Border.all(
+            color: context.vt.accentGreen.withValues(alpha: 0.35), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: context.vt.accentGreen),
+          SizedBox(width: 5),
+          Text(
+            label,
+            style: AppTextStyles.label.copyWith(
+              color: context.vt.textPrimary,
+              letterSpacing: 0.2,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

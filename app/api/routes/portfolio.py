@@ -300,6 +300,17 @@ async def exit_holding(
             raise HTTPException(status_code=400, detail=f"No quantity available to exit for '{symbol}'")
 
         exch = target.get("exchange", "NSE")
+
+        # Zerodha API rejects pure MARKET orders for CNC without market protection.
+        # Use LIMIT at LTP instead — fills immediately for liquid stocks.
+        ltp = float(target.get("last_price") or 0)
+        if ltp <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot determine LTP for '{symbol}'. Refresh holdings and try again.",
+            )
+        limit_price = round(ltp, 2)
+
         order_id = await loop.run_in_executor(None, lambda: kite.place_order(
             variety=kite.VARIETY_REGULAR,
             exchange=exch,
@@ -307,10 +318,11 @@ async def exit_holding(
             transaction_type=kite.TRANSACTION_TYPE_SELL,
             quantity=qty,
             product=kite.PRODUCT_CNC,
-            order_type=kite.ORDER_TYPE_MARKET,
+            order_type=kite.ORDER_TYPE_LIMIT,
+            price=limit_price,
         ))
 
-        logger.info(f"[Exit] {symbol} SELL MARKET qty={qty} order_id={order_id}")
+        logger.info(f"[Exit] {symbol} SELL LIMIT qty={qty} price={limit_price} order_id={order_id}")
         return {
             "success": True,
             "order_id": str(order_id),
@@ -356,6 +368,11 @@ async def exit_all_holdings(
                 continue
             sym  = h.get("tradingsymbol", "")
             exch = h.get("exchange", "NSE")
+            ltp  = float(h.get("last_price") or 0)
+            if ltp <= 0:
+                errors.append({"symbol": sym, "error": "LTP unavailable — refresh and retry"})
+                continue
+            limit_price = round(ltp, 2)
             try:
                 order_id = await loop.run_in_executor(None, lambda: kite.place_order(
                     variety=kite.VARIETY_REGULAR,
@@ -364,10 +381,11 @@ async def exit_all_holdings(
                     transaction_type=kite.TRANSACTION_TYPE_SELL,
                     quantity=qty,
                     product=kite.PRODUCT_CNC,
-                    order_type=kite.ORDER_TYPE_MARKET,
+                    order_type=kite.ORDER_TYPE_LIMIT,
+                    price=limit_price,
                 ))
                 results.append({"symbol": sym, "quantity": qty, "order_id": str(order_id)})
-                logger.info(f"[ExitAll] {sym} SELL MARKET qty={qty} order_id={order_id}")
+                logger.info(f"[ExitAll] {sym} SELL LIMIT qty={qty} price={limit_price} order_id={order_id}")
             except Exception as e:
                 errors.append({"symbol": sym, "error": str(e)})
                 logger.error(f"[ExitAll] {sym}: {e}")

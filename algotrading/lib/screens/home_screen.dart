@@ -1,15 +1,27 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/auth_provider.dart';
+import '../services/streak_service.dart';
 import '../providers/dashboard_provider.dart';
 import '../models/dashboard_model.dart';
-import '../widgets/info_card.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
+import '../theme/vt_color_scheme.dart';
+import '../providers/theme_provider.dart';
 import '../utils/api_config.dart';
+import '../widgets/vt_card.dart';
+import '../widgets/vt_button.dart';
+import '../widgets/price_text.dart';
+import '../widgets/skeleton_loader.dart';
+import '../widgets/status_badge.dart';
+import '../widgets/section_header.dart';
 import 'analysis_input_screen.dart';
 import 'backtest_screen.dart';
 import 'gtt_analysis_screen.dart';
@@ -26,9 +38,28 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBindingObserver {
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
 
-  // ── Live index prices (KiteTicker snapshot) ────────────────────────────
   Map<String, dynamic> _indexPrices = {};
   Timer? _indexRefreshTimer;
+  int _streakDays = 0;
+  bool _insightDismissed = false;
+
+  static const _insights = [
+    'NIFTY above its 50-day EMA — historically bullish over a 3-week horizon.',
+    'Banking stocks tend to outperform in rising rate environments.',
+    'High VIX (>20) often precedes sharp reversals — size positions carefully.',
+    'Stocks near 52-week highs on strong volume tend to break out further.',
+    'RSI > 70 in an uptrend is strength, not exhaustion — wait for divergence.',
+    'The first 30 minutes of NSE trading often set the day\'s directional bias.',
+    'Earnings week volatility is highest in IT and pharma — widen stop-losses.',
+    'BANKNIFTY often leads NIFTY by 15–20 minutes on trend days.',
+    'Always check open interest data before entering options positions.',
+    'Mid-caps typically outperform large-caps in bull market second legs.',
+    'Consecutive wide-range candles on volume signal institutional accumulation.',
+    'MACD crossover above the zero line carries more weight than below.',
+    'Delivery percentage > 60% on a breakout suggests genuine demand.',
+    'Avoid trading the first 5 minutes — let the market find its footing.',
+    'Swing trades with R:R above 2 statistically outperform even with a 40% win rate.',
+  ];
 
   @override
   void initState() {
@@ -42,7 +73,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
 
   @override
   void didPopNext() {
-    // Refresh data when returning from a sub-screen
     final auth = context.read<AuthProvider>();
     if (auth.user != null) {
       context.read<DashboardProvider>().fetchDashboard(
@@ -59,12 +89,10 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.hidden) {
-      // Screen off / app backgrounded — stop all polling to save battery
       _indexRefreshTimer?.cancel();
       _indexRefreshTimer = null;
       context.read<DashboardProvider>().stopAutoRefresh();
     } else if (state == AppLifecycleState.resumed) {
-      // App back in foreground — restart polling
       if (auth.user != null) {
         _fetchIndexPrices();
         _indexRefreshTimer = Timer.periodic(
@@ -96,14 +124,36 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
           .then((_) => _checkSessionExpired());
       dash.startAutoRefresh(auth.user!.accessToken, apiKey: auth.user!.apiKey);
       _fetchIndexPrices();
-      // Refresh index prices every 30 seconds
       _indexRefreshTimer = Timer.periodic(
         const Duration(seconds: 60),
         (_) => _fetchIndexPrices(),
       );
+      _checkStreak();
     }
   }
 
+  Future<void> _checkStreak() async {
+    final result = await StreakService.instance.checkAndUpdate();
+    if (!mounted) return;
+    setState(() => _streakDays = result.streakDays);
+    if (!result.isNewDay) return;
+    final days = result.streakDays;
+    final msg = days == 1
+        ? '🔥 Welcome back! Streak started.'
+        : '🔥 Day $days streak! Keep it up.';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: AppTextStyles.bodyLarge.copyWith(color: context.vt.textPrimary)),
+        backgroundColor: context.vt.surface2,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 3),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Rad.md),
+          side: BorderSide(color: context.vt.accentGold),
+        ),
+      ),
+    );
+  }
 
   Future<void> _fetchIndexPrices() async {
     final auth = context.read<AuthProvider>();
@@ -113,27 +163,22 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
         queryParameters: {
           'api_key': auth.user!.apiKey,
           'access_token': auth.user!.accessToken,
-          // NIFTY 50 = 256265, NIFTY BANK = 260105
           'tokens': '256265,260105',
         },
       );
-      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
+      final resp = await http.get(uri).timeout(Duration(seconds: 10));
       if (!mounted) return;
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         setState(() => _indexPrices = data['snapshot'] ?? {});
       }
-    } catch (_) {
-      // Silent fail — index strip is best-effort
-    }
+    } catch (_) {}
   }
 
   void _checkSessionExpired() {
     if (!mounted) return;
     final dash = context.read<DashboardProvider>();
-    if (dash.sessionExpired) {
-      _handleSessionExpired();
-    }
+    if (dash.sessionExpired) _handleSessionExpired();
   }
 
   Future<void> _handleSessionExpired() async {
@@ -172,378 +217,357 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     }
   }
 
+  // ── Market open check ──────────────────────────────────────────────────────
+  bool get _isMarketOpen {
+    final now = DateTime.now();
+    if (now.weekday >= 6) return false;
+    final t = now.hour * 60 + now.minute;
+    return t >= 555 && t <= 930;
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final dash = context.watch<DashboardProvider>();
     final user = auth.user;
 
+    final vt = context.vt;
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: Colors.grey[50],
-        appBar: AppBar(
-          title: const Text(
-            'VanTrade',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-          ),
-          backgroundColor: Colors.green[700],
-          foregroundColor: Colors.white,
-          elevation: 0,
-          actions: [
-            if (dash.isLoading)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                ),
-              )
-            else
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh',
-                onPressed: _refresh,
-              ),
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert),
-              tooltip: 'More',
-              onSelected: (value) {
-                if (value == 'backtest') {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const BacktestScreen()),
-                  );
-                } else if (value == 'logout') {
-                  _handleLogout(context);
-                }
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                  value: 'backtest',
-                  child: Row(
-                    children: [
-                      Icon(Icons.science_outlined, size: 20),
-                      SizedBox(width: 10),
-                      Text('Strategy Backtest'),
-                    ],
-                  ),
-                ),
-                const PopupMenuDivider(),
-                const PopupMenuItem(
-                  value: 'logout',
-                  child: Row(
-                    children: [
-                      Icon(Icons.logout, size: 20),
-                      SizedBox(width: 10),
-                      Text('Logout'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-        // ── Fixed bottom bar ───────────────────────────────────────────────
-        bottomNavigationBar: _buildFixedBottomBar(context),
+        backgroundColor: vt.surface0,
+        appBar: _buildAppBar(auth, dash),
+        bottomNavigationBar: _buildBottomBar(context),
         body: Column(
           children: [
-            // ── Demo-mode banner ─────────────────────────────────────────
-            if (auth.isDemoMode)
-              Material(
-                color: const Color(0xFFFFF8E1), // amber[50]
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.science_outlined,
-                        color: Colors.orange[800],
-                        size: 18,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Demo Mode — Sample data only. '
-                          'Login with Zerodha to trade live.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.orange[900],
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => _handleLogout(context),
-                        child: Text(
-                          'Login',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.green[700],
-                            fontWeight: FontWeight.bold,
-                            decoration: TextDecoration.underline,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
+            if (auth.isDemoMode) _buildDemoBanner(context),
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _refresh,
-                color: Colors.green[700],
+                color: vt.accentGreen,
+                backgroundColor: vt.surface2,
                 child: SingleChildScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                  padding: const EdgeInsets.fromLTRB(
+                    Sp.base, Sp.base, Sp.base, 100),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ── Welcome row ──────────────────────────────────────────
-                      _buildWelcomeRow(user?.userName ?? 'Trader'),
-                      const SizedBox(height: 12),
+                      // Welcome row
+                      _buildWelcomeRow(user?.userName ?? 'Trader')
+                          .animate().fadeIn(duration: 300.ms)
+                          .slideY(begin: 0.04, end: 0, duration: 300.ms),
+                      const SizedBox(height: Sp.md),
 
-                      // ── Live index prices strip ───────────────────────────────
-                      if (!auth.isDemoMode && _indexPrices.isNotEmpty)
-                        _buildIndexPriceStrip(),
-                      if (!auth.isDemoMode && _indexPrices.isNotEmpty)
-                        const SizedBox(height: 12),
-
-                      // ── Dashboard content ────────────────────────────────────
-                      if (dash.error != null && dash.dashboard == null)
-                        _buildErrorCard(dash.error!)
-                      else ...[
-                        _buildBalancePnlCard(dash.dashboard),
-                        const SizedBox(height: 12),
-                        // Show "Add funds" message when balance is 0
-                        if ((dash.dashboard?.availableBalance ?? 0) == 0)
-                          InfoCard(
-                            type: InfoCardType.warning,
-                            title: '💰 Add Funds to Get Started',
-                            message:
-                                'Your Zerodha account balance is zero. Add funds to your account to start trading with VanTrade.',
-                            actions: [
-                              ElevatedButton.icon(
-                                onPressed: () async {
-                                  final uri = Uri.parse(
-                                    'https://kite.zerodha.com/funds',
-                                  );
-                                  if (await canLaunchUrl(uri)) {
-                                    await launchUrl(
-                                      uri,
-                                      mode: LaunchMode.externalApplication,
-                                    );
-                                  }
-                                },
-                                icon: const Icon(Icons.open_in_new, size: 16),
-                                label: const Text('Add Funds'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.amber[700],
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          )
-                        else
-                          const SizedBox.shrink(),
-                        const SizedBox(height: 12),
-                        if ((dash.dashboard?.positions.isNotEmpty ??
-                            false)) ...[
-                          _buildSectionHeader(
-                            'Open Positions',
-                            Icons.show_chart,
-                            Colors.indigo,
-                          ),
-                          const SizedBox(height: 8),
-                          _buildPositionsList(dash.dashboard!.positions),
-                          const SizedBox(height: 12),
-                        ],
-                        _buildSectionHeader(
-                          'Active GTTs',
-                          Icons.alarm_on,
-                          Colors.deepPurple,
-                        ),
-                        const SizedBox(height: 8),
-                        _buildGttList(dash.dashboard?.gtts ?? []),
-                        const SizedBox(height: 12),
-                        _buildSectionHeader(
-                          'Today\'s Orders',
-                          Icons.receipt_long,
-                          Colors.blueGrey,
-                        ),
-                        const SizedBox(height: 8),
-                        _buildOrdersList(dash.dashboard?.orders ?? []),
+                      // Index prices strip
+                      if (!auth.isDemoMode && _indexPrices.isNotEmpty) ...[
+                        _buildIndexStrip()
+                            .animate(delay: 60.ms).fadeIn(duration: 280.ms)
+                            .slideY(begin: 0.04, end: 0, duration: 280.ms),
+                        const SizedBox(height: Sp.md),
                       ],
+
+                      // Balance / P&L hero card
+                      if (dash.error != null && dash.dashboard == null)
+                        _buildErrorCard(dash.error!).animate(delay: 80.ms).fadeIn()
+                      else ...[
+                        _buildBalanceCard(dash.dashboard)
+                            .animate(delay: 80.ms).fadeIn(duration: 300.ms)
+                            .slideY(begin: 0.04, end: 0, duration: 300.ms),
+                        const SizedBox(height: Sp.md),
+
+                        // Add funds nudge
+                        if ((dash.dashboard?.availableBalance ?? 0) == 0)
+                          _buildAddFundsCard()
+                              .animate(delay: 120.ms).fadeIn().slideY(begin: 0.04, end: 0),
+                      ],
+
+                      // Daily market insight
+                      _buildInsightCard(),
+                      const SizedBox(height: Sp.md),
+
+                      // Positions
+                      if (dash.dashboard?.positions.isNotEmpty ?? false) ...[
+                        SectionHeader(
+                          title: 'Open Positions',
+                          trailing: StatusBadge(
+                            label: '${dash.dashboard!.positions.length}',
+                            type: BadgeType.success,
+                          ),
+                        ),
+                        _buildPositionsList(dash.dashboard!.positions)
+                            .animate(delay: 140.ms).fadeIn().slideY(begin: 0.04, end: 0),
+                        const SizedBox(height: Sp.md),
+                      ],
+
+                      // GTTs
+                      SectionHeader(
+                        title: 'Protected Orders',
+                        trailing: StatusBadge(
+                          label: '${dash.dashboard?.gtts.length ?? 0} GTTs',
+                          type: BadgeType.ai,
+                        ),
+                      ),
+                      _buildGttList(dash.dashboard?.gtts ?? [])
+                          .animate(delay: 160.ms).fadeIn().slideY(begin: 0.04, end: 0),
+                      const SizedBox(height: Sp.md),
+
+                      // Orders
+                      SectionHeader(title: "Today's Activity"),
+                      _buildOrdersList(dash.dashboard?.orders ?? [])
+                          .animate(delay: 180.ms).fadeIn().slideY(begin: 0.04, end: 0),
                     ],
                   ),
                 ),
               ),
-            ), // Expanded
-          ], // outer Column children
-        ), // outer Column
-      ), // Scaffold
-    ); // PopScope
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  // ── Welcome ──────────────────────────────────────────────────────────────
-  Widget _buildWelcomeRow(String name) {
-    final now = DateTime.now();
-    final hour = now.hour;
-    final greeting = hour < 12
-        ? 'Good morning'
-        : hour < 17
-        ? 'Good afternoon'
-        : 'Good evening';
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: Colors.green[100],
-            shape: BoxShape.circle,
-          ),
-          child: Icon(Icons.person, color: Colors.green[700], size: 28),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                greeting,
-                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+  // ── AppBar ─────────────────────────────────────────────────────────────────
+  PreferredSizeWidget _buildAppBar(AuthProvider auth, DashboardProvider dash) {
+    final vt = context.vt;
+    final isDark = vt.isDark;
+    return AppBar(
+      backgroundColor: vt.surface0,
+      titleSpacing: Sp.base,
+      title: Row(
+        children: [
+          // Logo mark — green gradient (matches VanTradeLogoWidget)
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF1B5E20), Color(0xFF2E7D32)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-              Text(
-                name,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF2E7D32).withValues(alpha: 0.30),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
                 ),
-              ),
-            ],
+              ],
+            ),
+            child: const Icon(Icons.candlestick_chart,
+                color: Colors.white, size: 18),
           ),
+          const SizedBox(width: Sp.sm),
+          Text('VanTrade', style: AppTextStyles.h3),
+        ],
+      ),
+      actions: [
+        if (_streakDays > 0) _StreakBadge(days: _streakDays),
+        const SizedBox(width: Sp.xs),
+        StatusBadge(
+          label: _isMarketOpen ? 'OPEN' : 'CLOSED',
+          type: _isMarketOpen ? BadgeType.success : BadgeType.neutral,
+          pulseDot: _isMarketOpen,
         ),
-        // Market status badge
-        _buildMarketStatusBadge(),
+        const SizedBox(width: Sp.xs),
+        if (dash.isLoading)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: vt.accentGreen,
+              ),
+            ),
+          ),
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert_rounded),
+          tooltip: 'More',
+          onSelected: (value) {
+            if (value == 'backtest') {
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const BacktestScreen()));
+            } else if (value == 'theme') {
+              context.read<ThemeProvider>().toggle();
+            } else if (value == 'logout') {
+              _handleLogout(context);
+            }
+          },
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: 'theme',
+              child: Row(
+                children: [
+                  Icon(
+                    isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+                    size: 18, color: vt.textSecondary,
+                  ),
+                  const SizedBox(width: Sp.sm),
+                  Text(isDark ? 'Light Mode' : 'Dark Mode',
+                      style: AppTextStyles.body),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: 'backtest',
+              child: Row(
+                children: [
+                  Icon(Icons.science_outlined, size: 18, color: vt.textSecondary),
+                  const SizedBox(width: Sp.sm),
+                  Text('Strategy Backtest', style: AppTextStyles.body),
+                ],
+              ),
+            ),
+            const PopupMenuDivider(),
+            PopupMenuItem(
+              value: 'logout',
+              child: Row(
+                children: [
+                  Icon(Icons.logout, size: 18, color: vt.danger),
+                  const SizedBox(width: Sp.sm),
+                  Text('Logout',
+                      style: AppTextStyles.body.copyWith(color: vt.danger)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(width: Sp.xs),
       ],
     );
   }
 
-  Widget _buildMarketStatusBadge() {
-    final now = DateTime.now();
-    final isWeekend = now.weekday >= 6;
-    final t = now.hour * 60 + now.minute;
-    final isOpen = !isWeekend && t >= 555 && t <= 930; // 9:15–15:30
+  // ── Demo banner ────────────────────────────────────────────────────────────
+  Widget _buildDemoBanner(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: EdgeInsets.symmetric(horizontal: Sp.base, vertical: 10),
       decoration: BoxDecoration(
-        color: isOpen ? Colors.green[50] : Colors.red[50],
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isOpen ? Colors.green[300]! : Colors.red[300]!,
+        color: context.vt.warning.withValues(alpha: 0.10),
+        border: Border(
+          bottom: BorderSide(color: context.vt.warning.withValues(alpha: 0.3)),
         ),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(
-              color: isOpen ? Colors.green[600] : Colors.red[400],
-              shape: BoxShape.circle,
+          Icon(Icons.science_outlined, color: context.vt.warning, size: 16),
+          SizedBox(width: Sp.sm),
+          Expanded(
+            child: Text(
+              'Demo Mode — Sample data only. Login with Zerodha to trade live.',
+              style: AppTextStyles.caption.copyWith(color: context.vt.warning),
             ),
           ),
-          const SizedBox(width: 5),
-          Text(
-            isOpen ? 'Market Open' : 'Market Closed',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: isOpen ? Colors.green[700] : Colors.red[600],
-            ),
+          GestureDetector(
+            onTap: () => _handleLogout(context),
+            child: Text('Login →',
+                style: AppTextStyles.caption.copyWith(
+                  color: context.vt.accentGreen,
+                  fontWeight: FontWeight.w700,
+                )),
           ),
         ],
       ),
     );
   }
 
-  // ── Live Index Price Strip ───────────────────────────────────────────────
-  Widget _buildIndexPriceStrip() {
-    final entries = [
-      ('NIFTY', '256265'),
-      ('BANKNIFTY', '260105'),
-    ];
+  // ── Welcome row ────────────────────────────────────────────────────────────
+  Widget _buildWelcomeRow(String name) {
+    final vt = context.vt;
+    final hour = DateTime.now().hour;
+    final greeting = hour < 12
+        ? 'Good morning'
+        : hour < 17
+            ? 'Good afternoon'
+            : 'Good evening';
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'T';
     return Row(
-      children: entries.map((e) {
+      children: [
+        // Avatar — green gradient matching app logo
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1B5E20), Color(0xFF2E7D32)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF2E7D32).withValues(alpha: 0.25),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Center(
+            child: Text(initial,
+                style: AppTextStyles.h3.copyWith(color: Colors.white)),
+          ),
+        ),
+        const SizedBox(width: Sp.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(greeting, style: AppTextStyles.caption.copyWith(color: vt.textSecondary)),
+              Text(name, style: AppTextStyles.h3.copyWith(color: vt.textPrimary)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Index strip ────────────────────────────────────────────────────────────
+  Widget _buildIndexStrip() {
+    final entries = [('NIFTY', '256265'), ('BANKNIFTY', '260105')];
+    return Row(
+      children: entries.indexed.map((item) {
+        final (i, e) = item;
         final label = e.$1;
         final token = e.$2;
         final tick = _indexPrices[token] as Map<String, dynamic>?;
         final ltp = (tick?['last_price'] ?? 0.0) as num;
         final change = (tick?['net_change'] ?? 0.0) as num;
         final isUp = change >= 0;
+        final color = isUp ? context.vt.accentGreen : context.vt.danger;
         return Expanded(
           child: Container(
-            margin: EdgeInsets.only(right: label == 'NIFTY' ? 6 : 0),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            margin: EdgeInsets.only(right: i == 0 ? Sp.sm : 0),
+            padding: EdgeInsets.symmetric(horizontal: Sp.md, vertical: Sp.sm),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: isUp ? Colors.green[200]! : Colors.red[200]!,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 4,
-                ),
-              ],
+              color: context.vt.surface1,
+              borderRadius: BorderRadius.circular(Rad.md),
+              border: Border.all(color: color.withValues(alpha: 0.25)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                Text(label, style: AppTextStyles.monoSm.copyWith(
+                    color: context.vt.textSecondary, fontSize: 11)),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      ltp == 0 ? '—' : _currency.format(ltp),
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      ltp == 0 ? '—' : ltp.toStringAsFixed(0),
+                      style: AppTextStyles.monoSm.copyWith(color: context.vt.textPrimary),
                     ),
                     Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
                           isUp ? Icons.arrow_upward : Icons.arrow_downward,
-                          size: 10,
-                          color: isUp ? Colors.green[600] : Colors.red[600],
+                          size: 9,
+                          color: color,
                         ),
                         Text(
                           '${change.abs().toStringAsFixed(2)}%',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: isUp ? Colors.green[600] : Colors.red[600],
-                          ),
+                          style: AppTextStyles.label.copyWith(color: color, fontSize: 9),
                         ),
                       ],
                     ),
@@ -557,189 +581,334 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     );
   }
 
-  // ── Balance + Today P&L ──────────────────────────────────────────────────
-  Widget _buildBalancePnlCard(DashboardModel? data) {
+  // ── Balance / P&L hero card ────────────────────────────────────────────────
+  Widget _buildBalanceCard(DashboardModel? data) {
+    final vt = context.vt;
     final balance = data?.availableBalance ?? 0.0;
     final pnl = data?.todayPnl ?? 0.0;
     final pnlPct = data?.todayPnlPct ?? 0.0;
-    final isPositive = pnl >= 0;
+    final isPnlPos = pnl >= 0;
+    final posCount = data?.positions.length ?? 0;
+    final gttCount = data?.gtts.length ?? 0;
+    final pnlColor = isPnlPos ? vt.accentGreen : vt.danger;
 
-    return Card(
-      elevation: 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isPnlPos
+              ? [vt.accentGreen, vt.accentPurple]
+              : [vt.danger, vt.accentPurple],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        borderRadius: BorderRadius.circular(Rad.xl),
+      ),
+      padding: const EdgeInsets.only(top: 3),
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            colors: [Colors.green[700]!, Colors.green[500]!],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+          color: vt.surface1,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(Rad.xl - 1),
+            topRight: const Radius.circular(Rad.xl - 1),
+            bottomLeft: const Radius.circular(Rad.xl),
+            bottomRight: const Radius.circular(Rad.xl),
           ),
         ),
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(Sp.base),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Header ──────────────────────────────────────────────────
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Available Balance',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                Text('Available Balance',
+                    style: AppTextStyles.caption
+                        .copyWith(letterSpacing: 0.3)),
+                const Spacer(),
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: pnlColor,
+                    shape: BoxShape.circle,
+                  ),
                 ),
-                Icon(
-                  Icons.account_balance_wallet,
-                  color: Colors.white54,
-                  size: 18,
+                const SizedBox(width: 5),
+                Text(
+                  pnl == 0
+                      ? 'No trades today'
+                      : isPnlPos
+                          ? 'In Profit'
+                          : 'In Loss',
+                  style: AppTextStyles.caption.copyWith(
+                      color: pnlColor, fontSize: 11),
                 ),
               ],
             ),
-            const SizedBox(height: 6),
+
+            const SizedBox(height: Sp.xs),
+
+            // ── Balance hero ─────────────────────────────────────────────
             data == null
-                ? const _ShimmerBox(width: 160, height: 32)
-                : Text(
-                    _currency.format(balance),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
+                ? const SkeletonBox(width: 200, height: 40, radius: Rad.sm)
+                : PriceText(
+                    value: balance,
+                    style: AppTextStyles.display,
+                    duration: const Duration(milliseconds: 800),
+                  ),
+
+            const SizedBox(height: Sp.md),
+
+            // ── Metrics row ──────────────────────────────────────────────
+            Row(
+              children: [
+                // Today's P&L box
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: Sp.sm, vertical: Sp.sm),
+                    decoration: BoxDecoration(
+                      color: pnlColor.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(Rad.md),
+                      border: Border.all(
+                          color: pnlColor.withValues(alpha: 0.20)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Today's P&L",
+                            style: AppTextStyles.caption
+                                .copyWith(fontSize: 10)),
+                        const SizedBox(height: 4),
+                        data == null
+                            ? const SkeletonBox(
+                                width: 80, height: 16, radius: Rad.sm)
+                            : PnlPill(pnl: pnl, pnlPct: pnlPct),
+                      ],
                     ),
                   ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    "Today's P&L",
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  data == null
-                      ? const _ShimmerBox(width: 100, height: 20)
-                      : Row(
+                ),
+
+                const SizedBox(width: Sp.sm),
+
+                // Positions box
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: Sp.sm, vertical: Sp.sm),
+                    decoration: BoxDecoration(
+                      color: vt.surface2,
+                      borderRadius: BorderRadius.circular(Rad.md),
+                      border: Border.all(color: vt.divider),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Positions',
+                            style: AppTextStyles.caption
+                                .copyWith(fontSize: 10, color: vt.textSecondary)),
+                        const SizedBox(height: 4),
+                        Row(
                           children: [
                             Icon(
-                              isPositive
-                                  ? Icons.trending_up
-                                  : Icons.trending_down,
-                              color: isPositive
-                                  ? Colors.greenAccent[100]
-                                  : Colors.red[200],
-                              size: 18,
+                              posCount > 0
+                                  ? Icons.radio_button_checked
+                                  : Icons.radio_button_unchecked,
+                              size: 10,
+                              color: posCount > 0
+                                  ? vt.accentGreen
+                                  : vt.textTertiary,
                             ),
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 4),
                             Text(
-                              '${isPositive ? '+' : ''}${_currency.format(pnl)}',
-                              style: TextStyle(
-                                color: isPositive
-                                    ? Colors.greenAccent[100]
-                                    : Colors.red[200],
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              '(${isPositive ? '+' : ''}${pnlPct.toStringAsFixed(2)}%)',
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.7),
-                                fontSize: 12,
+                              posCount > 0
+                                  ? '$posCount Active'
+                                  : 'None open',
+                              style: AppTextStyles.monoSm.copyWith(
+                                color: posCount > 0
+                                    ? vt.textPrimary
+                                    : vt.textTertiary,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
                         ),
-                ],
-              ),
+                        if (gttCount > 0) ...[
+                          const SizedBox(height: 2),
+                          Text('$gttCount GTTs set',
+                              style: AppTextStyles.caption
+                                  .copyWith(fontSize: 10, color: vt.textTertiary)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
   }
-  // ── Positions ────────────────────────────────────────────────────────────
-  Widget _buildPositionsList(List<PositionModel> positions) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Column(
-        children: positions.map((pos) {
-          final isPos = pos.pnl >= 0;
-          return ListTile(
-            dense: true,
-            leading: Container(
-              padding: const EdgeInsets.all(6),
+
+  // ── Add funds nudge ────────────────────────────────────────────────────────
+  Widget _buildAddFundsCard() {
+    return Container(
+      margin: EdgeInsets.only(bottom: Sp.md),
+      padding: EdgeInsets.all(Sp.md),
+      decoration: BoxDecoration(
+        color: context.vt.warning.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(Rad.md),
+        border: Border.all(color: context.vt.warning.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.account_balance_wallet_outlined,
+              color: context.vt.warning, size: 18),
+          SizedBox(width: Sp.sm),
+          Expanded(
+            child: Text(
+              'Add funds to your Zerodha account to start trading.',
+              style: AppTextStyles.caption.copyWith(color: context.vt.warning),
+            ),
+          ),
+          SizedBox(width: Sp.sm),
+          GestureDetector(
+            onTap: () async {
+              final uri = Uri.parse('https://kite.zerodha.com/funds');
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: Sp.sm, vertical: Sp.xs),
               decoration: BoxDecoration(
-                color: isPos ? Colors.green[50] : Colors.red[50],
-                borderRadius: BorderRadius.circular(8),
+                color: context.vt.warning,
+                borderRadius: BorderRadius.circular(Rad.sm),
               ),
-              child: Icon(
-                isPos ? Icons.trending_up : Icons.trending_down,
-                size: 18,
-                color: isPos ? Colors.green[700] : Colors.red[600],
-              ),
+              child: Text('Add Funds',
+                  style: AppTextStyles.label.copyWith(
+                      color: Colors.white, letterSpacing: 0)),
             ),
-            title: Text(
-              pos.symbol,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-            ),
-            subtitle: Text(
-              'Qty: ${pos.quantity}  •  Avg: ${_currency.format(pos.avgPrice)}  •  LTP: ${_currency.format(pos.ltp)}',
-              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-            ),
-            trailing: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '${isPos ? '+' : ''}${_currency.format(pos.pnl)}',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: isPos ? Colors.green[700] : Colors.red[600],
-                  ),
-                ),
-                Text(
-                  '${isPos ? '+' : ''}${pos.pnlPct.toStringAsFixed(2)}%',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: isPos ? Colors.green[600] : Colors.red[500],
-                  ),
-                ),
-              ],
-            ),
-          );
-        }).toList(),
+          ),
+        ],
       ),
     );
   }
 
-  // ── GTTs ─────────────────────────────────────────────────────────────────
+  // ── Positions ──────────────────────────────────────────────────────────────
+  Widget _buildInsightCard() {
+    final now = DateTime.now();
+    final dayOfYear = now.difference(DateTime(now.year, 1, 1)).inDays;
+    final insight = _insights[dayOfYear % _insights.length];
+    if (_insightDismissed) {
+      return GestureDetector(
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => AnalysisInputScreen())),
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(horizontal: Sp.base, vertical: Sp.sm),
+          decoration: BoxDecoration(
+            color: context.vt.surface2,
+            borderRadius: BorderRadius.circular(Rad.md),
+            border: Border.all(color: context.vt.accentPurple.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.auto_awesome_rounded, size: 14, color: context.vt.accentPurple),
+              SizedBox(width: Sp.sm),
+              Text('Analyse Market', style: AppTextStyles.caption.copyWith(color: context.vt.accentPurple)),
+              Spacer(),
+              Icon(Icons.chevron_right_rounded, size: 16, color: context.vt.accentPurple),
+            ],
+          ),
+        ),
+      );
+    }
+    return Dismissible(
+      key: ValueKey('market_insight'),
+      direction: DismissDirection.endToStart,
+      onDismissed: (_) => setState(() => _insightDismissed = true),
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(Sp.base),
+        decoration: BoxDecoration(
+          color: context.vt.surface2,
+          borderRadius: BorderRadius.circular(Rad.lg),
+          border: Border(left: BorderSide(color: context.vt.accentPurple, width: 3)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.auto_awesome_rounded, size: 16, color: context.vt.accentPurple),
+            SizedBox(width: Sp.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Market Pulse',
+                      style: AppTextStyles.caption.copyWith(
+                          color: context.vt.accentPurple, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text(insight, style: AppTextStyles.body),
+                ],
+              ),
+            ),
+            SizedBox(width: Sp.sm),
+            Icon(Icons.swipe_left_rounded, size: 14, color: context.vt.textTertiary),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPositionsList(List<PositionModel> positions) {
+    return Column(
+      children: positions.indexed.map((item) {
+        final (i, pos) = item;
+        final isPos = pos.pnl >= 0;
+        return Padding(
+          padding: EdgeInsets.only(bottom: i < positions.length - 1 ? Sp.sm : 0),
+          child: VtAccentCard(
+            accentColor: isPos ? context.vt.accentGreen : context.vt.danger,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(pos.symbol, style: AppTextStyles.h3),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Qty: ${pos.quantity}  ·  Avg: ${_currency.format(pos.avgPrice)}  ·  LTP: ${_currency.format(pos.ltp)}',
+                        style: AppTextStyles.caption,
+                      ),
+                    ],
+                  ),
+                ),
+                PnlPill(pnl: pos.pnl, pnlPct: pos.pnlPct),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  // ── GTTs ───────────────────────────────────────────────────────────────────
   Widget _buildGttList(List<GttModel> gtts) {
     if (gtts.isEmpty) {
-      return Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Center(
+      return VtCard(
+        child: Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: Sp.xl),
             child: Column(
               children: [
-                Icon(
-                  Icons.alarm_off_outlined,
-                  size: 40,
-                  color: Colors.grey[300],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'No active GTTs',
-                  style: TextStyle(color: Colors.grey[500], fontSize: 14),
-                ),
+                Icon(Icons.alarm_off_outlined,
+                    size: 36, color: context.vt.textTertiary),
+                const SizedBox(height: Sp.sm),
+                Text('No active GTTs', style: AppTextStyles.bodySecondary),
               ],
             ),
           ),
@@ -747,26 +916,26 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       );
     }
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
-      child: Column(children: gtts.map((g) => _buildGttTile(g)).toList()),
+    return VtCard(
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: gtts.indexed.map((item) {
+          final (i, g) = item;
+          return _buildGttTile(g, isLast: i == gtts.length - 1);
+        }).toList(),
+      ),
     );
   }
 
-  Widget _buildGttTile(GttModel g) {
+  Widget _buildGttTile(GttModel g, {required bool isLast}) {
     final isTwoLeg = g.gttType.toLowerCase().contains('two');
     final isSell = g.transactionType.toUpperCase() == 'SELL';
     final isTriggered = g.status.toLowerCase() == 'triggered';
-
-    // For two-leg: triggerValues[0]=stop-loss, triggerValues[1]=target
-    // For single: triggerValues[0]=trigger
     final triggers = g.triggerValues;
     String triggerText;
     if (isTwoLeg && triggers.length >= 2) {
       triggerText =
-          'SL: ${_currency.format(triggers[0])}  •  Target: ${_currency.format(triggers[1])}';
+          'SL: ${_currency.format(triggers[0])}  ·  Target: ${_currency.format(triggers[1])}';
     } else if (triggers.isNotEmpty) {
       triggerText = 'Trigger: ${_currency.format(triggers[0])}';
     } else {
@@ -778,126 +947,87 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
         context,
         MaterialPageRoute(builder: (_) => GttAnalysisScreen(gtt: g)),
       ),
+      borderRadius: BorderRadius.circular(Rad.lg),
       child: Container(
+        padding: const EdgeInsets.symmetric(
+            horizontal: Sp.base, vertical: Sp.md),
         decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: Colors.grey[100]!)),
+          border: isLast
+              ? null
+              : Border(
+                  bottom: BorderSide(color: context.vt.divider, width: 1)),
         ),
-        child: ListTile(
-          dense: true,
-          leading: Container(
-            padding: const EdgeInsets.all(7),
-            decoration: BoxDecoration(
-              color: Colors.deepPurple[50],
-              borderRadius: BorderRadius.circular(8),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: context.vt.accentPurpleDim,
+                borderRadius: BorderRadius.circular(Rad.sm),
+              ),
+              child: Icon(
+                isTwoLeg ? Icons.swap_vert : Icons.alarm_on,
+                size: 16,
+                color: context.vt.accentPurple,
+              ),
             ),
-            child: Icon(
-              isTwoLeg ? Icons.swap_vert : Icons.alarm_on,
-              size: 18,
-              color: Colors.deepPurple[700],
+            const SizedBox(width: Sp.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(g.symbol, style: AppTextStyles.bodyLarge),
+                      const SizedBox(width: Sp.sm),
+                      StatusBadge(
+                        label: isTwoLeg ? 'TWO-LEG' : 'SINGLE',
+                        type: BadgeType.ai,
+                      ),
+                      if (isTriggered) ...[
+                        const SizedBox(width: Sp.xs),
+                        const StatusBadge(
+                            label: 'TRIGGERED', type: BadgeType.warning),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    'Qty: ${g.quantity}  ·  $triggerText',
+                    style: AppTextStyles.caption,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
             ),
-          ),
-          title: Row(
-            children: [
-              Text(
-                g.symbol,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: (isTwoLeg ? Colors.deepPurple : Colors.orange)
-                      .withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  isTwoLeg ? 'TWO-LEG' : 'SINGLE',
-                  style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                    color: isTwoLeg
-                        ? Colors.deepPurple[700]
-                        : Colors.orange[700],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              if (isTriggered)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.amber[50],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    'TRIGGERED',
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.amber[800],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          subtitle: Text(
-            'Qty: ${g.quantity}  •  $triggerText  •  LTP: ${_currency.format(g.lastPrice)}',
-            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: isSell ? Colors.red[50] : Colors.green[50],
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  g.transactionType,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: isSell ? Colors.red[700] : Colors.green[700],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right, size: 16, color: Colors.grey[400]),
-            ],
-          ),
+            StatusBadge(
+              label: g.transactionType,
+              type: isSell ? BadgeType.danger : BadgeType.success,
+            ),
+            SizedBox(width: Sp.sm),
+            Icon(Icons.chevron_right,
+                size: 16, color: context.vt.textTertiary),
+          ],
         ),
       ),
     );
   }
 
-  // ── Orders ───────────────────────────────────────────────────────────────
+  // ── Orders ─────────────────────────────────────────────────────────────────
   Widget _buildOrdersList(List<OrderModel> orders) {
     if (orders.isEmpty) {
-      return Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Center(
+      return VtCard(
+        child: Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: Sp.xl),
             child: Column(
               children: [
-                Icon(
-                  Icons.receipt_long_outlined,
-                  size: 40,
-                  color: Colors.grey[300],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'No orders today',
-                  style: TextStyle(color: Colors.grey[500], fontSize: 14),
-                ),
+                Icon(Icons.receipt_long_outlined,
+                    size: 36, color: context.vt.textTertiary),
+                const SizedBox(height: Sp.sm),
+                Text('No orders today', style: AppTextStyles.bodySecondary),
               ],
             ),
           ),
@@ -905,259 +1035,208 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       );
     }
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      clipBehavior: Clip.antiAlias,
+    return VtCard(
+      padding: EdgeInsets.zero,
       child: Column(
-        children: orders.take(15).map((o) => _buildOrderTile(o)).toList(),
+        children: orders.take(15).indexed.map((item) {
+          final (i, o) = item;
+          return _buildOrderTile(
+              o, isLast: i == (orders.length > 15 ? 14 : orders.length - 1));
+        }).toList(),
       ),
     );
   }
 
-  Widget _buildOrderTile(OrderModel o) {
+  Widget _buildOrderTile(OrderModel o, {required bool isLast}) {
     final isBuy = o.transactionType.toUpperCase() == 'BUY';
     final statusColor = _statusColor(o.status);
     String timeStr = '';
     if (o.placedAt.isNotEmpty) {
       try {
         final dt = DateTime.parse(o.placedAt).toLocal();
-        timeStr = DateFormat('HH:mm:ss').format(dt);
+        timeStr = DateFormat('HH:mm').format(dt);
       } catch (_) {}
     }
 
     return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: Sp.base, vertical: Sp.md),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey[100]!)),
+        border: isLast
+            ? null
+            : Border(
+                bottom: BorderSide(color: context.vt.divider, width: 1)),
       ),
-      child: ListTile(
-        dense: true,
-        leading: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: isBuy ? Colors.green[50] : Colors.red[50],
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Text(
-            o.transactionType,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: isBuy ? Colors.green[700] : Colors.red[700],
-            ),
-          ),
-        ),
-        title: Row(
-          children: [
-            Text(
-              o.symbol,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-            const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: statusColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                o.status,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
+      child: Row(
+        children: [
+          // Timeline dot
+          Column(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
                   color: statusColor,
+                  shape: BoxShape.circle,
                 ),
               ),
+            ],
+          ),
+          SizedBox(width: Sp.md),
+          // Transaction badge
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: Sp.sm, vertical: 3),
+            decoration: BoxDecoration(
+              color: (isBuy ? context.vt.accentGreen : context.vt.danger)
+                  .withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(Rad.sm),
             ),
-          ],
-        ),
-        subtitle: Text(
-          'Qty: ${o.filledQuantity}/${o.quantity}  •  ${o.price > 0 ? _currency.format(o.price) : 'MARKET'}  •  $timeStr',
-          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-        ),
-        trailing: o.statusMessage.isNotEmpty
-            ? Tooltip(
-                message: o.statusMessage,
-                child: Icon(
-                  Icons.info_outline,
-                  size: 16,
-                  color: Colors.grey[400],
+            child: Text(
+              o.transactionType,
+              style: AppTextStyles.label.copyWith(
+                color: isBuy ? context.vt.accentGreen : context.vt.danger,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          SizedBox(width: Sp.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(o.symbol, style: AppTextStyles.bodyLarge),
+                    const SizedBox(width: Sp.sm),
+                    StatusBadge(
+                      label: o.status,
+                      type: _statusBadgeType(o.status),
+                    ),
+                  ],
                 ),
-              )
-            : null,
+                const SizedBox(height: 2),
+                Text(
+                  'Qty: ${o.filledQuantity}/${o.quantity}  ·  ${o.price > 0 ? _currency.format(o.price) : 'MARKET'}${timeStr.isNotEmpty ? '  ·  $timeStr' : ''}',
+                  style: AppTextStyles.caption,
+                ),
+              ],
+            ),
+          ),
+          if (o.statusMessage.isNotEmpty)
+            Tooltip(
+              message: o.statusMessage,
+              child: Icon(Icons.info_outline,
+                  size: 14, color: context.vt.textTertiary),
+            ),
+        ],
       ),
     );
   }
 
-  Color _statusColor(String status) {
-    switch (status.toUpperCase()) {
-      case 'COMPLETE':
-        return Colors.green[700]!;
-      case 'REJECTED':
-      case 'CANCELLED':
-        return Colors.red[600]!;
-      case 'OPEN':
-      case 'PENDING':
-        return Colors.orange[700]!;
-      case 'TRIGGER PENDING':
-        return Colors.blue[700]!;
-      default:
-        return Colors.grey[600]!;
-    }
-  }
+  Color _statusColor(String status) => switch (status.toUpperCase()) {
+        'COMPLETE' => context.vt.accentGreen,
+        'REJECTED' || 'CANCELLED' => context.vt.danger,
+        'OPEN' || 'PENDING' => context.vt.warning,
+        'TRIGGER PENDING' => Color(0xFF60A5FA),
+        _ => context.vt.textTertiary,
+      };
 
-  // ── Fixed bottom bar ──────────────────────────────────────────────────
-  Widget _buildFixedBottomBar(BuildContext context) {
-    return SafeArea(
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.08),
-              blurRadius: 12,
-              offset: const Offset(0, -3),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            // Generate Analysis button
-            Expanded(
-              child: Material(
-                color: Colors.green[700],
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AnalysisInputScreen(),
-                    ),
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 13),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.auto_awesome, color: Colors.white, size: 18),
-                        SizedBox(width: 6),
-                        Text(
-                          'Analysis',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Holdings button
-            Expanded(
-              child: Material(
-                color: Colors.indigo[700],
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const HoldingsScreen(),
-                    ),
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 13),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.account_balance_wallet,
-                            color: Colors.white, size: 18),
-                        SizedBox(width: 6),
-                        Text(
-                          'Holdings',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  BadgeType _statusBadgeType(String status) => switch (status.toUpperCase()) {
+        'COMPLETE' => BadgeType.success,
+        'REJECTED' || 'CANCELLED' => BadgeType.danger,
+        'OPEN' || 'PENDING' => BadgeType.warning,
+        'TRIGGER PENDING' => BadgeType.info,
+        _ => BadgeType.neutral,
+      };
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
-  Widget _buildSectionHeader(String title, IconData icon, Color color) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: color),
-        const SizedBox(width: 6),
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey[800],
+  // ── Error card ─────────────────────────────────────────────────────────────
+  Widget _buildErrorCard(String error) {
+    final isSession = error.toLowerCase().contains('token') ||
+        error.toLowerCase().contains('401');
+    return VtCard(
+      child: Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: Sp.xl),
+          child: Column(
+            children: [
+              Icon(
+                isSession ? Icons.lock_outline : Icons.wifi_off_rounded,
+                size: 40,
+                color: context.vt.warning,
+              ),
+              const SizedBox(height: Sp.md),
+              Text(
+                isSession ? 'Session unavailable' : 'Dashboard unavailable',
+                style: AppTextStyles.h3,
+              ),
+              const SizedBox(height: Sp.sm),
+              Text(
+                error.replaceFirst('Exception: ', ''),
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodySecondary,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              SizedBox(height: Sp.base),
+              VtButton(
+                label: 'Retry',
+                onPressed: _refresh,
+                variant: VtButtonVariant.secondary,
+                width: 120,
+                height: 44,
+                icon: Icon(Icons.refresh, size: 16,
+                    color: context.vt.textSecondary),
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 
-  Widget _buildErrorCard(String error) {
-    final isMarketClosed =
-        error.toLowerCase().contains('market') ||
-        error.toLowerCase().contains('token') ||
-        error.toLowerCase().contains('401');
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Icon(
-              isMarketClosed ? Icons.access_time : Icons.wifi_off,
-              size: 40,
-              color: Colors.orange[400],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              isMarketClosed
-                  ? 'Could not load live data'
-                  : 'Dashboard unavailable',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              error.replaceFirst('Exception: ', ''),
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: _refresh,
-              icon: const Icon(Icons.refresh, size: 16),
-              label: const Text('Retry'),
-            ),
-          ],
+  // ── Bottom bar ─────────────────────────────────────────────────────────────
+  Widget _buildBottomBar(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: context.vt.surface1,
+        border: Border(top: BorderSide(color: context.vt.divider, width: 1)),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, Sp.sm),
+          child: Row(
+            children: [
+              Expanded(
+                child: VtButton(
+                  label: 'AI Analysis',
+                  icon: const Icon(Icons.auto_awesome, size: 16,
+                      color: Colors.white),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const AnalysisInputScreen()),
+                  ),
+                  height: 48,
+                ),
+              ),
+              SizedBox(width: Sp.sm),
+              Expanded(
+                child: VtButton(
+                  label: 'Holdings',
+                  icon: Icon(Icons.account_balance_wallet_outlined,
+                      size: 16, color: context.vt.textPrimary),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const HoldingsScreen()),
+                  ),
+                  variant: VtButtonVariant.secondary,
+                  height: 48,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1168,7 +1247,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+        content: Text('Are you sure you want to logout?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -1176,7 +1255,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Logout'),
+            child: Text('Logout',
+                style: AppTextStyles.body.copyWith(color: context.vt.danger)),
           ),
         ],
       ),
@@ -1191,20 +1271,67 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   }
 }
 
-// ── Shimmer placeholder ───────────────────────────────────────────────────
-class _ShimmerBox extends StatelessWidget {
-  final double width;
-  final double height;
-  const _ShimmerBox({required this.width, required this.height});
+class _StreakBadge extends StatefulWidget {
+  final int days;
+  _StreakBadge({required this.days});
+
+  @override
+  State<_StreakBadge> createState() => _StreakBadgeState();
+}
+
+class _StreakBadgeState extends State<_StreakBadge>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+  late final Animation<double> _glow;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _glow = Tween<double>(begin: 0.25, end: 0.65).animate(
+      CurvedAnimation(parent: _pulse, curve: Curves.easeInOut),
+    );
+    if (widget.days >= 7) _pulse.repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(6),
+    final gold = context.vt.accentGold;
+    return AnimatedBuilder(
+      animation: _glow,
+      builder: (context, _) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 4),
+        decoration: BoxDecoration(
+          color: gold.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(Rad.pill),
+          border: Border.all(color: gold.withValues(alpha: 0.35)),
+          boxShadow: widget.days >= 7
+              ? [BoxShadow(color: gold.withValues(alpha: _glow.value * 0.4), blurRadius: 10, spreadRadius: -2)]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('🔥', style: TextStyle(fontSize: 13)),
+            const SizedBox(width: 3),
+            Text(
+              '${widget.days}',
+              style: AppTextStyles.caption.copyWith(
+                color: gold,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

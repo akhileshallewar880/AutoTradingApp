@@ -58,6 +58,13 @@ dependencies:
   # Audio playback for danger alerts
   audioplayers: ^6.0.0
 
+  # Premium UI — Design System
+  google_fonts: ^6.2.1         # Space Grotesk + Inter
+  shimmer: ^3.0.0              # Skeleton loaders
+  flutter_animate: ^4.5.0      # Declarative micro-animations
+  lottie: ^3.1.2               # Empty-state & celebration animations
+  fl_chart: ^0.69.0            # Performance charts
+
   # Local push notifications for order events and live commentary
   flutter_local_notifications: ^18.0.0
 

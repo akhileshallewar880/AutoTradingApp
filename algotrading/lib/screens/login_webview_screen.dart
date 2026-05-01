@@ -1,14 +1,18 @@
+import '../theme/vt_color_scheme.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../providers/auth_provider.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_text_styles.dart';
 
 class LoginWebViewScreen extends StatefulWidget {
   final String loginUrl;
 
-  const LoginWebViewScreen({super.key, required this.loginUrl});
+  LoginWebViewScreen({super.key, required this.loginUrl});
 
   @override
   State<LoginWebViewScreen> createState() => _LoginWebViewScreenState();
@@ -106,7 +110,7 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
             ? 'Request token expired. Please login again.'
             : 'Login failed: ${e.toString().replaceFirst('Exception: ', '')}';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), backgroundColor: Colors.red[700]),
+          SnackBar(content: Text(msg), backgroundColor: context.vt.danger),
         );
         Navigator.of(context).pop();
       }
@@ -116,7 +120,7 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
   void _showErrorAndPop(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.orange[700]),
+      SnackBar(content: Text(message), backgroundColor: context.vt.warning),
     );
     Navigator.of(context).pop();
   }
@@ -125,9 +129,8 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Zerodha Login'),
-        backgroundColor: Colors.green[700],
-        foregroundColor: Colors.white,
+        title: Text('Zerodha Login', style: AppTextStyles.h2),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       ),
       body: PopScope(
         canPop: !_isCreatingSession,
@@ -137,48 +140,36 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
               WebViewWidget(controller: _controller),
 
             if (_isLoading && !_isCreatingSession)
-              const Center(child: CircularProgressIndicator()),
+              Center(child: CircularProgressIndicator()),
 
             if (_isCreatingSession)
               Container(
-                color: Colors.black.withValues(alpha: 0.5),
+                color: context.vt.overlayScrim,
                 child: Center(
                   child: Container(
-                    padding: const EdgeInsets.all(32),
+                    padding: EdgeInsets.all(Sp.xxxl),
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.1),
-                          blurRadius: 8,
-                          spreadRadius: 2,
-                        ),
-                      ],
+                      color: context.vt.surface1,
+                      borderRadius: BorderRadius.circular(Rad.lg),
+                      border: Border.all(color: context.vt.divider),
                     ),
-                    child: const Column(
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         SizedBox(
-                          width: 60,
-                          height: 60,
+                          width: 52,
+                          height: 52,
                           child: CircularProgressIndicator(
                             strokeWidth: 3,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+                            color: context.vt.accentGreen,
                           ),
                         ),
-                        SizedBox(height: 24),
-                        Text(
-                          'Completing Login',
-                          style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87),
-                        ),
-                        SizedBox(height: 8),
+                        const SizedBox(height: Sp.xl),
+                        Text('Completing Login', style: AppTextStyles.h2),
+                        const SizedBox(height: Sp.xs),
                         Text(
                           'Setting up your session...',
-                          style: TextStyle(fontSize: 14, color: Colors.grey),
+                          style: AppTextStyles.caption,
                           textAlign: TextAlign.center,
                         ),
                       ],
