@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query, HTTPException
 from app.models.response_models import MonthlyPerformanceResponse
 from app.core.logging import logger
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 import asyncio
 
 router = APIRouter()
@@ -111,6 +111,72 @@ async def get_monthly_performance(
         win_rate=metrics["win_rate"],
         max_drawdown=0.0,
     )
+
+
+@router.get("/performance-history")
+async def get_performance_history(
+    access_token: str = Query(...),
+    api_key: str = Query(...),
+    months: int = Query(12, ge=1, le=36),
+):
+    """
+    Returns per-month P&L for the last N months plus an all-time cumulative total.
+
+    Response shape:
+    {
+      "months": [
+        { "year": 2025, "month": 3, "month_label": "Mar 2025",
+          "total_pnl": 4200.0, "total_trades": 8, "win_rate": 62.5,
+          "cumulative_pnl": 4200.0 }
+      ],
+      "all_time_pnl": 4200.0,
+      "all_time_trades": 8,
+      "all_time_win_rate": 62.5
+    }
+    """
+    from app.storage.database import db
+
+    history = await db.get_monthly_pnl_history(api_key, months)
+
+    cumulative = 0.0
+    all_trades = 0
+    all_winning = 0
+    result_months: List[dict] = []
+
+    for row in history:
+        yr, mo = row["year"], row["month"]
+        pnl = round(row["total_pnl"], 2)
+        trades = row["total_trades"]
+        winning = row["winning_trades"]
+        cumulative = round(cumulative + pnl, 2)
+        win_rate = round((winning / trades) * 100, 1) if trades > 0 else 0.0
+        all_trades += trades
+        all_winning += winning
+
+        month_label = datetime(yr, mo, 1).strftime("%b %Y")
+        result_months.append({
+            "year": yr,
+            "month": mo,
+            "month_label": month_label,
+            "total_pnl": pnl,
+            "total_trades": trades,
+            "win_rate": win_rate,
+            "cumulative_pnl": cumulative,
+        })
+
+    all_time_win_rate = round((all_winning / all_trades) * 100, 1) if all_trades > 0 else 0.0
+
+    logger.info(
+        f"[PERF-HIST] api_key=...{api_key[-4:]} — {len(result_months)} months, "
+        f"all_time_pnl=₹{cumulative:.2f}, trades={all_trades}"
+    )
+
+    return {
+        "months": result_months,
+        "all_time_pnl": cumulative,
+        "all_time_trades": all_trades,
+        "all_time_win_rate": all_time_win_rate,
+    }
 
 
 async def _today_performance(access_token: str, api_key: str, now: datetime) -> MonthlyPerformanceResponse:

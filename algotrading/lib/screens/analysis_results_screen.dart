@@ -361,55 +361,101 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
               ),
             ),
 
-            // ── Confidence bar ───────────────────────────────────────────
+            // ── AI Confidence hero ───────────────────────────────────────
             Padding(
               padding: EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, Sp.md),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('AI CONFIDENCE',
-                          style: AppTextStyles.caption.copyWith(
-                              fontSize: 10,
-                              letterSpacing: 0.6,
-                              color: context.vt.textTertiary)),
-                      Row(
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                    horizontal: Sp.md, vertical: Sp.md),
+                decoration: BoxDecoration(
+                  color: confColor.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(Rad.md),
+                  border: Border.all(
+                      color: confColor.withValues(alpha: 0.28), width: 1),
+                ),
+                child: Row(
+                  children: [
+                    // Left: label + big % + qualifier pill
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Row(children: [
+                            Icon(Icons.auto_awesome_rounded,
+                                size: 11, color: context.vt.accentPurple),
+                            SizedBox(width: 4),
+                            Text('AI CONFIDENCE',
+                                style: AppTextStyles.caption.copyWith(
+                                    fontSize: 10,
+                                    letterSpacing: 0.8,
+                                    color: context.vt.textTertiary)),
+                          ]),
+                          SizedBox(height: 6),
+                          Text(
+                            '$confPct%',
+                            style: AppTextStyles.display.copyWith(
+                                fontSize: 38,
+                                color: confColor,
+                                height: 1.0),
+                          ),
+                          SizedBox(height: 6),
                           Container(
-                            width: 7,
-                            height: 7,
+                            padding: EdgeInsets.symmetric(
+                                horizontal: Sp.sm, vertical: 3),
                             decoration: BoxDecoration(
-                              color: confColor,
-                              shape: BoxShape.circle,
+                              color: confColor.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(Rad.pill),
+                            ),
+                            child: Text(
+                              _confLabel(confPct),
+                              style: AppTextStyles.caption.copyWith(
+                                  color: confColor,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 10,
+                                  letterSpacing: 0.7),
                             ),
                           ),
-                          const SizedBox(width: 5),
-                          Text('$confPct%',
-                              style: AppTextStyles.monoSm.copyWith(
-                                  color: confColor,
-                                  fontWeight: FontWeight.w700)),
                         ],
                       ),
-                    ],
-                  ),
-                  SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(Rad.pill),
-                    child: LinearProgressIndicator(
-                      value: overallConfidence,
-                      minHeight: 5,
-                      backgroundColor: context.vt.divider,
-                      valueColor: AlwaysStoppedAnimation<Color>(confColor),
                     ),
-                  ),
-                ],
+                    SizedBox(width: Sp.md),
+                    // Right: circular arc gauge
+                    SizedBox(
+                      width: 72,
+                      height: 72,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          SizedBox.expand(
+                            child: CircularProgressIndicator(
+                              value: overallConfidence,
+                              strokeWidth: 7,
+                              backgroundColor:
+                                  context.vt.divider,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(confColor),
+                              strokeCap: StrokeCap.round,
+                            ),
+                          ),
+                          Icon(Icons.auto_awesome_rounded,
+                              size: 24, color: confColor),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  String _confLabel(int pct) {
+    if (pct >= 80) return 'HIGH CONFIDENCE';
+    if (pct >= 70) return 'MODERATE';
+    return 'LOW CONFIDENCE';
   }
 
   String _holdLabel(int days) {

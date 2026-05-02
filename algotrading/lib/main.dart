@@ -70,6 +70,15 @@ class AlgoTradingApp extends StatelessWidget {
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
           themeMode: tp.mode,
+          builder: (context, child) {
+            final theme = Theme.of(context);
+            return DefaultTextStyle(
+              style: theme.textTheme.bodyMedium!.copyWith(
+                color: theme.colorScheme.onSurface,
+              ),
+              child: child!,
+            );
+          },
           initialRoute: '/',
           routes: {
             '/': (context) => const SplashScreen(),

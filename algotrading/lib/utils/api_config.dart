@@ -23,8 +23,9 @@ class ApiConfig {
   // Dashboard endpoint
   static const String dashboardUrl = '$baseUrl/dashboard/summary';
 
-  // Performance endpoint
+  // Performance endpoints
   static const String monthlyPerformanceUrl = '$baseUrl/monthly-performance';
+  static const String performanceHistoryUrl  = '$baseUrl/performance-history';
 
   // Options monitor resume (re-attach AI monitoring after server restart)
   static String optionsMonitorResumeUrl(String analysisId) =>

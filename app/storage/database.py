@@ -458,6 +458,58 @@ class Database:
             logger.error(f"[DB] get_closed_swing_positions_for_year failed: {e}")
             return []
 
+    def _sync_get_monthly_pnl_history(self, api_key: str, months: int = 12) -> list:
+        """Return per-month aggregated P&L for the last N months (oldest → newest)."""
+        from sqlalchemy import text
+        sql = text("""
+            SELECT
+                YEAR(closed_at)  AS yr,
+                MONTH(closed_at) AS mo,
+                SUM(
+                    CASE
+                        WHEN pnl IS NOT NULL AND pnl <> 0 THEN pnl
+                        WHEN action = 'BUY'
+                             AND exit_price IS NOT NULL AND entry_price IS NOT NULL
+                             THEN (exit_price - entry_price) * quantity
+                        WHEN action = 'SELL'
+                             AND exit_price IS NOT NULL AND entry_price IS NOT NULL
+                             THEN (entry_price - exit_price) * quantity
+                        ELSE 0
+                    END
+                )                              AS total_pnl,
+                COUNT(*)                       AS total_trades,
+                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS winning_trades
+              FROM vantrade_swing_positions
+             WHERE api_key = :api_key
+               AND status   IN ('EXPIRED', 'CLOSED')
+               AND closed_at >= DATEADD(month, :neg_months, GETDATE())
+             GROUP BY YEAR(closed_at), MONTH(closed_at)
+             ORDER BY YEAR(closed_at), MONTH(closed_at)
+        """)
+        with self._engine.connect() as conn:
+            rows = conn.execute(sql, {"api_key": api_key, "neg_months": -months}).fetchall()
+        return [
+            {"year": int(r[0]), "month": int(r[1]),
+             "total_pnl": float(r[2] or 0),
+             "total_trades": int(r[3] or 0),
+             "winning_trades": int(r[4] or 0)}
+            for r in rows
+        ]
+
+    async def get_monthly_pnl_history(self, api_key: str, months: int = 12) -> list:
+        """Async wrapper — returns [{year, month, total_pnl, total_trades, winning_trades}]."""
+        self._ensure_engine()
+        if not self._ready:
+            return []
+        try:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None, self._sync_get_monthly_pnl_history, api_key, months
+            )
+        except Exception as e:
+            logger.error(f"[DB] get_monthly_pnl_history failed: {e}")
+            return []
+
     def _sync_get_amo_pending_positions(self) -> list:
         from sqlalchemy import text
         sql = text("""

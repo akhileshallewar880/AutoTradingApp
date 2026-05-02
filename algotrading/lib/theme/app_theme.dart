@@ -48,7 +48,7 @@ abstract final class AppTheme {
           statusBarIconBrightness: Brightness.dark,
           statusBarBrightness: Brightness.light,
         ),
-        titleTextStyle: VtType.h1,
+        titleTextStyle: VtType.h1.copyWith(color: VtColors.textPrimary),
         iconTheme: const IconThemeData(color: VtColors.textSecondary, size: 22),
         actionsIconTheme: const IconThemeData(color: VtColors.textSecondary, size: 22),
       ),
