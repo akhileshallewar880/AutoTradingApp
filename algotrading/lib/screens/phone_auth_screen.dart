@@ -30,6 +30,10 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
   // Resend countdown
   int _resendSeconds = 0;
   Timer? _resendTimer;
+  Timer? _autoSubmitTimer;
+
+  String get _rawPhone => _phoneCtrl.text.replaceAll(' ', '');
+  bool get _phoneComplete => _rawPhone.length == 10;
 
   late final AnimationController _glowCtrl;
   late final Animation<double> _glowAnim;
@@ -43,6 +47,10 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
     )..repeat(reverse: true);
     _glowAnim = Tween<double>(begin: 0.06, end: 0.20)
         .animate(CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut));
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _phoneFocus.requestFocus();
+    });
   }
 
   @override
@@ -53,6 +61,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
     _phoneFocus.dispose();
     _otpFocus.dispose();
     _resendTimer?.cancel();
+    _autoSubmitTimer?.cancel();
     super.dispose();
   }
 
@@ -73,7 +82,8 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
   // ── Actions ─────────────────────────────────────────────────────────────────
 
   void _sendOtp() {
-    final phone = _phoneCtrl.text.trim();
+    _autoSubmitTimer?.cancel();
+    final phone = _rawPhone;
     if (phone.length != 10) return;
     setState(() => _phase = _Phase.sendingCode);
     context.read<AuthProvider>().startPhoneVerification(
@@ -237,70 +247,144 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
   // ── Phone input ───────────────────────────────────────────────────────────────
 
   Widget _buildPhoneField(VtColorScheme vt) {
+    final digitCount = _rawPhone.length;
+    final borderColor = _phoneComplete
+        ? vt.accentGreen
+        : _phoneFocus.hasFocus
+            ? vt.accentPurple
+            : vt.divider;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Mobile Number', style: AppTextStyles.caption),
-        const SizedBox(height: Sp.sm),
         Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Country code badge
-            Container(
-              height: 52,
-              padding: const EdgeInsets.symmetric(horizontal: Sp.md),
-              decoration: BoxDecoration(
-                color: vt.surface2,
-                borderRadius: BorderRadius.circular(Rad.md),
-                border: Border.all(color: vt.divider),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                '🇮🇳  +91',
-                style: AppTextStyles.body.copyWith(color: vt.textPrimary),
-              ),
-            ),
-            const SizedBox(width: Sp.sm),
-            Expanded(
-              child: TextField(
-                controller: _phoneCtrl,
-                focusNode: _phoneFocus,
-                keyboardType: TextInputType.phone,
-                maxLength: 10,
-                style: AppTextStyles.body.copyWith(color: vt.textPrimary),
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: InputDecoration(
-                  counterText: '',
-                  hintText: '10-digit number',
-                  hintStyle: AppTextStyles.body.copyWith(color: vt.textTertiary),
-                  filled: true,
-                  fillColor: vt.surface2,
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: Sp.md, vertical: 14),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(Rad.md),
-                    borderSide: BorderSide(color: vt.divider),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(Rad.md),
-                    borderSide: BorderSide(color: vt.divider),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(Rad.md),
-                    borderSide:
-                        BorderSide(color: vt.accentPurple, width: 1.5),
-                  ),
-                ),
-                onSubmitted: (_) => _sendOtp(),
-                onChanged: (_) => setState(() {}),
-              ),
+            Text('Mobile Number', style: AppTextStyles.caption),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: _phoneComplete
+                  ? Row(
+                      key: const ValueKey('complete'),
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.check_circle_rounded,
+                            size: 12, color: vt.accentGreen),
+                        const SizedBox(width: 4),
+                        Text('Ready to send',
+                            style: AppTextStyles.caption.copyWith(
+                                color: vt.accentGreen, fontSize: 11)),
+                      ],
+                    )
+                  : Text(
+                      key: const ValueKey('count'),
+                      '$digitCount / 10',
+                      style: AppTextStyles.caption.copyWith(
+                          color: digitCount > 0
+                              ? vt.textSecondary
+                              : vt.textTertiary,
+                          fontSize: 11),
+                    ),
             ),
           ],
         ),
+        const SizedBox(height: Sp.sm),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(Rad.md),
+            border: Border.all(
+              color: borderColor,
+              width: _phoneComplete || _phoneFocus.hasFocus ? 1.5 : 1.0,
+            ),
+            color: _phoneComplete
+                ? vt.accentGreen.withValues(alpha: 0.05)
+                : vt.surface2,
+          ),
+          child: Row(
+            children: [
+              // Country code badge
+              Container(
+                height: 52,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: Sp.md),
+                decoration: BoxDecoration(
+                  border: Border(
+                    right: BorderSide(color: borderColor),
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('🇮🇳', style: TextStyle(fontSize: 18)),
+                    const SizedBox(width: 6),
+                    Text('+91',
+                        style: AppTextStyles.body
+                            .copyWith(color: vt.textPrimary)),
+                  ],
+                ),
+              ),
+              // Phone input
+              Expanded(
+                child: TextField(
+                  controller: _phoneCtrl,
+                  focusNode: _phoneFocus,
+                  keyboardType: TextInputType.phone,
+                  maxLength: 11, // 10 digits + 1 space
+                  style: AppTextStyles.body.copyWith(
+                      color: vt.textPrimary,
+                      letterSpacing: 1.5),
+                  inputFormatters: [_PhoneNumberFormatter()],
+                  decoration: InputDecoration(
+                    counterText: '',
+                    hintText: 'XXXXX XXXXX',
+                    hintStyle: AppTextStyles.body.copyWith(
+                        color: vt.textTertiary, letterSpacing: 1.5),
+                    filled: false,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: Sp.md, vertical: 14),
+                    suffixIcon: _phoneCtrl.text.isNotEmpty
+                        ? GestureDetector(
+                            onTap: () {
+                              _autoSubmitTimer?.cancel();
+                              _phoneCtrl.clear();
+                              setState(() {});
+                            },
+                            child: Icon(
+                              _phoneComplete
+                                  ? Icons.check_circle_rounded
+                                  : Icons.cancel_rounded,
+                              size: 20,
+                              color: _phoneComplete
+                                  ? vt.accentGreen
+                                  : vt.textTertiary,
+                            ),
+                          )
+                        : null,
+                  ),
+                  onSubmitted: (_) => _sendOtp(),
+                  onChanged: (_) {
+                    setState(() {});
+                    _autoSubmitTimer?.cancel();
+                    if (_phoneComplete) {
+                      _autoSubmitTimer = Timer(
+                          const Duration(milliseconds: 800), _sendOtp);
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: Sp.xs),
         Text(
-          'India (+91) only. Standard SMS rates apply.',
-          style: AppTextStyles.caption.copyWith(
-              color: vt.textTertiary, fontSize: 11),
+          'India (+91) only. SMS will be sent for verification.',
+          style: AppTextStyles.caption
+              .copyWith(color: vt.textTertiary, fontSize: 11),
         ),
       ],
     );
@@ -320,14 +404,14 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
         border: Border.all(color: vt.divider),
       ),
     );
-    final focusedTheme = defaultTheme.copyDecorationWith(
+    final focusedTheme = defaultTheme.copyWith(
       decoration: BoxDecoration(
         color: vt.surface2,
         borderRadius: BorderRadius.circular(Rad.md),
         border: Border.all(color: vt.accentPurple, width: 2),
       ),
     );
-    final filledTheme = defaultTheme.copyDecorationWith(
+    final filledTheme = defaultTheme.copyWith(
       decoration: BoxDecoration(
         color: vt.accentPurple.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(Rad.md),
@@ -427,7 +511,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
                     label: 'Send OTP',
                     icon: const Icon(Icons.sms_outlined,
                         size: 18, color: Colors.white),
-                    onPressed: _phoneCtrl.text.length == 10 ? _sendOtp : null,
+                    onPressed: _phoneComplete ? _sendOtp : null,
                   )
                 else if (_phase == _Phase.enterOtp)
                   VtButton(
@@ -468,6 +552,29 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
                 ),
               ],
             ),
+    );
+  }
+}
+
+class _PhoneNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final capped = digits.length > 10 ? digits.substring(0, 10) : digits;
+
+    final buf = StringBuffer();
+    for (int i = 0; i < capped.length; i++) {
+      if (i == 5) buf.write(' ');
+      buf.write(capped[i]);
+    }
+
+    final formatted = buf.toString();
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
 }

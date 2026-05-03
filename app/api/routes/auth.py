@@ -37,8 +37,18 @@ def _get_firebase_app():
         try:
             _firebase_app = firebase_admin.get_app()
         except ValueError:
+            cred = None
+            # On VPS (non-GCP) there are no ADC — use service account key from env
+            if settings.FIREBASE_SERVICE_ACCOUNT:
+                import base64, json
+                from firebase_admin import credentials as fb_creds
+                sa_dict = json.loads(
+                    base64.b64decode(settings.FIREBASE_SERVICE_ACCOUNT).decode()
+                )
+                cred = fb_creds.Certificate(sa_dict)
             _firebase_app = firebase_admin.initialize_app(
-                options={"projectId": settings.FIREBASE_PROJECT_ID}
+                credential=cred,
+                options={"projectId": settings.FIREBASE_PROJECT_ID},
             )
         return _firebase_app
     except Exception as exc:

@@ -52,6 +52,7 @@ class Settings(BaseSettings):
 
     # Firebase Phone Auth
     FIREBASE_PROJECT_ID: Optional[str] = None
+    FIREBASE_SERVICE_ACCOUNT: Optional[str] = None  # base64-encoded service account JSON
     VT_JWT_SECRET: str = "change-me-in-production-vt-jwt-secret"
     VT_JWT_EXPIRY_HOURS: int = 720  # 30 days
 

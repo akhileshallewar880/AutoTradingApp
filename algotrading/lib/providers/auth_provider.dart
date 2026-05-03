@@ -252,7 +252,7 @@ class AuthProvider with ChangeNotifier {
       notifyListeners();
       onError(_phoneError!);
     } catch (e) {
-      _phoneError = 'Verification failed. Please try again.';
+      _phoneError = e.toString().replaceFirst('Exception: ', '');
       _phoneVerifying = false;
       notifyListeners();
       onError(_phoneError!);

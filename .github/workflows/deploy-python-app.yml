@@ -87,12 +87,13 @@ jobs:
           FRONTEND_URL: ${{ secrets.FRONTEND_URL_PRODUCTION }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID_PRODUCTION }}
           VT_JWT_SECRET: ${{ secrets.VT_JWT_SECRET_PRODUCTION }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PRODUCTION }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          envs: OPENAI_API_KEY,FRONTEND_URL,FIREBASE_PROJECT_ID,VT_JWT_SECRET
+          envs: OPENAI_API_KEY,FRONTEND_URL,FIREBASE_PROJECT_ID,VT_JWT_SECRET,FIREBASE_SERVICE_ACCOUNT
           script: |
             set -e
             cd ${{ secrets.VPS_APP_DIR }}
@@ -135,6 +136,13 @@ jobs:
                 echo "VT_JWT_SECRET=$VT_JWT_SECRET" >> .env
               fi
               echo "✅ VT_JWT_SECRET set"
+            fi
+
+            # FIREBASE_SERVICE_ACCOUNT (base64-encoded — may contain = chars, use append only)
+            if [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
+              grep -v "^FIREBASE_SERVICE_ACCOUNT=" .env > .env.tmp && mv .env.tmp .env
+              echo "FIREBASE_SERVICE_ACCOUNT=$FIREBASE_SERVICE_ACCOUNT" >> .env
+              echo "✅ FIREBASE_SERVICE_ACCOUNT set"
             fi
 
             echo "✅ .env updated"
