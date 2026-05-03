@@ -1,15 +1,16 @@
 import '../theme/vt_color_scheme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../models/dashboard_model.dart';
-import '../theme/app_colors.dart';
+import '../providers/dashboard_provider.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 
 class GttAnalysisScreen extends StatelessWidget {
   final GttModel gtt;
 
-  GttAnalysisScreen({super.key, required this.gtt});
+  const GttAnalysisScreen({super.key, required this.gtt});
 
   @override
   Widget build(BuildContext context) {
@@ -19,23 +20,28 @@ class GttAnalysisScreen extends StatelessWidget {
 
     // Prices
     final ltp = gtt.lastPrice;
-    final avgBuy = ltp; // best approximation without position data
     final stopLoss = (isTwoLeg && triggers.length >= 2) ? triggers[0] : (triggers.isNotEmpty ? triggers[0] : 0.0);
     final target = (isTwoLeg && triggers.length >= 2) ? triggers[1] : 0.0;
     final qty = gtt.quantity;
 
-    // P&L calculations
-    final currentPnl = (ltp - avgBuy) * qty;
-    final maxProfit = target > 0 ? (target - avgBuy) * qty : 0.0;
-    final maxLoss = stopLoss > 0 ? (stopLoss - avgBuy) * qty : 0.0;
+    // Try to find avg buy price from an open position with the same symbol
+    final positions = context.read<DashboardProvider>().dashboard?.positions ?? [];
+    final matchedPos = positions.where((p) => p.symbol == gtt.symbol).firstOrNull;
+    final avgBuy = matchedPos?.avgPrice ?? 0.0;
+    final hasBuyPrice = avgBuy > 0;
+
+    // P&L calculations (only meaningful when avgBuy is known)
+    final currentPnl = hasBuyPrice ? (ltp - avgBuy) * qty : 0.0;
+    final maxProfit = target > 0 ? (target - (hasBuyPrice ? avgBuy : ltp)) * qty : 0.0;
+    final maxLoss = stopLoss > 0 ? (stopLoss - (hasBuyPrice ? avgBuy : ltp)) * qty : 0.0;
     final riskReward = (maxLoss != 0 && maxProfit != 0)
         ? (maxProfit / maxLoss.abs()).abs()
         : 0.0;
 
     // % moves
-    final pnlPct = avgBuy > 0 ? (ltp - avgBuy) / avgBuy * 100 : 0.0;
-    final targetPct = avgBuy > 0 && target > 0 ? (target - avgBuy) / avgBuy * 100 : 0.0;
-    final slPct = avgBuy > 0 && stopLoss > 0 ? (stopLoss - avgBuy) / avgBuy * 100 : 0.0;
+    final pnlPct = hasBuyPrice ? (ltp - avgBuy) / avgBuy * 100 : 0.0;
+    final targetPct = hasBuyPrice && target > 0 ? (target - avgBuy) / avgBuy * 100 : 0.0;
+    final slPct = hasBuyPrice && stopLoss > 0 ? (stopLoss - avgBuy) / avgBuy * 100 : 0.0;
 
     // Distance to trigger
     final distToTarget = target > 0 ? ((target - ltp) / ltp * 100) : 0.0;
@@ -62,15 +68,22 @@ class GttAnalysisScreen extends StatelessWidget {
             _buildHeaderCard(context, currency, ltp, qty, isTwoLeg),
             SizedBox(height: Sp.base),
 
-            _buildPnlCard(context, 
-              label: 'Current P&L',
-              value: currentPnl,
-              pct: pnlPct,
-              subtitle: 'Based on LTP vs avg buy price',
-              icon: isCurrentPositive ? Icons.trending_up : Icons.trending_down,
-              color: isCurrentPositive ? context.vt.accentGreen : context.vt.danger,
-              currency: currency,
-            ),
+            hasBuyPrice
+                ? _buildPnlCard(context,
+                    label: 'Current P&L',
+                    value: currentPnl,
+                    pct: pnlPct,
+                    subtitle:
+                        'Based on avg buy ${currency.format(avgBuy)} vs LTP',
+                    icon: isCurrentPositive
+                        ? Icons.trending_up
+                        : Icons.trending_down,
+                    color: isCurrentPositive
+                        ? context.vt.accentGreen
+                        : context.vt.danger,
+                    currency: currency,
+                  )
+                : _buildNoPnlCard(context),
             SizedBox(height: Sp.md),
 
             if (target > 0) ...[
@@ -306,7 +319,53 @@ class GttAnalysisScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildRiskRewardCard(BuildContext context, 
+  Widget _buildNoPnlCard(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(Sp.base),
+      decoration: BoxDecoration(
+        color: context.vt.surface1,
+        borderRadius: BorderRadius.circular(Rad.lg),
+        border: Border.all(color: context.vt.divider),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(Sp.md),
+            decoration: BoxDecoration(
+              color: context.vt.textTertiary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(Rad.md),
+            ),
+            child: Icon(Icons.link_off_rounded,
+                color: context.vt.textTertiary, size: 28),
+          ),
+          const SizedBox(width: Sp.base),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Current P&L', style: AppTextStyles.caption),
+                const SizedBox(height: 4),
+                Text('Not available',
+                    style: AppTextStyles.mono.copyWith(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: context.vt.textTertiary)),
+                const SizedBox(height: 4),
+                Text(
+                  'No open position found for ${gtt.symbol}. '
+                  'P&L shows once position is active.',
+                  style: AppTextStyles.caption
+                      .copyWith(color: context.vt.textTertiary),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRiskRewardCard(BuildContext context,
       double rr, double maxProfit, double maxLoss, NumberFormat currency) {
     final isGood = rr >= 2.0;
     final color = isGood ? context.vt.accentGreen : context.vt.warning;
@@ -328,33 +387,38 @@ class GttAnalysisScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: Sp.md),
-          Row(
-            children: [
-              Expanded(
-                child: _rrBox(
-                  label: 'Ratio',
-                  value: '1 : ${rr.toStringAsFixed(2)}',
-                  color: color,
-                  note: isGood ? 'Favourable' : 'Below 1:2',
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _rrBox(
+                    label: 'Ratio',
+                    value: '1 : ${rr.toStringAsFixed(2)}',
+                    color: color,
+                    note: isGood ? 'Favourable' : 'Below 1:2',
+                  ),
                 ),
-              ),
-              SizedBox(width: Sp.sm),
-              Expanded(
-                child: _rrBox(
-                  label: 'Max Profit',
-                  value: currency.format(maxProfit),
-                  color: context.vt.accentGreen,
+                const SizedBox(width: Sp.sm),
+                Expanded(
+                  child: _rrBox(
+                    label: 'Max Profit',
+                    value: currency.format(maxProfit),
+                    color: context.vt.accentGreen,
+                    note: '',
+                  ),
                 ),
-              ),
-              SizedBox(width: Sp.sm),
-              Expanded(
-                child: _rrBox(
-                  label: 'Max Loss',
-                  value: currency.format(maxLoss.abs()),
-                  color: context.vt.danger,
+                const SizedBox(width: Sp.sm),
+                Expanded(
+                  child: _rrBox(
+                    label: 'Max Loss',
+                    value: currency.format(maxLoss.abs()),
+                    color: context.vt.danger,
+                    note: '',
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -381,7 +445,7 @@ class GttAnalysisScreen extends StatelessWidget {
           Text(value,
               style: AppTextStyles.mono
                   .copyWith(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
-          if (note != null)
+          if (note != null && note.isNotEmpty)
             Text(note,
                 style: AppTextStyles.caption.copyWith(color: color)),
         ],

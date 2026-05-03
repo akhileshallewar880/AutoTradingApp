@@ -45,8 +45,15 @@ class Settings(BaseSettings):
     def _nonempty_frontend_url(cls, v: str) -> str:
         return v if v else "https://vantrade.in"
 
-    # Admin Dashboard Config (kept for potential future use)
+    # Admin Dashboard Config
     ADMIN_JWT_SECRET: str = "your-secret-key-change-in-production"
+    ADMIN_JWT_ALGORITHM: str = "HS256"
+    ADMIN_JWT_EXPIRATION_MINUTES: int = 480
+
+    # Firebase Phone Auth
+    FIREBASE_PROJECT_ID: Optional[str] = None
+    VT_JWT_SECRET: str = "change-me-in-production-vt-jwt-secret"
+    VT_JWT_EXPIRY_HOURS: int = 720  # 30 days
 
     model_config = SettingsConfigDict(env_file=str(_ENV_FILE), env_file_encoding="utf-8", extra="ignore")
 

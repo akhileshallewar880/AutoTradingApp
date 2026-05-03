@@ -460,5 +460,27 @@ class ApiService {
       throw Exception(body['detail'] ?? 'Failed to place limit order');
     }
   }
+
+  // ── Phone Auth ─────────────────────────────────────────────────────────────
+
+  /// Exchange a Firebase ID token for a VanTrade JWT.
+  static Future<Map<String, dynamic>> verifyFirebaseToken(
+    String firebaseIdToken,
+  ) async {
+    final response = await http
+        .post(
+          Uri.parse(ApiConfig.phoneVerifyUrl),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'firebase_id_token': firebaseIdToken}),
+        )
+        .timeout(const Duration(seconds: 20));
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    final body = jsonDecode(response.body) as Map<String, dynamic>? ?? {};
+    throw Exception(
+        body['detail'] ?? 'Phone verification failed (${response.statusCode})');
+  }
 }
 

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/auth_provider.dart';
+import '../services/session_manager.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/vantrade_logo.dart';
@@ -87,6 +88,13 @@ class _SplashScreenState extends State<SplashScreen>
 
     if (!onboardingCompleted) {
       Navigator.pushReplacementNamed(context, '/onboarding');
+      return;
+    }
+
+    final phoneVerified = await SessionManager.isPhoneVerified();
+    if (!mounted) return;
+    if (!phoneVerified) {
+      Navigator.pushReplacementNamed(context, '/phone-auth');
       return;
     }
 

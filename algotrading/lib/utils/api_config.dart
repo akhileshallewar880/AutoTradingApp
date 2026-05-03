@@ -13,6 +13,7 @@ class ApiConfig {
   static const String sessionUrl = '$baseUrl/auth/session';
   static const String profileUrl = '$baseUrl/auth/profile';
   static const String logoutUrl = '$baseUrl/auth/logout';
+  static const String phoneVerifyUrl = '$baseUrl/auth/phone/verify';
   
   // Analysis endpoints
   static const String generateAnalysisUrl = '$baseUrl/analysis/generate';

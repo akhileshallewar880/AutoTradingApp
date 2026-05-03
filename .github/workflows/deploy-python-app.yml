@@ -85,12 +85,14 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_PRODUCTION }}
           FRONTEND_URL: ${{ secrets.FRONTEND_URL_PRODUCTION }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID_PRODUCTION }}
+          VT_JWT_SECRET: ${{ secrets.VT_JWT_SECRET_PRODUCTION }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          envs: OPENAI_API_KEY,FRONTEND_URL
+          envs: OPENAI_API_KEY,FRONTEND_URL,FIREBASE_PROJECT_ID,VT_JWT_SECRET
           script: |
             set -e
             cd ${{ secrets.VPS_APP_DIR }}
@@ -102,6 +104,8 @@ jobs:
             # ── Write env vars from GitHub Secrets into .env ─────────────────
             echo "🔑 Updating .env with secrets from GitHub..."
             sed -i "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$OPENAI_API_KEY|" .env
+
+            # FRONTEND_URL
             if [ -n "$FRONTEND_URL" ]; then
               if grep -q "^FRONTEND_URL=" .env; then
                 sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=$FRONTEND_URL|" .env
@@ -112,6 +116,27 @@ jobs:
             else
               echo "ℹ️  FRONTEND_URL_PRODUCTION secret not set — keeping existing .env value"
             fi
+
+            # FIREBASE_PROJECT_ID
+            if [ -n "$FIREBASE_PROJECT_ID" ]; then
+              if grep -q "^FIREBASE_PROJECT_ID=" .env; then
+                sed -i "s|^FIREBASE_PROJECT_ID=.*|FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID|" .env
+              else
+                echo "FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID" >> .env
+              fi
+              echo "✅ FIREBASE_PROJECT_ID set"
+            fi
+
+            # VT_JWT_SECRET
+            if [ -n "$VT_JWT_SECRET" ]; then
+              if grep -q "^VT_JWT_SECRET=" .env; then
+                sed -i "s|^VT_JWT_SECRET=.*|VT_JWT_SECRET=$VT_JWT_SECRET|" .env
+              else
+                echo "VT_JWT_SECRET=$VT_JWT_SECRET" >> .env
+              fi
+              echo "✅ VT_JWT_SECRET set"
+            fi
+
             echo "✅ .env updated"
 
             # ── Remove hardcoded env vars from systemd service file ──────────
@@ -128,6 +153,9 @@ jobs:
             python run_migration.py add_daily_pnl_records \
               && echo "✅ add_daily_pnl_records migration done" \
               || echo "⚠️  add_daily_pnl_records already applied or skipped (non-fatal)"
+            python run_migration.py add_phone_auth \
+              && echo "✅ add_phone_auth migration done" \
+              || echo "⚠️  add_phone_auth already applied or skipped (non-fatal)"
 
             # ── Enforce single worker ────────────────────────────────────────
             SERVICE_FILE="/etc/systemd/system/${{ secrets.VPS_SERVICE_NAME }}.service"

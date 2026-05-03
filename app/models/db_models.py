@@ -108,13 +108,15 @@ class User(SQLModel, table=True):
     """
     User account information.
     Stores basic profile and authentication data.
+    zerodha_user_id / email are nullable to support phone-only users.
     """
     __tablename__ = "vantrade_users"
 
     user_id: Optional[int] = Field(default=None, primary_key=True, index=True)
-    zerodha_user_id: str = Field(index=True, unique=True, max_length=255)  # Zerodha's user_id from OAuth
-    email: str = Field(index=True, unique=True, max_length=255)
-    full_name: str = Field(max_length=255)
+    # Zerodha identity — nullable for phone-only users
+    zerodha_user_id: Optional[str] = Field(default=None, index=True, unique=True, max_length=255)
+    email: Optional[str] = Field(default=None, index=True, unique=True, max_length=255)
+    full_name: str = Field(default="", max_length=255)
     is_active: bool = Field(default=True)
     user_type: str = Field(default="USER", max_length=10)  # USER or ADMIN
     created_at: datetime = Field(
@@ -125,6 +127,11 @@ class User(SQLModel, table=True):
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     )
+    # Phone auth — all nullable, added via add_phone_auth migration
+    phone_number: Optional[str] = Field(default=None, index=True, unique=True, max_length=20)
+    firebase_uid: Optional[str] = Field(default=None, index=True, unique=True, max_length=128)
+    phone_verified_at: Optional[datetime] = Field(default=None)
+    vt_user_id: Optional[str] = Field(default=None, index=True, unique=True, max_length=36)
 
     # Relationships
     api_credentials: List["ApiCredential"] = Relationship(back_populates="user", cascade_delete=True)

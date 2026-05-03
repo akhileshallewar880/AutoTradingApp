@@ -163,10 +163,19 @@ class _LoginScreenState extends State<LoginScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           VtButton(
-                            label: 'Connect Zerodha',
-                            icon: const Icon(Icons.link_rounded,
+                            label: 'Sign in with Phone',
+                            icon: const Icon(Icons.phone_android_outlined,
                                 size: 18, color: Colors.white),
+                            onPressed: () =>
+                                Navigator.pushNamed(context, '/phone-auth'),
+                          ),
+                          SizedBox(height: Sp.sm),
+                          VtButton(
+                            label: 'Connect Zerodha',
+                            icon: Icon(Icons.link_rounded,
+                                size: 18, color: context.vt.textSecondary),
                             onPressed: () => _handleLogin(context, auth),
+                            variant: VtButtonVariant.ghost,
                           ),
                           SizedBox(height: Sp.sm),
                           VtButton(

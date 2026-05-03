@@ -1,6 +1,7 @@
 import '../theme/vt_color_scheme.dart';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -1162,7 +1163,7 @@ class _BarChartPainter extends CustomPainter {
                 color: labelColor,
                 fontSize: 9,
                 fontWeight: FontWeight.w600)),
-        textDirection: TextDirection.ltr,
+        textDirection: ui.TextDirection.ltr,
       )..layout(maxWidth: barW + barGap);
 
       tp.paint(canvas,
@@ -1313,7 +1314,7 @@ class _LinePainter extends CustomPainter {
                 color: labelColor,
                 fontSize: 9,
                 fontWeight: FontWeight.w600)),
-        textDirection: TextDirection.ltr,
+        textDirection: ui.TextDirection.ltr,
       )..layout();
       tp.paint(canvas,
           Offset(xForIndex(i) - tp.width / 2, chartH + 2));

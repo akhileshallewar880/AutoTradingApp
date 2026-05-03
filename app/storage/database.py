@@ -597,5 +597,76 @@ class Database:
     async def save_token_usage(self, *args, **kwargs):
         pass
 
+    # ── Phone Auth ────────────────────────────────────────────────────────────
+
+    def _sync_upsert_user_by_firebase_uid(
+        self,
+        firebase_uid: str,
+        phone_number: str,
+        phone_verified_at: str,
+    ) -> dict:
+        from sqlalchemy import text
+        import uuid as _uuid
+
+        sql_lookup = text(
+            "SELECT vt_user_id FROM vantrade_users WHERE firebase_uid = :fuid"
+        )
+        sql_insert = text("""
+            INSERT INTO vantrade_users
+              (vt_user_id, firebase_uid, phone_number, phone_verified_at,
+               full_name, is_active, user_type, created_at, updated_at)
+            VALUES
+              (:vt_user_id, :fuid, :phone, :verified_at,
+               '', 1, 'USER', GETUTCDATE(), GETUTCDATE())
+        """)
+        sql_update = text("""
+            UPDATE vantrade_users
+               SET phone_number      = :phone,
+                   phone_verified_at = :verified_at,
+                   updated_at        = GETUTCDATE()
+             WHERE firebase_uid = :fuid
+        """)
+
+        with self._engine.connect() as conn:
+            row = conn.execute(sql_lookup, {"fuid": firebase_uid}).fetchone()
+            if row and row[0]:
+                conn.execute(sql_update, {
+                    "phone": phone_number,
+                    "verified_at": phone_verified_at,
+                    "fuid": firebase_uid,
+                })
+                conn.commit()
+                return {"vt_user_id": row[0], "is_new_user": False}
+            else:
+                new_id = str(_uuid.uuid4())
+                conn.execute(sql_insert, {
+                    "vt_user_id": new_id,
+                    "fuid": firebase_uid,
+                    "phone": phone_number,
+                    "verified_at": phone_verified_at,
+                })
+                conn.commit()
+                return {"vt_user_id": new_id, "is_new_user": True}
+
+    async def upsert_user_by_firebase_uid(
+        self,
+        firebase_uid: str,
+        phone_number: str,
+        phone_verified_at: str,
+    ) -> dict:
+        """Insert or update a user record by Firebase UID. Returns vt_user_id + is_new_user."""
+        self._ensure_engine()
+        if not self._ready:
+            import uuid as _uuid
+            return {"vt_user_id": str(_uuid.uuid4()), "is_new_user": True}
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self._sync_upsert_user_by_firebase_uid,
+            firebase_uid,
+            phone_number,
+            phone_verified_at,
+        )
+
 
 db = Database()

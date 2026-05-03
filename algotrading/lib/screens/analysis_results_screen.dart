@@ -5,11 +5,11 @@ import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/analysis_provider.dart';
 import '../models/analysis_model.dart';
-import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/status_badge.dart';
 import '../widgets/stock_card.dart';
+import '../widgets/trade_risk_disclaimer.dart';
 import '../widgets/vt_button.dart';
 import 'execution_tracking_screen.dart';
 
@@ -157,6 +157,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     AnalysisResponseModel analysis,
     AnalysisProvider provider,
   ) {
+    final vt = context.vt;
     final metrics = analysis.portfolioMetrics;
     final currency = NumberFormat.currency(symbol: '₹', decimalDigits: 0);
     final holdDays = provider.holdDurationDays;
@@ -170,280 +171,133 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     final lossPct =
         totalInvestment > 0 ? maxLoss / totalInvestment * 100 : 0.0;
 
-    final double overallConfidence = analysis.stocks.isEmpty
+    final double overallConf = analysis.stocks.isEmpty
         ? 0.0
         : analysis.stocks
                 .map((s) => s.confidenceScore)
                 .reduce((a, b) => a + b) /
             analysis.stocks.length;
-    final int confPct = (overallConfidence * 100).round();
+    final int confPct = (overallConf * 100).round();
     final Color confColor = confPct >= 80
-        ? context.vt.accentGreen
+        ? vt.accentGreen
         : confPct >= 70
-            ? context.vt.warning
-            : context.vt.danger;
+            ? vt.warning
+            : vt.danger;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, 0),
+      padding: const EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, 0),
       child: Container(
         decoration: BoxDecoration(
-          color: context.vt.surface1,
+          color: vt.surface1,
           borderRadius: BorderRadius.circular(Rad.lg),
-          border: Border.all(color: context.vt.divider),
-          boxShadow: AppColors.ambientShadow,
+          border: Border.all(color: vt.divider),
         ),
+        padding: const EdgeInsets.all(Sp.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ── Header ──────────────────────────────────────────────────
-            Padding(
-              padding: EdgeInsets.fromLTRB(Sp.base, Sp.md, Sp.base, Sp.sm),
-              child: Row(
-                children: [
-                  Container(
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: context.vt.accentPurpleDim,
-                      borderRadius: BorderRadius.circular(Rad.sm),
-                    ),
-                    child: Icon(Icons.auto_awesome_rounded,
-                        size: 14, color: context.vt.accentPurple),
+            Row(
+              children: [
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: vt.accentPurpleDim,
+                    borderRadius: BorderRadius.circular(Rad.sm),
                   ),
-                  SizedBox(width: Sp.sm),
-                  Text('Portfolio Summary', style: AppTextStyles.h3),
-                  Spacer(),
-                  // Hold badge
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: Sp.sm, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: context.vt.accentPurpleDim,
-                      borderRadius: BorderRadius.circular(Rad.pill),
-                    ),
-                    child: Text(
-                      _holdLabel(holdDays),
-                      style: AppTextStyles.caption.copyWith(
-                          color: context.vt.accentPurple,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11),
-                    ),
-                  ),
-                  SizedBox(width: Sp.xs),
-                  // Picks count
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: Sp.sm, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: context.vt.surface2,
-                      borderRadius: BorderRadius.circular(Rad.pill),
-                      border: Border.all(color: context.vt.divider),
-                    ),
-                    child: Text(
-                      '${analysis.stocks.length} picks',
-                      style: AppTextStyles.caption.copyWith(
-                          color: context.vt.textSecondary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            Divider(height: 1, color: context.vt.divider),
-
-            // ── Investment hero ──────────────────────────────────────────
-            Padding(
-              padding: EdgeInsets.fromLTRB(Sp.base, Sp.md, Sp.base, Sp.sm),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('TOTAL CAPITAL AT RISK',
-                      style: AppTextStyles.caption.copyWith(
-                          fontSize: 10,
-                          letterSpacing: 0.8,
-                          color: context.vt.textTertiary)),
-                  const SizedBox(height: 4),
-                  Text(
-                    currency.format(totalInvestment),
-                    style: AppTextStyles.display.copyWith(fontSize: 30),
-                  ),
-                ],
-              ),
-            ),
-
-            // ── Profit / Loss row ────────────────────────────────────────
-            Padding(
-              padding:
-                  EdgeInsets.symmetric(horizontal: Sp.base),
-              child: Row(
-                children: [
-                  // Max Profit
-                  Expanded(
-                    child: Container(
-                      padding: EdgeInsets.all(Sp.sm),
-                      decoration: BoxDecoration(
-                        color: context.vt.accentGreen.withValues(alpha: 0.07),
-                        borderRadius: BorderRadius.circular(Rad.md),
-                        border: Border.all(
-                            color:
-                                context.vt.accentGreen.withValues(alpha: 0.18)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Icon(Icons.trending_up_rounded,
-                                size: 12, color: context.vt.accentGreen),
-                            SizedBox(width: 4),
-                            Text('MAX PROFIT',
-                                style: AppTextStyles.caption.copyWith(
-                                    color: context.vt.accentGreen,
-                                    fontSize: 9,
-                                    letterSpacing: 0.6)),
-                          ]),
-                          SizedBox(height: 5),
-                          Text(currency.format(maxProfit),
-                              style: AppTextStyles.mono.copyWith(
-                                  color: context.vt.accentGreen,
-                                  fontWeight: FontWeight.w700)),
-                          SizedBox(height: 2),
-                          Text('+${profitPct.toStringAsFixed(1)}%',
-                              style: AppTextStyles.caption.copyWith(
-                                  color: context.vt.accentGreen,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: Sp.sm),
-                  // Max Loss
-                  Expanded(
-                    child: Container(
-                      padding: EdgeInsets.all(Sp.sm),
-                      decoration: BoxDecoration(
-                        color: context.vt.danger.withValues(alpha: 0.07),
-                        borderRadius: BorderRadius.circular(Rad.md),
-                        border: Border.all(
-                            color: context.vt.danger.withValues(alpha: 0.18)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Icon(Icons.trending_down_rounded,
-                                size: 12, color: context.vt.danger),
-                            SizedBox(width: 4),
-                            Text('MAX LOSS',
-                                style: AppTextStyles.caption.copyWith(
-                                    color: context.vt.danger,
-                                    fontSize: 9,
-                                    letterSpacing: 0.6)),
-                          ]),
-                          SizedBox(height: 5),
-                          Text(currency.format(maxLoss),
-                              style: AppTextStyles.mono.copyWith(
-                                  color: context.vt.danger,
-                                  fontWeight: FontWeight.w700)),
-                          SizedBox(height: 2),
-                          Text('-${lossPct.toStringAsFixed(1)}%',
-                              style: AppTextStyles.caption.copyWith(
-                                  color: context.vt.danger,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // ── AI Confidence hero ───────────────────────────────────────
-            Padding(
-              padding: EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, Sp.md),
-              child: Container(
-                padding: EdgeInsets.symmetric(
-                    horizontal: Sp.md, vertical: Sp.md),
-                decoration: BoxDecoration(
-                  color: confColor.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(Rad.md),
-                  border: Border.all(
-                      color: confColor.withValues(alpha: 0.28), width: 1),
+                  child: Icon(Icons.auto_awesome_rounded,
+                      size: 13, color: vt.accentPurple),
                 ),
-                child: Row(
-                  children: [
-                    // Left: label + big % + qualifier pill
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
+                const SizedBox(width: Sp.sm),
+                Text('Portfolio Summary', style: AppTextStyles.bodyLarge),
+                const Spacer(),
+                _holdChip(holdDays),
+                const SizedBox(width: Sp.xs),
+                _picksChip(analysis.stocks.length),
+              ],
+            ),
+            const Divider(height: Sp.lg),
+
+            // ── 4-column metrics row ─────────────────────────────────────
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Capital at risk
+                  Expanded(
+                    flex: 5,
+                    child: _metricCol(
+                      label: 'CAPITAL',
+                      value: currency.format(totalInvestment),
+                      sub: null,
+                      color: vt.textPrimary,
+                    ),
+                  ),
+                  _vDivider(),
+                  // Max gain
+                  Expanded(
+                    flex: 4,
+                    child: _metricCol(
+                      label: 'MAX GAIN',
+                      value: currency.format(maxProfit),
+                      sub: '+${profitPct.toStringAsFixed(1)}%',
+                      color: vt.accentGreen,
+                      icon: Icons.trending_up_rounded,
+                    ),
+                  ),
+                  _vDivider(),
+                  // Max risk
+                  Expanded(
+                    flex: 4,
+                    child: _metricCol(
+                      label: 'MAX RISK',
+                      value: currency.format(maxLoss),
+                      sub: '−${lossPct.toStringAsFixed(1)}%',
+                      color: vt.danger,
+                      icon: Icons.trending_down_rounded,
+                    ),
+                  ),
+                  _vDivider(),
+                  // AI confidence
+                  Expanded(
+                    flex: 4,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
                             Icon(Icons.auto_awesome_rounded,
-                                size: 11, color: context.vt.accentPurple),
-                            SizedBox(width: 4),
-                            Text('AI CONFIDENCE',
+                                size: 9, color: vt.accentPurple),
+                            const SizedBox(width: 3),
+                            Text('AI CONF',
                                 style: AppTextStyles.caption.copyWith(
-                                    fontSize: 10,
-                                    letterSpacing: 0.8,
-                                    color: context.vt.textTertiary)),
-                          ]),
-                          SizedBox(height: 6),
-                          Text(
-                            '$confPct%',
-                            style: AppTextStyles.display.copyWith(
-                                fontSize: 38,
-                                color: confColor,
-                                height: 1.0),
+                                    color: vt.textTertiary,
+                                    fontSize: 9,
+                                    letterSpacing: 0.5)),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '$confPct%',
+                          style: AppTextStyles.monoSm
+                              .copyWith(color: confColor, fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 4),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(Rad.pill),
+                          child: LinearProgressIndicator(
+                            value: overallConf,
+                            minHeight: 3,
+                            backgroundColor: vt.surface3,
+                            valueColor: AlwaysStoppedAnimation<Color>(confColor),
                           ),
-                          SizedBox(height: 6),
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                                horizontal: Sp.sm, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: confColor.withValues(alpha: 0.14),
-                              borderRadius: BorderRadius.circular(Rad.pill),
-                            ),
-                            child: Text(
-                              _confLabel(confPct),
-                              style: AppTextStyles.caption.copyWith(
-                                  color: confColor,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 10,
-                                  letterSpacing: 0.7),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                    SizedBox(width: Sp.md),
-                    // Right: circular arc gauge
-                    SizedBox(
-                      width: 72,
-                      height: 72,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          SizedBox.expand(
-                            child: CircularProgressIndicator(
-                              value: overallConfidence,
-                              strokeWidth: 7,
-                              backgroundColor:
-                                  context.vt.divider,
-                              valueColor:
-                                  AlwaysStoppedAnimation<Color>(confColor),
-                              strokeCap: StrokeCap.round,
-                            ),
-                          ),
-                          Icon(Icons.auto_awesome_rounded,
-                              size: 24, color: confColor),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -452,11 +306,80 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     );
   }
 
-  String _confLabel(int pct) {
-    if (pct >= 80) return 'HIGH CONFIDENCE';
-    if (pct >= 70) return 'MODERATE';
-    return 'LOW CONFIDENCE';
+  Widget _vDivider() => Container(
+        width: 1,
+        margin: const EdgeInsets.symmetric(horizontal: Sp.sm),
+        color: context.vt.divider,
+      );
+
+  Widget _metricCol({
+    required String label,
+    required String value,
+    required String? sub,
+    required Color color,
+    IconData? icon,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Row(
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 9, color: color),
+              const SizedBox(width: 3),
+            ],
+            Text(label,
+                style: AppTextStyles.caption.copyWith(
+                    color: context.vt.textTertiary,
+                    fontSize: 9,
+                    letterSpacing: 0.5)),
+          ],
+        ),
+        const SizedBox(height: 3),
+        Text(value,
+            style: AppTextStyles.monoSm
+                .copyWith(color: color, fontWeight: FontWeight.w700),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis),
+        if (sub != null)
+          Text(sub,
+              style: AppTextStyles.caption
+                  .copyWith(color: color, fontWeight: FontWeight.w600)),
+      ],
+    );
   }
+
+  Widget _holdChip(int days) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 3),
+        decoration: BoxDecoration(
+          color: context.vt.accentPurpleDim,
+          borderRadius: BorderRadius.circular(Rad.pill),
+        ),
+        child: Text(
+          _holdLabel(days),
+          style: AppTextStyles.caption.copyWith(
+              color: context.vt.accentPurple,
+              fontWeight: FontWeight.w600,
+              fontSize: 11),
+        ),
+      );
+
+  Widget _picksChip(int count) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 3),
+        decoration: BoxDecoration(
+          color: context.vt.surface2,
+          borderRadius: BorderRadius.circular(Rad.pill),
+          border: Border.all(color: context.vt.divider),
+        ),
+        child: Text(
+          '$count picks',
+          style: AppTextStyles.caption.copyWith(
+              color: context.vt.textSecondary,
+              fontWeight: FontWeight.w600,
+              fontSize: 11),
+        ),
+      );
 
   String _holdLabel(int days) {
     switch (days) {
@@ -933,18 +856,40 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                 ),
               ],
             ),
+            actionsPadding: const EdgeInsets.fromLTRB(
+                Sp.base, 0, Sp.base, Sp.base),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: context.vt.accentPurple,
-                  foregroundColor: context.vt.surface0,
-                ),
-                child: const Text('Place AMO'),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: context.vt.divider),
+                        foregroundColor: context.vt.textSecondary,
+                        padding: const EdgeInsets.symmetric(vertical: Sp.md),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(Rad.md)),
+                      ),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: Sp.sm),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: context.vt.accentPurple,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: Sp.md),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(Rad.md)),
+                      ),
+                      child: const Text('Place AMO'),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -957,6 +902,9 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
     AnalysisResponseModel analysis,
   ) async {
     setState(() => _confirmError = null);
+
+    final disclaimerAccepted = await showTradeRiskDisclaimer(context);
+    if (!disclaimerAccepted || !context.mounted) return;
 
     final analysisProvider = context.read<AnalysisProvider>();
     final isSwing = analysisProvider.holdDurationDays > 0;

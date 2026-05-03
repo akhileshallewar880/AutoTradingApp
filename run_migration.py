@@ -84,6 +84,15 @@ try:
 except ImportError:
     run_swing_expiry = None
 
+try:
+    from app.migrations.add_phone_auth import (
+        apply as apply_phone_auth,
+        rollback as rollback_phone_auth,
+    )
+except ImportError:
+    apply_phone_auth = None
+    rollback_phone_auth = None
+
 
 def _get_migration_engine():
     """Return a SQLAlchemy engine for migrations. Raises if DB not configured."""
@@ -157,6 +166,15 @@ def main():
                 else:
                     logger.error("❌ swing_expiry_trigger migration not found")
                     sys.exit(1)
+            elif migration_name == "add_phone_auth":
+                if apply_phone_auth:
+                    apply_phone_auth(_get_migration_engine())
+                    logger.info("=" * 70)
+                    logger.info("✅ PHONE AUTH MIGRATION SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ add_phone_auth migration not found")
+                    sys.exit(1)
             else:
                 logger.error(f"❌ Unknown migration: {migration_name}")
                 sys.exit(1)
@@ -196,6 +214,15 @@ def main():
                     logger.info("=" * 70)
                 else:
                     logger.error("❌ fix_execution_schema rollback not found")
+                    sys.exit(1)
+            elif action == "add_phone_auth":
+                if rollback_phone_auth:
+                    rollback_phone_auth(_get_migration_engine())
+                    logger.info("=" * 70)
+                    logger.info("✅ PHONE AUTH ROLLBACK SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ add_phone_auth rollback not found")
                     sys.exit(1)
             else:
                 logger.error(f"❌ Unknown migration: {action}")

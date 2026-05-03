@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
@@ -12,6 +13,19 @@ class AuthProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _error;
 
+  // ── Phone auth state ────────────────────────────────────────────────────────
+  String? _vtAccessToken;
+  String? _phoneNumber;
+  bool _phoneVerifying = false;
+  String? _phoneVerificationId;
+  String? _phoneError;
+
+  String? get vtAccessToken => _vtAccessToken;
+  String? get phoneNumber => _phoneNumber;
+  bool get isPhoneVerifying => _phoneVerifying;
+  String? get phoneError => _phoneError;
+  bool get isPhoneVerified => _vtAccessToken != null && _vtAccessToken!.isNotEmpty;
+
   UserModel? get user => _user;
   bool get isLoading => _isLoading;
   String? get error => _error;
@@ -23,6 +37,9 @@ class AuthProvider with ChangeNotifier {
   Future<void> checkSession() async {
     _isLoading = true;
     notifyListeners();
+    // Restore VT / phone session regardless of Zerodha session state
+    _vtAccessToken = await SessionManager.getVtAccessToken();
+    _phoneNumber = await SessionManager.getPhoneNumber();
 
     try {
       final userData = await SessionManager.getUserData();
@@ -156,11 +173,106 @@ class AuthProvider with ChangeNotifier {
 
     await SessionManager.clearSession();
     // Note: Do NOT clear API credentials on logout.
-    // Credentials persist across logout/login cycles.
-    // User only needs to enter them once per app installation.
-    // To switch accounts, user must manually clear credentials via settings.
     _user = null;
     _error = null;
+    _vtAccessToken = null;
+    _phoneNumber = null;
+    notifyListeners();
+  }
+
+  // ── Phone Authentication ───────────────────────────────────────────────────
+
+  void clearPhoneError() {
+    _phoneError = null;
+    notifyListeners();
+  }
+
+  Future<void> startPhoneVerification({
+    required String phoneNumber,
+    required void Function(String verificationId) onCodeSent,
+    required void Function(String error) onError,
+  }) async {
+    _phoneVerifying = true;
+    _phoneError = null;
+    notifyListeners();
+
+    try {
+      await FirebaseAuth.instance.verifyPhoneNumber(
+        phoneNumber: '+91$phoneNumber',
+        timeout: const Duration(seconds: 60),
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          // Android auto-retrieval — complete without OTP input
+          await _completePhoneAuth(credential);
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          _phoneError = e.message ?? 'Verification failed. Check the number and try again.';
+          _phoneVerifying = false;
+          notifyListeners();
+          onError(_phoneError!);
+        },
+        codeSent: (String verificationId, int? resendToken) {
+          _phoneVerificationId = verificationId;
+          _phoneVerifying = false;
+          notifyListeners();
+          onCodeSent(verificationId);
+        },
+        codeAutoRetrievalTimeout: (_) {},
+      );
+    } catch (e) {
+      _phoneError = 'Could not send OTP. Check your connection and try again.';
+      _phoneVerifying = false;
+      notifyListeners();
+      onError(_phoneError!);
+    }
+  }
+
+  Future<void> verifyOtp({
+    required String smsCode,
+    required void Function() onSuccess,
+    required void Function(String error) onError,
+  }) async {
+    if (_phoneVerificationId == null) {
+      onError('Verification session expired. Please request a new OTP.');
+      return;
+    }
+    _phoneVerifying = true;
+    _phoneError = null;
+    notifyListeners();
+
+    try {
+      final credential = PhoneAuthProvider.credential(
+        verificationId: _phoneVerificationId!,
+        smsCode: smsCode,
+      );
+      await _completePhoneAuth(credential);
+      onSuccess();
+    } on FirebaseAuthException catch (e) {
+      _phoneError = e.message ?? 'Invalid OTP. Please try again.';
+      _phoneVerifying = false;
+      notifyListeners();
+      onError(_phoneError!);
+    } catch (e) {
+      _phoneError = 'Verification failed. Please try again.';
+      _phoneVerifying = false;
+      notifyListeners();
+      onError(_phoneError!);
+    }
+  }
+
+  Future<void> _completePhoneAuth(PhoneAuthCredential credential) async {
+    final userCredential =
+        await FirebaseAuth.instance.signInWithCredential(credential);
+    final idToken = await userCredential.user!.getIdToken();
+
+    final response = await ApiService.verifyFirebaseToken(idToken!);
+    _vtAccessToken = response['vt_access_token'] as String;
+    _phoneNumber = response['phone_number'] as String;
+
+    await SessionManager.saveVtSession(
+      vtAccessToken: _vtAccessToken!,
+      phoneNumber: _phoneNumber!,
+    );
+    _phoneVerifying = false;
     notifyListeners();
   }
 

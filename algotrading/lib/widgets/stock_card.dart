@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/analysis_model.dart';
 import '../providers/analysis_provider.dart';
-import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 
@@ -127,20 +126,28 @@ class _StockCardState extends State<StockCard>
         : '0.0';
 
     return AnimatedOpacity(
-      duration: Duration(milliseconds: 200),
-      opacity: widget.isSelected ? 1.0 : 0.5,
+      duration: const Duration(milliseconds: 200),
+      opacity: widget.isSelected ? 1.0 : 0.55,
       child: GestureDetector(
         onTap: _toggle,
         child: Container(
-          margin: EdgeInsets.only(bottom: Sp.xs),
+          margin: const EdgeInsets.only(bottom: Sp.sm),
           decoration: BoxDecoration(
             color: context.vt.surface1,
             borderRadius: BorderRadius.circular(Rad.lg),
             border: Border.all(
               color: widget.isSelected
-                  ? accentColor.withValues(alpha: 0.28)
+                  ? accentColor.withValues(alpha: 0.35)
                   : context.vt.divider,
             ),
+            boxShadow: widget.isSelected
+                ? [BoxShadow(
+                    color: accentColor.withValues(alpha: 0.06),
+                    blurRadius: 8,
+                    spreadRadius: 0,
+                    offset: const Offset(0, 2),
+                  )]
+                : null,
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(Rad.lg),
@@ -159,11 +166,11 @@ class _StockCardState extends State<StockCard>
                         // ── Collapsed header ─────────────────────────────
                         Padding(
                           padding: const EdgeInsets.fromLTRB(
-                              Sp.md, Sp.sm, Sp.md, Sp.sm),
+                              Sp.md, Sp.md, Sp.md, Sp.md),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Row 1 — Symbol + badge | Entry price
+                              // Row 1 — Checkbox · Symbol · BUY/SHORT · days  |  Entry
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
@@ -192,32 +199,28 @@ class _StockCardState extends State<StockCard>
                                       isBuy: isBuy, accentColor: accentColor),
                                   if (widget.stock.daysToTarget != null) ...[
                                     const SizedBox(width: Sp.xs),
-                                    _DaysChip(
-                                        days: widget.stock.daysToTarget!),
+                                    _DaysChip(days: widget.stock.daysToTarget!),
                                   ],
                                   const Spacer(),
-                                  // Entry price label
                                   Column(
                                     crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
                                       Text('Entry',
-                                          style: AppTextStyles.caption
-                                              .copyWith(fontSize: 9)),
+                                          style: AppTextStyles.caption.copyWith(
+                                              color: context.vt.textTertiary)),
                                       Text(
-                                        currency
-                                            .format(widget.stock.entryPrice),
+                                        currency.format(widget.stock.entryPrice),
                                         style: AppTextStyles.mono.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 13),
+                                            fontWeight: FontWeight.w700),
                                       ),
                                     ],
                                   ),
                                 ],
                               ),
 
-                              SizedBox(height: 6),
+                              const SizedBox(height: Sp.xs),
 
-                              // Row 2 — Company name | Target price + gain %
+                              // Row 2 — Company name  |  Target + gain pill
                               Row(
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
@@ -225,14 +228,14 @@ class _StockCardState extends State<StockCard>
                                     Expanded(
                                       child: Text(
                                         widget.stock.companyName!,
-                                        style: AppTextStyles.caption,
+                                        style: AppTextStyles.caption.copyWith(
+                                            color: context.vt.textSecondary),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     )
                                   else
                                     const Spacer(),
-                                  // Target price
                                   Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
@@ -240,45 +243,30 @@ class _StockCardState extends State<StockCard>
                                         isBuy
                                             ? Icons.trending_up_rounded
                                             : Icons.trending_down_rounded,
-                                        size: 13,
+                                        size: 12,
                                         color: accentColor,
                                       ),
-                                      const SizedBox(width: 3),
-                                      Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.end,
-                                        children: [
-                                          Text('Target',
-                                              style: AppTextStyles.caption
-                                                  .copyWith(fontSize: 9)),
-                                          Text(
-                                            currency.format(
-                                                widget.stock.targetPrice),
-                                            style:
-                                                AppTextStyles.monoSm.copyWith(
-                                              color: accentColor,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                        ],
+                                      const SizedBox(width: Sp.xs),
+                                      Text(
+                                        currency.format(widget.stock.targetPrice),
+                                        style: AppTextStyles.monoSm.copyWith(
+                                            color: accentColor,
+                                            fontWeight: FontWeight.w700),
                                       ),
                                       const SizedBox(width: Sp.xs),
                                       Container(
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 5, vertical: 2),
+                                            horizontal: Sp.xs, vertical: 2),
                                         decoration: BoxDecoration(
-                                          color: accentColor
-                                              .withValues(alpha: 0.12),
-                                          borderRadius: BorderRadius.circular(
-                                              Rad.pill),
+                                          color: accentColor.withValues(alpha: 0.12),
+                                          borderRadius:
+                                              BorderRadius.circular(Rad.pill),
                                         ),
                                         child: Text(
                                           '+$gainPct%',
-                                          style: AppTextStyles.caption
-                                              .copyWith(
-                                                  color: accentColor,
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.w700),
+                                          style: AppTextStyles.caption.copyWith(
+                                              color: accentColor,
+                                              fontWeight: FontWeight.w700),
                                         ),
                                       ),
                                     ],
@@ -286,15 +274,15 @@ class _StockCardState extends State<StockCard>
                                 ],
                               ),
 
-                              SizedBox(height: 6),
+                              const SizedBox(height: Sp.xs),
 
-                              // Row 3 — Stop loss pill | Confidence | Expand
+                              // Row 3 — SL pill  |  Confidence bar + %  |  Expand
                               Row(
                                 children: [
-                                  // SL compact pill
+                                  // SL pill
                                   Container(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
+                                        horizontal: Sp.xs, vertical: 3),
                                     decoration: BoxDecoration(
                                       color: context.vt.danger
                                           .withValues(alpha: 0.08),
@@ -308,45 +296,61 @@ class _StockCardState extends State<StockCard>
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Text('SL',
-                                            style: AppTextStyles.caption
-                                                .copyWith(
-                                                    color: context.vt.danger,
-                                                    fontSize: 9,
-                                                    fontWeight:
-                                                        FontWeight.w600)),
-                                        SizedBox(width: 3),
+                                            style: AppTextStyles.caption.copyWith(
+                                                color: context.vt.danger,
+                                                fontWeight: FontWeight.w700)),
+                                        const SizedBox(width: Sp.xs),
                                         Text(
-                                          currencyInt
-                                              .format(widget.stock.stopLoss),
+                                          currencyInt.format(widget.stock.stopLoss),
                                           style: AppTextStyles.monoSm.copyWith(
                                               color: context.vt.danger,
-                                              fontSize: 10,
                                               fontWeight: FontWeight.w600),
                                         ),
                                       ],
                                     ),
                                   ),
-                                  const SizedBox(width: Sp.xs),
-                                  // Confidence badge
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: _confColor(confPct)
-                                          .withValues(alpha: 0.10),
-                                      borderRadius:
-                                          BorderRadius.circular(Rad.pill),
-                                    ),
-                                    child: Text(
-                                      '$confPct% conf',
-                                      style: AppTextStyles.caption.copyWith(
-                                        color: _confColor(confPct),
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 10,
-                                      ),
+                                  const SizedBox(width: Sp.sm),
+                                  // Confidence: filled pill bar with % label
+                                  SizedBox(
+                                    width: 64,
+                                    height: 20,
+                                    child: Stack(
+                                      children: [
+                                        // Track
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            color: context.vt.surface3,
+                                            borderRadius: BorderRadius.circular(Rad.pill),
+                                          ),
+                                        ),
+                                        // Fill
+                                        FractionallySizedBox(
+                                          alignment: Alignment.centerLeft,
+                                          widthFactor: widget.stock.confidenceScore
+                                              .clamp(0.0, 1.0),
+                                          child: Container(
+                                            decoration: BoxDecoration(
+                                              color: _confColor(confPct)
+                                                  .withValues(alpha: 0.85),
+                                              borderRadius:
+                                                  BorderRadius.circular(Rad.pill),
+                                            ),
+                                          ),
+                                        ),
+                                        // Label centred over bar
+                                        Center(
+                                          child: Text(
+                                            '$confPct%',
+                                            style: AppTextStyles.caption.copyWith(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  Spacer(),
+                                  const Spacer(),
                                   // Expand arrow
                                   RotationTransition(
                                     turns: Tween<double>(begin: 0, end: 0.5)
@@ -506,126 +510,162 @@ class _StockCardState extends State<StockCard>
   }
 
   Widget _buildPriceLevels(NumberFormat currency, bool isBuy) {
-    final slLabel = isBuy ? 'Stop Loss' : 'SL (Cover)';
-    final tgtLabel = isBuy ? 'Target' : 'Target (Cover)';
+    return Row(
+      children: [
+        // Stop Loss box
+        Expanded(
+          child: _priceLevelBox(
+            label: isBuy ? 'Stop Loss' : 'SL (Cover)',
+            value: currency.format(widget.stock.stopLoss),
+            color: context.vt.danger,
+            bgAlpha: 0.07,
+          ),
+        ),
+        // Arrow SL → Entry
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Sp.xs),
+          child: Icon(
+            isBuy ? Icons.arrow_forward_rounded : Icons.arrow_back_rounded,
+            size: 14,
+            color: context.vt.textTertiary,
+          ),
+        ),
+        // Entry box (neutral, centre)
+        Expanded(
+          child: _priceLevelBox(
+            label: 'Entry',
+            value: currency.format(widget.stock.entryPrice),
+            color: context.vt.textPrimary,
+            bgAlpha: 0.04,
+            isEntry: true,
+          ),
+        ),
+        // Arrow Entry → Target
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Sp.xs),
+          child: Icon(
+            isBuy ? Icons.arrow_forward_rounded : Icons.arrow_back_rounded,
+            size: 14,
+            color: isBuy ? context.vt.accentGreen : context.vt.danger,
+          ),
+        ),
+        // Target box
+        Expanded(
+          child: _priceLevelBox(
+            label: isBuy ? 'Target' : 'Target (Cover)',
+            value: currency.format(widget.stock.targetPrice),
+            color: context.vt.accentGreen,
+            bgAlpha: 0.07,
+          ),
+        ),
+      ],
+    );
+  }
 
+  Widget _priceLevelBox({
+    required String label,
+    required String value,
+    required Color color,
+    required double bgAlpha,
+    bool isEntry = false,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-          horizontal: Sp.md, vertical: Sp.sm),
+      padding: const EdgeInsets.symmetric(vertical: Sp.sm),
       decoration: BoxDecoration(
-        color: context.vt.surface2,
+        color: color.withValues(alpha: bgAlpha),
         borderRadius: BorderRadius.circular(Rad.md),
+        border: Border.all(color: color.withValues(alpha: isEntry ? 0.1 : 0.18)),
       ),
-      child: Row(
+      child: Column(
         children: [
-          // Stop Loss
-          Expanded(
-            child: Column(
-              children: [
-                Text(slLabel,
-                    style: AppTextStyles.caption
-                        .copyWith(color: context.vt.danger, fontSize: 10),
-                    textAlign: TextAlign.center),
-                SizedBox(height: 2),
-                Text(
-                  currency.format(widget.stock.stopLoss),
-                  style: AppTextStyles.monoSm.copyWith(
-                      color: context.vt.danger, fontWeight: FontWeight.w700),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-
-          // Arrow
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: Sp.sm),
-            child: Column(
-              children: [
-                Text('Entry',
-                    style: AppTextStyles.caption.copyWith(fontSize: 10),
-                    textAlign: TextAlign.center),
-                SizedBox(height: 2),
-                Text(
-                  currency.format(widget.stock.entryPrice),
-                  style: AppTextStyles.monoSm.copyWith(
-                      color: context.vt.textPrimary,
-                      fontWeight: FontWeight.w700),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-
-          // Target
-          Expanded(
-            child: Column(
-              children: [
-                Text(tgtLabel,
-                    style: AppTextStyles.caption.copyWith(
-                        color: context.vt.accentGreen, fontSize: 10),
-                    textAlign: TextAlign.center),
-                SizedBox(height: 2),
-                Text(
-                  currency.format(widget.stock.targetPrice),
-                  style: AppTextStyles.monoSm.copyWith(
-                      color: context.vt.accentGreen,
-                      fontWeight: FontWeight.w700),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
+          Text(label,
+              style: AppTextStyles.caption
+                  .copyWith(color: color, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 3),
+          Text(value,
+              style: AppTextStyles.monoSm
+                  .copyWith(color: color, fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
         ],
       ),
     );
   }
 
   Widget _buildRRBar(double rewardFraction, double rrRatio) {
+    final riskPct = ((1 - rewardFraction) * 100).round().clamp(1, 99);
+    final rewardPct = (rewardFraction * 100).round().clamp(1, 99);
+    final isGoodRR = rrRatio >= 2.0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('Risk : Reward',
-                style: AppTextStyles.caption.copyWith(fontSize: 11)),
+            Row(children: [
+              Text('R:R Ratio',
+                  style: AppTextStyles.caption
+                      .copyWith(color: context.vt.textSecondary)),
+              const SizedBox(width: Sp.xs),
+              if (isGoodRR)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: Sp.xs, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: context.vt.accentGreen.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(Rad.pill),
+                  ),
+                  child: Text('GOOD',
+                      style: AppTextStyles.caption.copyWith(
+                          color: context.vt.accentGreen,
+                          fontWeight: FontWeight.w700)),
+                ),
+            ]),
             Text(
               '1 : ${rrRatio.toStringAsFixed(2)}',
               style: AppTextStyles.monoSm.copyWith(
-                  color: context.vt.textPrimary, fontWeight: FontWeight.w700),
+                  color: isGoodRR
+                      ? context.vt.accentGreen
+                      : context.vt.textPrimary,
+                  fontWeight: FontWeight.w700),
             ),
           ],
         ),
-        SizedBox(height: Sp.xs),
+        const SizedBox(height: Sp.xs),
         ClipRRect(
           borderRadius: BorderRadius.circular(Rad.pill),
           child: SizedBox(
-            height: 6,
+            height: 7,
             child: Row(
               children: [
                 Expanded(
-                  flex: ((1 - rewardFraction) * 100).round(),
-                  child: Container(color: context.vt.danger),
+                  flex: riskPct,
+                  child: Container(color: context.vt.danger.withValues(alpha: 0.75)),
                 ),
                 Expanded(
-                  flex: (rewardFraction * 100).round(),
-                  child: Container(color: context.vt.accentGreen),
+                  flex: rewardPct,
+                  child: Container(
+                      color: context.vt.accentGreen.withValues(alpha: 0.75)),
                 ),
               ],
             ),
           ),
         ),
-        SizedBox(height: 2),
+        const SizedBox(height: Sp.xs),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text('Risk',
                 style: AppTextStyles.caption
-                    .copyWith(color: context.vt.danger, fontSize: 10)),
+                    .copyWith(color: context.vt.danger)),
             Text('Reward',
                 style: AppTextStyles.caption
-                    .copyWith(color: context.vt.accentGreen, fontSize: 10)),
+                    .copyWith(color: context.vt.accentGreen)),
           ],
         ),
       ],
@@ -724,7 +764,7 @@ class _StockCardState extends State<StockCard>
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 class _ActionBadge extends StatelessWidget {
-  _ActionBadge({required this.isBuy, required this.accentColor});
+  const _ActionBadge({required this.isBuy, required this.accentColor});
   final bool isBuy;
   final Color accentColor;
 
@@ -750,7 +790,7 @@ class _ActionBadge extends StatelessWidget {
 }
 
 class _DaysChip extends StatelessWidget {
-  _DaysChip({required this.days});
+  const _DaysChip({required this.days});
   final int days;
 
   @override

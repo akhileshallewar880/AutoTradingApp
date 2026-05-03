@@ -26,6 +26,7 @@ import 'analysis_input_screen.dart';
 import 'backtest_screen.dart';
 import 'gtt_analysis_screen.dart';
 import 'holdings_screen.dart';
+import 'performance_screen.dart';
 import '../main.dart' show routeObserver;
 
 class HomeScreen extends StatefulWidget {
@@ -281,6 +282,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                           _buildAddFundsCard()
                               .animate(delay: 120.ms).fadeIn().slideY(begin: 0.04, end: 0),
                       ],
+
+                      // Performance overview
+                      _buildPerformanceOverviewCard(dash.dashboard)
+                          .animate(delay: 120.ms).fadeIn(duration: 300.ms)
+                          .slideY(begin: 0.04, end: 0, duration: 300.ms),
+                      const SizedBox(height: Sp.md),
 
                       // Daily market insight
                       _buildInsightCard(),
@@ -660,7 +667,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
             const SizedBox(height: Sp.md),
 
             // ── Metrics row ──────────────────────────────────────────────
-            Row(
+            IntrinsicHeight(
+             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // Today's P&L box
                 Expanded(
@@ -744,6 +753,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                   ),
                 ),
               ],
+             ),
             ),
           ],
         ),
@@ -796,6 +806,133 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       ),
     );
   }
+
+  // ── Performance overview card ──────────────────────────────────────────────
+  Widget _buildPerformanceOverviewCard(DashboardModel? data) {
+    final vt = context.vt;
+    final monthPnl   = data?.monthPnl   ?? 0.0;
+    final todayPnl   = data?.todayPnl   ?? 0.0;
+    final winRate    = data?.monthWinRate ?? 0.0;
+    final trades     = data?.monthTrades  ?? 0;
+    final monthColor = monthPnl >= 0 ? vt.accentGreen : vt.danger;
+    final todayColor = todayPnl >= 0 ? vt.accentGreen : vt.danger;
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const PerformanceScreen()),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: vt.surface1,
+          borderRadius: BorderRadius.circular(Rad.lg),
+          border: Border.all(color: vt.divider),
+        ),
+        padding: const EdgeInsets.all(Sp.base),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                Icon(Icons.bar_chart_rounded, size: 16, color: vt.accentGreen),
+                const SizedBox(width: Sp.sm),
+                Text('Performance Overview',
+                    style: AppTextStyles.caption.copyWith(
+                        color: vt.textSecondary, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                Text('View All',
+                    style: AppTextStyles.caption.copyWith(
+                        color: vt.accentGreen, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 2),
+                Icon(Icons.chevron_right_rounded,
+                    size: 14, color: vt.accentGreen),
+              ],
+            ),
+            const SizedBox(height: Sp.md),
+            // Stats row
+            Row(
+              children: [
+                _perfStat(
+                  label: "Today's P&L",
+                  value: data == null
+                      ? '—'
+                      : '${todayPnl >= 0 ? '+' : ''}${_currency.format(todayPnl)}',
+                  color: data == null ? vt.textTertiary : todayColor,
+                  isLoading: data == null,
+                ),
+                _perfDivider(),
+                _perfStat(
+                  label: 'Month P&L',
+                  value: data == null
+                      ? '—'
+                      : '${monthPnl >= 0 ? '+' : ''}${_currency.format(monthPnl)}',
+                  color: data == null ? vt.textTertiary : monthColor,
+                  isLoading: data == null,
+                ),
+                _perfDivider(),
+                _perfStat(
+                  label: 'Win Rate',
+                  value: data == null ? '—' : '${winRate.toStringAsFixed(0)}%',
+                  color: data == null
+                      ? vt.textTertiary
+                      : winRate >= 60
+                          ? vt.accentGreen
+                          : winRate >= 40
+                              ? vt.warning
+                              : vt.danger,
+                  isLoading: data == null,
+                ),
+                _perfDivider(),
+                _perfStat(
+                  label: 'Trades',
+                  value: data == null ? '—' : '$trades',
+                  color: data == null ? vt.textTertiary : vt.textPrimary,
+                  isLoading: data == null,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _perfStat({
+    required String label,
+    required String value,
+    required Color color,
+    required bool isLoading,
+  }) {
+    final vt = context.vt;
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(label,
+              textAlign: TextAlign.center,
+              style: AppTextStyles.caption
+                  .copyWith(color: vt.textTertiary, fontSize: 9)),
+          const SizedBox(height: 3),
+          isLoading
+              ? SkeletonBox(width: 44, height: 13, radius: Rad.sm)
+              : Text(value,
+                  textAlign: TextAlign.center,
+                  style: AppTextStyles.mono.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+        ],
+      ),
+    );
+  }
+
+  Widget _perfDivider() => Container(
+        width: 1, height: 28,
+        color: context.vt.divider,
+      );
 
   // ── Positions ──────────────────────────────────────────────────────────────
   Widget _buildInsightCard() {
@@ -1205,35 +1342,55 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, Sp.sm),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: VtButton(
-                  label: 'AI Analysis',
-                  icon: const Icon(Icons.auto_awesome, size: 16,
-                      color: Colors.white),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const AnalysisInputScreen()),
-                  ),
-                  height: 48,
+              // Primary CTA — full width
+              VtButton(
+                label: 'AI Analysis',
+                icon: const Icon(Icons.auto_awesome, size: 16,
+                    color: Colors.white),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const AnalysisInputScreen()),
                 ),
+                height: 48,
               ),
-              SizedBox(width: Sp.sm),
-              Expanded(
-                child: VtButton(
-                  label: 'Holdings',
-                  icon: Icon(Icons.account_balance_wallet_outlined,
-                      size: 16, color: context.vt.textPrimary),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const HoldingsScreen()),
+              const SizedBox(height: Sp.sm),
+              // Secondary row
+              Row(
+                children: [
+                  Expanded(
+                    child: VtButton(
+                      label: 'Holdings',
+                      icon: Icon(Icons.account_balance_wallet_outlined,
+                          size: 16, color: context.vt.textPrimary),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const HoldingsScreen()),
+                      ),
+                      variant: VtButtonVariant.secondary,
+                      height: 40,
+                    ),
                   ),
-                  variant: VtButtonVariant.secondary,
-                  height: 48,
-                ),
+                  const SizedBox(width: Sp.sm),
+                  Expanded(
+                    child: VtButton(
+                      label: 'Performance',
+                      icon: Icon(Icons.bar_chart_rounded,
+                          size: 16, color: context.vt.textPrimary),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const PerformanceScreen()),
+                      ),
+                      variant: VtButtonVariant.secondary,
+                      height: 40,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

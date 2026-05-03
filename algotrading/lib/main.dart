@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
+import 'firebase_options.dart';
 import 'providers/auth_provider.dart';
 import 'providers/analysis_provider.dart';
 import 'providers/dashboard_provider.dart';
@@ -10,6 +12,7 @@ import 'providers/theme_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/phone_auth_screen.dart';
 import 'screens/api_settings_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
@@ -33,6 +36,15 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = _TrustAllCerts();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  // Firebase init — guarded so the app still works before flutterfire configure is run
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (_) {
+    // firebase_options.dart is a placeholder until `flutterfire configure` is run
+  }
 
   Animate.restartOnHotReload = true;
 
@@ -84,6 +96,7 @@ class AlgoTradingApp extends StatelessWidget {
             '/': (context) => const SplashScreen(),
             '/onboarding': (context) => const OnboardingScreen(),
             '/login': (context) => const LoginScreen(),
+            '/phone-auth': (context) => const PhoneAuthScreen(),
             '/api-settings': (context) => const ApiSettingsScreen(),
             '/home': (context) => const HomeScreen(),
           },
