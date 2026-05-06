@@ -153,8 +153,27 @@ class Database:
                     """))
                 conn.commit()
 
-                # Unique filtered indexes (safe to re-run)
+                # Drop non-filtered unique indexes on nullable columns created by SQLModel.
+                # SQL Server allows only ONE NULL in a non-filtered unique index, so
+                # having two phone-only users (email=NULL, zerodha=NULL) would violate it.
+                for bad_idx in [
+                    "ix_vantrade_users_email",
+                    "ix_vantrade_users_zerodha_user_id",
+                ]:
+                    conn.execute(text(f"""
+                        IF EXISTS (
+                            SELECT 1 FROM sys.indexes
+                             WHERE object_id = OBJECT_ID('vantrade_users')
+                               AND name = '{bad_idx}'
+                        )
+                            DROP INDEX [{bad_idx}] ON vantrade_users;
+                    """))
+                conn.commit()
+
+                # Replace with filtered unique indexes (NULLs are not unique)
                 for idx_name, col in [
+                    ("uq_vt_users_email",    "email"),
+                    ("uq_vt_users_zerodha",  "zerodha_user_id"),
                     ("uq_vt_users_phone",    "phone_number"),
                     ("uq_vt_users_firebase", "firebase_uid"),
                     ("uq_vt_users_vt_id",   "vt_user_id"),
