@@ -2,7 +2,7 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
-from app.api.routes import agent, performance, auth, analysis, dashboard, credentials, live_trading, backtest, portfolio, ticker
+from app.api.routes import agent, performance, auth, analysis, dashboard, credentials, live_trading, backtest, portfolio, ticker, subscription
 from app.core.logging import logger
 
 settings = get_settings()
@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
     app.include_router(backtest.router, prefix="/api/v1/backtest", tags=["Backtest"])
     app.include_router(portfolio.router, prefix="/api/v1/portfolio", tags=["Portfolio"])
     app.include_router(ticker.router, prefix="/api/v1/ticker", tags=["Live Ticker"])
+    app.include_router(subscription.router, prefix="/api/v1/subscription", tags=["Subscription"])
 
     @app.on_event("startup")
     async def startup_event():

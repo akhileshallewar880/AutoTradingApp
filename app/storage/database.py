@@ -21,6 +21,21 @@ from app.core.logging import logger
 settings = get_settings()
 
 
+def _default_usage_status(period: str) -> dict:
+    """Returned when DB is unavailable — user gets Free plan limits."""
+    return {
+        "plan": {"plan_id": "free", "name": "Free", "price_monthly": 0.0,
+                 "features": '["3 analyses/month","5 executions/month","Basic support"]'},
+        "subscription": {"status": "active", "expires_at": None},
+        "usage": {"period": period, "analyses_count": 0, "executions_count": 0,
+                  "last_analysis_at": None, "last_execution_at": None},
+        "limits": {"analyses_per_month": 3, "executions_per_month": 5},
+        "analyses_remaining": 3, "executions_remaining": 5,
+        "is_over_analysis_limit": False, "is_over_execution_limit": False,
+        "all_plans": [],
+    }
+
+
 def _build_conn_str() -> Optional[str]:
     """Build pyodbc connection string from settings. Returns None if DB not configured."""
     s = settings
@@ -105,6 +120,7 @@ class Database:
         if self._engine:
             self._ensure_swing_positions_table()
             self._ensure_users_table()
+            self._ensure_usage_tables()
             self._ready = True
 
     def _ensure_users_table(self):
@@ -192,6 +208,245 @@ class Database:
                 logger.info("[DB] vantrade_users table + phone-auth columns ready")
         except Exception as e:
             logger.warning(f"[DB] Could not ensure vantrade_users table: {e}")
+
+    def _ensure_usage_tables(self):
+        """Create plans, subscriptions, and usage_records tables if missing (idempotent)."""
+        if not self._engine:
+            return
+        try:
+            from sqlalchemy import text
+            with self._engine.connect() as conn:
+                conn.execute(text("""
+                    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'vantrade_plans')
+                    CREATE TABLE vantrade_plans (
+                        plan_id              VARCHAR(20)    NOT NULL PRIMARY KEY,
+                        name                 VARCHAR(50)    NOT NULL,
+                        price_monthly        DECIMAL(8,2)   NOT NULL DEFAULT 0,
+                        analyses_per_month   INT            NULL,
+                        executions_per_month INT            NULL,
+                        features             NVARCHAR(MAX)  NULL,
+                        is_active            BIT            NOT NULL DEFAULT 1,
+                        created_at           DATETIMEOFFSET NOT NULL DEFAULT GETUTCDATE()
+                    );
+                """))
+                conn.commit()
+
+                # Seed plans
+                conn.execute(text("""
+                    MERGE vantrade_plans AS t
+                    USING (VALUES
+                        ('free',  'Free',  0.00,   3,    5,    '["3 analyses/month","5 executions/month","Basic support"]'),
+                        ('pro',   'Pro',   499.00, 30,   50,   '["30 analyses/month","50 executions/month","Priority support","Advanced indicators"]'),
+                        ('elite', 'Elite', 999.00, NULL, NULL, '["Unlimited analyses","Unlimited executions","Dedicated support","All features"]')
+                    ) AS s (plan_id, name, price_monthly, analyses_per_month, executions_per_month, features)
+                    ON t.plan_id = s.plan_id
+                    WHEN NOT MATCHED THEN
+                        INSERT (plan_id, name, price_monthly, analyses_per_month, executions_per_month, features)
+                        VALUES (s.plan_id, s.name, s.price_monthly, s.analyses_per_month, s.executions_per_month, s.features);
+                """))
+                conn.commit()
+
+                conn.execute(text("""
+                    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'vantrade_subscriptions')
+                    CREATE TABLE vantrade_subscriptions (
+                        subscription_id  VARCHAR(36)    NOT NULL PRIMARY KEY,
+                        vt_user_id       VARCHAR(36)    NOT NULL,
+                        plan_id          VARCHAR(20)    NOT NULL DEFAULT 'free',
+                        status           VARCHAR(20)    NOT NULL DEFAULT 'active',
+                        started_at       DATETIMEOFFSET NOT NULL DEFAULT GETUTCDATE(),
+                        expires_at       DATETIMEOFFSET NULL,
+                        payment_provider VARCHAR(50)    NULL,
+                        payment_id       VARCHAR(200)   NULL,
+                        amount_paid      DECIMAL(8,2)   NULL,
+                        created_at       DATETIMEOFFSET NOT NULL DEFAULT GETUTCDATE(),
+                        updated_at       DATETIMEOFFSET NOT NULL DEFAULT GETUTCDATE()
+                    );
+                """))
+                conn.execute(text("""
+                    IF NOT EXISTS (
+                        SELECT 1 FROM sys.indexes
+                         WHERE object_id = OBJECT_ID('vantrade_subscriptions')
+                           AND name = 'idx_sub_user'
+                    )
+                        CREATE INDEX idx_sub_user ON vantrade_subscriptions(vt_user_id, status);
+                """))
+                conn.commit()
+
+                conn.execute(text("""
+                    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'vantrade_usage_records')
+                    CREATE TABLE vantrade_usage_records (
+                        record_id         VARCHAR(36)    NOT NULL PRIMARY KEY,
+                        vt_user_id        VARCHAR(36)    NOT NULL,
+                        period_month      VARCHAR(7)     NOT NULL,
+                        analyses_count    INT            NOT NULL DEFAULT 0,
+                        executions_count  INT            NOT NULL DEFAULT 0,
+                        last_analysis_at  DATETIMEOFFSET NULL,
+                        last_execution_at DATETIMEOFFSET NULL,
+                        created_at        DATETIMEOFFSET NOT NULL DEFAULT GETUTCDATE(),
+                        updated_at        DATETIMEOFFSET NOT NULL DEFAULT GETUTCDATE()
+                    );
+                """))
+                conn.execute(text("""
+                    IF NOT EXISTS (
+                        SELECT 1 FROM sys.indexes
+                         WHERE object_id = OBJECT_ID('vantrade_usage_records')
+                           AND name = 'uq_usage_user_month'
+                    )
+                        CREATE UNIQUE INDEX uq_usage_user_month
+                            ON vantrade_usage_records(vt_user_id, period_month);
+                """))
+                conn.commit()
+                logger.info("[DB] usage tables ready (plans, subscriptions, usage_records)")
+        except Exception as e:
+            logger.warning(f"[DB] Could not ensure usage tables: {e}")
+
+    # ── Usage tracking ────────────────────────────────────────────────────────
+
+    def _sync_increment_usage(self, vt_user_id: str, period: str, field: str) -> None:
+        import uuid as _uuid
+        from sqlalchemy import text
+        sql = text(f"""
+            IF EXISTS (
+                SELECT 1 FROM vantrade_usage_records
+                 WHERE vt_user_id = :uid AND period_month = :period
+            )
+                UPDATE vantrade_usage_records
+                   SET {field} = {field} + 1,
+                       last_{field.replace('_count', '_at')} = GETUTCDATE(),
+                       updated_at = GETUTCDATE()
+                 WHERE vt_user_id = :uid AND period_month = :period
+            ELSE
+                INSERT INTO vantrade_usage_records
+                  (record_id, vt_user_id, period_month, analyses_count,
+                   executions_count, last_{field.replace('_count', '_at')},
+                   created_at, updated_at)
+                VALUES
+                  (:record_id, :uid, :period,
+                   {'1' if field == 'analyses_count' else '0'},
+                   {'1' if field == 'executions_count' else '0'},
+                   GETUTCDATE(), GETUTCDATE(), GETUTCDATE())
+        """)
+        with self._engine.connect() as conn:
+            conn.execute(sql, {"uid": vt_user_id, "period": period, "record_id": str(_uuid.uuid4())})
+            conn.commit()
+
+    def _sync_get_usage_status(self, vt_user_id: str, period: str) -> dict:
+        from sqlalchemy import text
+        sql_usage = text("""
+            SELECT analyses_count, executions_count,
+                   last_analysis_at, last_execution_at
+              FROM vantrade_usage_records
+             WHERE vt_user_id = :uid AND period_month = :period
+        """)
+        sql_sub = text("""
+            SELECT TOP 1 s.plan_id, p.name, p.price_monthly,
+                         p.analyses_per_month, p.executions_per_month,
+                         p.features, s.status, s.expires_at
+              FROM vantrade_subscriptions s
+              JOIN vantrade_plans p ON p.plan_id = s.plan_id
+             WHERE s.vt_user_id = :uid AND s.status = 'active'
+             ORDER BY s.created_at DESC
+        """)
+        sql_plans = text("""
+            SELECT plan_id, name, price_monthly, analyses_per_month,
+                   executions_per_month, features
+              FROM vantrade_plans WHERE is_active = 1
+             ORDER BY price_monthly
+        """)
+        with self._engine.connect() as conn:
+            usage_row = conn.execute(sql_usage, {"uid": vt_user_id, "period": period}).fetchone()
+            sub_row   = conn.execute(sql_sub, {"uid": vt_user_id}).fetchone()
+            plans     = conn.execute(sql_plans).fetchall()
+
+        analyses_count   = usage_row[0] if usage_row else 0
+        executions_count = usage_row[1] if usage_row else 0
+        last_analysis    = str(usage_row[2]) if usage_row and usage_row[2] else None
+        last_execution   = str(usage_row[3]) if usage_row and usage_row[3] else None
+
+        if sub_row:
+            plan_id = sub_row[0]; plan_name = sub_row[1]; price = float(sub_row[2])
+            analyses_limit = sub_row[3]; executions_limit = sub_row[4]
+            features = sub_row[5]; sub_status = sub_row[6]
+            expires_at = str(sub_row[7]) if sub_row[7] else None
+        else:
+            plan_id = "free"; plan_name = "Free"; price = 0.0
+            analyses_limit = 3; executions_limit = 5
+            features = '["3 analyses/month","5 executions/month","Basic support"]'
+            sub_status = "active"; expires_at = None
+
+        return {
+            "plan": {
+                "plan_id": plan_id, "name": plan_name,
+                "price_monthly": price, "features": features,
+            },
+            "subscription": {"status": sub_status, "expires_at": expires_at},
+            "usage": {
+                "period": period,
+                "analyses_count":   analyses_count,
+                "executions_count": executions_count,
+                "last_analysis_at":   last_analysis,
+                "last_execution_at":  last_execution,
+            },
+            "limits": {
+                "analyses_per_month":   analyses_limit,
+                "executions_per_month": executions_limit,
+            },
+            "analyses_remaining":   None if analyses_limit is None else max(0, analyses_limit - analyses_count),
+            "executions_remaining": None if executions_limit is None else max(0, executions_limit - executions_count),
+            "is_over_analysis_limit":   False if analyses_limit is None else analyses_count >= analyses_limit,
+            "is_over_execution_limit":  False if executions_limit is None else executions_count >= executions_limit,
+            "all_plans": [
+                {
+                    "plan_id": r[0], "name": r[1], "price_monthly": float(r[2]),
+                    "analyses_per_month": r[3], "executions_per_month": r[4],
+                    "features": r[5],
+                }
+                for r in plans
+            ],
+        }
+
+    async def increment_analysis_count(self, vt_user_id: str) -> None:
+        """Increment analysis count for current month. Fire-and-forget safe."""
+        if not vt_user_id or not self._ready:
+            return
+        from datetime import datetime
+        period = datetime.utcnow().strftime("%Y-%m")
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(
+                None, self._sync_increment_usage, vt_user_id, period, "analyses_count"
+            )
+        except Exception as e:
+            logger.warning(f"[DB] increment_analysis_count failed: {e}")
+
+    async def increment_execution_count(self, vt_user_id: str) -> None:
+        """Increment execution count for current month. Fire-and-forget safe."""
+        if not vt_user_id or not self._ready:
+            return
+        from datetime import datetime
+        period = datetime.utcnow().strftime("%Y-%m")
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(
+                None, self._sync_increment_usage, vt_user_id, period, "executions_count"
+            )
+        except Exception as e:
+            logger.warning(f"[DB] increment_execution_count failed: {e}")
+
+    async def get_usage_status(self, vt_user_id: str) -> dict:
+        """Return current plan, usage counts, limits, and all available plans."""
+        from datetime import datetime
+        period = datetime.utcnow().strftime("%Y-%m")
+        if not self._ready:
+            return _default_usage_status(period)
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(
+                None, self._sync_get_usage_status, vt_user_id, period
+            )
+        except Exception as e:
+            logger.warning(f"[DB] get_usage_status failed: {e}")
+            return _default_usage_status(period)
 
     def _ensure_swing_positions_table(self):
         """Create vantrade_swing_positions and its MS SQL trigger (idempotent)."""

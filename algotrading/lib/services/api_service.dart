@@ -83,6 +83,7 @@ class ApiService {
     required String accessToken,
     required String apiKey,
     required int userId,
+    String? vtUserId,
     List<String> sectors = const ['ALL'],
     int holdDurationDays = 0,
     double capitalToUse = 0,
@@ -102,6 +103,7 @@ class ApiService {
         'access_token': accessToken,
         'api_key': apiKey,
         'user_id': userId,
+        if (vtUserId != null && vtUserId.isNotEmpty) 'vt_user_id': vtUserId,
         'sectors': sectors,
         'hold_duration_days': holdDurationDays,
         if (capitalToUse > 0) 'capital_to_use': capitalToUse,
@@ -481,6 +483,42 @@ class ApiService {
     final body = jsonDecode(response.body) as Map<String, dynamic>? ?? {};
     throw Exception(
         body['detail'] ?? 'Phone verification failed (${response.statusCode})');
+  }
+
+  // ── Subscription / Usage ───────────────────────────────────────────────────
+
+  static Future<Map<String, dynamic>> getUsageStatus(String vtUserId) async {
+    final uri = Uri.parse('${ApiConfig.baseUrl}/api/v1/subscription/status')
+        .replace(queryParameters: {'vt_user_id': vtUserId});
+    final response = await http.get(uri).timeout(const Duration(seconds: 10));
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    throw Exception('Failed to load usage status (${response.statusCode})');
+  }
+
+  static Future<void> activateSubscription({
+    required String vtUserId,
+    required String planId,
+    String? paymentProvider,
+    String? paymentId,
+    double? amountPaid,
+  }) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/api/v1/subscription/activate'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'vt_user_id': vtUserId,
+        'plan_id': planId,
+        if (paymentProvider != null) 'payment_provider': paymentProvider,
+        if (paymentId != null) 'payment_id': paymentId,
+        if (amountPaid != null) 'amount_paid': amountPaid,
+      }),
+    ).timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      final body = jsonDecode(response.body) as Map<String, dynamic>? ?? {};
+      throw Exception(body['detail'] ?? 'Failed to activate subscription');
+    }
   }
 }
 

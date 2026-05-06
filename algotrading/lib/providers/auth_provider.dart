@@ -15,12 +15,14 @@ class AuthProvider with ChangeNotifier {
 
   // ── Phone auth state ────────────────────────────────────────────────────────
   String? _vtAccessToken;
+  String? _vtUserId;
   String? _phoneNumber;
   bool _phoneVerifying = false;
   String? _phoneVerificationId;
   String? _phoneError;
 
   String? get vtAccessToken => _vtAccessToken;
+  String? get vtUserId => _vtUserId;
   String? get phoneNumber => _phoneNumber;
   bool get isPhoneVerifying => _phoneVerifying;
   String? get phoneError => _phoneError;
@@ -39,7 +41,8 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
     // Restore VT / phone session regardless of Zerodha session state
     _vtAccessToken = await SessionManager.getVtAccessToken();
-    _phoneNumber = await SessionManager.getPhoneNumber();
+    _vtUserId      = await SessionManager.getVtUserId();
+    _phoneNumber   = await SessionManager.getPhoneNumber();
 
     try {
       final userData = await SessionManager.getUserData();
@@ -192,6 +195,7 @@ class AuthProvider with ChangeNotifier {
     _user = null;
     _error = null;
     _vtAccessToken = null;
+    _vtUserId = null;
     _phoneNumber = null;
     notifyListeners();
   }
@@ -291,11 +295,13 @@ class AuthProvider with ChangeNotifier {
 
     final response = await ApiService.verifyFirebaseToken(idToken!);
     _vtAccessToken = response['vt_access_token'] as String;
-    _phoneNumber = response['phone_number'] as String;
+    _vtUserId      = response['vt_user_id'] as String? ?? '';
+    _phoneNumber   = response['phone_number'] as String;
 
     await SessionManager.saveVtSession(
       vtAccessToken: _vtAccessToken!,
       phoneNumber: _phoneNumber!,
+      vtUserId: _vtUserId,
     );
     _phoneVerifying = false;
     notifyListeners();

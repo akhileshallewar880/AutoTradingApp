@@ -164,6 +164,9 @@ jobs:
             python run_migration.py add_phone_auth \
               && echo "✅ add_phone_auth migration done" \
               || echo "⚠️  add_phone_auth already applied or skipped (non-fatal)"
+            python run_migration.py add_subscription_plans \
+              && echo "✅ add_subscription_plans migration done" \
+              || echo "⚠️  add_subscription_plans already applied or skipped (non-fatal)"
 
             # ── Enforce single worker ────────────────────────────────────────
             SERVICE_FILE="/etc/systemd/system/${{ secrets.VPS_SERVICE_NAME }}.service"

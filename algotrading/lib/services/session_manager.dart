@@ -7,6 +7,7 @@ class SessionManager {
   static const String _keyUserData = 'user_data';
   static const String _keyVtAccessToken = 'vt_access_token';
   static const String _keyPhoneNumber = 'phone_number';
+  static const String _keyVtUserId = 'vt_user_id';
 
   static Future<void> saveSession(UserModel user) async {
     final prefs = await SharedPreferences.getInstance();
@@ -39,6 +40,7 @@ class SessionManager {
     await prefs.remove(_keyUserData);
     await prefs.remove(_keyVtAccessToken);
     await prefs.remove(_keyPhoneNumber);
+    await prefs.remove(_keyVtUserId);
   }
 
   /// Clears only the Zerodha access token + user data.
@@ -54,10 +56,12 @@ class SessionManager {
   static Future<void> saveVtSession({
     required String vtAccessToken,
     required String phoneNumber,
+    String? vtUserId,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyVtAccessToken, vtAccessToken);
     await prefs.setString(_keyPhoneNumber, phoneNumber);
+    if (vtUserId != null) await prefs.setString(_keyVtUserId, vtUserId);
   }
 
   static Future<String?> getVtAccessToken() async {
@@ -68,6 +72,11 @@ class SessionManager {
   static Future<String?> getPhoneNumber() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_keyPhoneNumber);
+  }
+
+  static Future<String?> getVtUserId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyVtUserId);
   }
 
   static Future<bool> isPhoneVerified() async {

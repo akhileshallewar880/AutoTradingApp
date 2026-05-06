@@ -93,6 +93,15 @@ except ImportError:
     apply_phone_auth = None
     rollback_phone_auth = None
 
+try:
+    from app.migrations.add_subscription_plans import (
+        apply as apply_subscription_plans,
+        rollback as rollback_subscription_plans,
+    )
+except ImportError:
+    apply_subscription_plans = None
+    rollback_subscription_plans = None
+
 
 def _get_migration_engine():
     """Return a SQLAlchemy engine for migrations. Raises if DB not configured."""
@@ -174,6 +183,15 @@ def main():
                     logger.info("=" * 70)
                 else:
                     logger.error("❌ add_phone_auth migration not found")
+                    sys.exit(1)
+            elif migration_name == "add_subscription_plans":
+                if apply_subscription_plans:
+                    apply_subscription_plans(_get_migration_engine())
+                    logger.info("=" * 70)
+                    logger.info("✅ SUBSCRIPTION PLANS MIGRATION SUCCESSFUL")
+                    logger.info("=" * 70)
+                else:
+                    logger.error("❌ add_subscription_plans migration not found")
                     sys.exit(1)
             else:
                 logger.error(f"❌ Unknown migration: {migration_name}")

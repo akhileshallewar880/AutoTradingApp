@@ -34,6 +34,10 @@ class AnalysisRequest(BaseModel):
         default=None,
         description="Specific NSE symbols to analyse. When provided, sector screening is skipped."
     )
+    vt_user_id: Optional[str] = Field(
+        default=None,
+        description="VanTrade user UUID (from phone auth). Used for usage tracking."
+    )
 
 
 class StockAnalysis(BaseModel):

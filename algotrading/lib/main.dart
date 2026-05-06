@@ -8,6 +8,7 @@ import 'firebase_options.dart';
 import 'providers/auth_provider.dart';
 import 'providers/analysis_provider.dart';
 import 'providers/dashboard_provider.dart';
+import 'providers/subscription_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/onboarding_screen.dart';
@@ -73,6 +74,7 @@ class AlgoTradingApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => AnalysisProvider()),
         ChangeNotifierProvider(create: (_) => DashboardProvider()),
+        ChangeNotifierProvider(create: (_) => SubscriptionProvider()),
       ],
       child: Consumer<ThemeProvider>(
         builder: (_, tp, _) => MaterialApp(

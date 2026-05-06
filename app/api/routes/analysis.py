@@ -390,8 +390,18 @@ async def generate_analysis(request: AnalysisRequest):
             "stocks": [s.dict() for s in stock_analyses],
             "hold_duration_days": request.hold_duration_days,
             "created_at": datetime.utcnow().isoformat(),
+            "vt_user_id": request.vt_user_id or "",
         }
         logger.info(f"Analysis generated: {analysis_id} with {len(stock_analyses)} stocks")
+
+        # Track usage: count only analyses with ≥1 valid stock result
+        if request.vt_user_id:
+            from app.storage.database import db as _db
+            import asyncio as _asyncio
+            _asyncio.ensure_future(
+                _db.increment_analysis_count(request.vt_user_id)
+            )
+
         return analysis
 
     except HTTPException:
@@ -542,6 +552,14 @@ async def execute_trades(
 
         if analysis_id in _analyses:
             _analyses[analysis_id]["status"] = "COMPLETED"
+
+        # Track execution usage if at least one stock was attempted
+        if stocks:
+            vt_uid = _analyses.get(analysis_id, {}).get("vt_user_id") or user_id
+            if vt_uid:
+                from app.storage.database import db as _db
+                import asyncio as _asyncio
+                _asyncio.ensure_future(_db.increment_execution_count(vt_uid))
 
     except Exception as e:
         logger.error(f"Trade execution failed: {e}")

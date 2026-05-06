@@ -24,6 +24,8 @@ import '../widgets/status_badge.dart';
 import '../widgets/section_header.dart';
 import 'analysis_input_screen.dart';
 import 'backtest_screen.dart';
+import 'plans_screen.dart';
+import '../providers/subscription_provider.dart';
 import 'gtt_analysis_screen.dart';
 import 'holdings_screen.dart';
 import 'performance_screen.dart';
@@ -372,6 +374,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       actions: [
         if (_streakDays > 0) _StreakBadge(days: _streakDays),
         const SizedBox(width: Sp.xs),
+        _UsageChip(auth: auth),
+        const SizedBox(width: Sp.xs),
         StatusBadge(
           label: _isMarketOpen ? 'OPEN' : 'CLOSED',
           type: _isMarketOpen ? BadgeType.success : BadgeType.neutral,
@@ -397,6 +401,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
             if (value == 'backtest') {
               Navigator.push(context,
                   MaterialPageRoute(builder: (_) => const BacktestScreen()));
+            } else if (value == 'plans') {
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const PlansScreen()));
             } else if (value == 'theme') {
               context.read<ThemeProvider>().toggle();
             } else if (value == 'logout') {
@@ -425,6 +432,16 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                   Icon(Icons.science_outlined, size: 18, color: vt.textSecondary),
                   const SizedBox(width: Sp.sm),
                   Text('Strategy Backtest', style: AppTextStyles.body),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: 'plans',
+              child: Row(
+                children: [
+                  Icon(Icons.workspace_premium_outlined, size: 18, color: vt.accentGreen),
+                  const SizedBox(width: Sp.sm),
+                  Text('Plans & Usage', style: AppTextStyles.body),
                 ],
               ),
             ),
@@ -1489,6 +1506,71 @@ class _StreakBadgeState extends State<_StreakBadge>
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Small pill in the AppBar showing "N analyses used this month".
+/// Tapping opens the Plans screen.
+class _UsageChip extends StatefulWidget {
+  final AuthProvider auth;
+  const _UsageChip({required this.auth});
+
+  @override
+  State<_UsageChip> createState() => _UsageChipState();
+}
+
+class _UsageChipState extends State<_UsageChip> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final vtId = widget.auth.vtUserId ?? '';
+      if (vtId.isNotEmpty) {
+        context.read<SubscriptionProvider>().loadStatus(vtId);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sub = context.watch<SubscriptionProvider>();
+    final vt = context.vt;
+    final status = sub.status;
+
+    // Don't show chip while loading or if no data yet
+    if (sub.isLoading && status.analysesCount == 0) return const SizedBox.shrink();
+
+    final limit = status.plan.analysesPerMonth;
+    final used  = status.analysesCount;
+    final isOver = status.isOverAnalysisLimit;
+
+    final chipColor = isOver
+        ? Colors.redAccent
+        : (limit != null && used >= (limit * 0.8).ceil())
+            ? Colors.orangeAccent
+            : vt.accentGreen;
+
+    final label = limit == null ? '$used / ∞' : '$used / $limit';
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const PlansScreen())),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: chipColor.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: chipColor.withValues(alpha: 0.4)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.analytics_outlined, size: 12, color: chipColor),
+          const SizedBox(width: 4),
+          Text(label,
+              style: AppTextStyles.micro.copyWith(
+                  color: chipColor, fontWeight: FontWeight.w700)),
+        ]),
       ),
     );
   }
