@@ -1,6 +1,6 @@
 import hashlib
 from datetime import datetime, timedelta
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Header, Query, Request
 from fastapi.responses import RedirectResponse
 from app.models.auth_models import (
     LoginUrlResponse, SessionRequest, SessionResponse,
