@@ -59,8 +59,8 @@ class _PlansScreenState extends State<PlansScreen> {
                       _PlanCard(
                         plan: const PlanInfo(
                           planId: 'free', name: 'Free', priceMonthly: 0,
-                          analysesPerMonth: 3, executionsPerMonth: 5,
-                          features: ['3 analyses/month', '5 executions/month', 'Basic support'],
+                          analysesPerMonth: 10, executionsPerMonth: 5,
+                          features: ['10 analyses/month', '5 executions/month', 'Basic support'],
                         ),
                         isCurrent: true,
                       ),
@@ -307,7 +307,7 @@ class _PlanCard extends StatelessWidget {
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: accentColor,
-                    foregroundColor: Colors.black,
+                    foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10)),
                   ),

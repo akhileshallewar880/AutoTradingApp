@@ -54,7 +54,7 @@ active_executions: dict = {}  # analysis_id → list of ExecutionUpdate
 
 
 @router.post("/generate", response_model=AnalysisResponse)
-async def generate_analysis(request: AnalysisRequest):
+async def generate_analysis(request: AnalysisRequest, background_tasks: BackgroundTasks):
     """
     Step 1: Generate AI analysis with trade recommendations.
 
@@ -397,10 +397,7 @@ async def generate_analysis(request: AnalysisRequest):
         # Track usage: count only analyses with ≥1 valid stock result
         if request.vt_user_id:
             from app.storage.database import db as _db
-            import asyncio as _asyncio
-            _asyncio.ensure_future(
-                _db.increment_analysis_count(request.vt_user_id)
-            )
+            background_tasks.add_task(_db.increment_analysis_count, request.vt_user_id)
 
         return analysis
 
@@ -558,8 +555,7 @@ async def execute_trades(
             vt_uid = _analyses.get(analysis_id, {}).get("vt_user_id") or user_id
             if vt_uid:
                 from app.storage.database import db as _db
-                import asyncio as _asyncio
-                _asyncio.ensure_future(_db.increment_execution_count(vt_uid))
+                await _db.increment_execution_count(vt_uid)
 
     except Exception as e:
         logger.error(f"Trade execution failed: {e}")

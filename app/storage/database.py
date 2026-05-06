@@ -231,15 +231,20 @@ class Database:
                 """))
                 conn.commit()
 
-                # Seed plans
+                # Seed plans (WHEN MATCHED also updates so limit changes take effect)
                 conn.execute(text("""
                     MERGE vantrade_plans AS t
                     USING (VALUES
-                        ('free',  'Free',  0.00,   3,    5,    '["3 analyses/month","5 executions/month","Basic support"]'),
+                        ('free',  'Free',  0.00,   10,   5,    '["10 analyses/month","5 executions/month","Basic support"]'),
                         ('pro',   'Pro',   499.00, 30,   50,   '["30 analyses/month","50 executions/month","Priority support","Advanced indicators"]'),
                         ('elite', 'Elite', 999.00, NULL, NULL, '["Unlimited analyses","Unlimited executions","Dedicated support","All features"]')
                     ) AS s (plan_id, name, price_monthly, analyses_per_month, executions_per_month, features)
                     ON t.plan_id = s.plan_id
+                    WHEN MATCHED THEN
+                        UPDATE SET name=s.name, price_monthly=s.price_monthly,
+                                   analyses_per_month=s.analyses_per_month,
+                                   executions_per_month=s.executions_per_month,
+                                   features=s.features
                     WHEN NOT MATCHED THEN
                         INSERT (plan_id, name, price_monthly, analyses_per_month, executions_per_month, features)
                         VALUES (s.plan_id, s.name, s.price_monthly, s.analyses_per_month, s.executions_per_month, s.features);
@@ -370,8 +375,8 @@ class Database:
             expires_at = str(sub_row[7]) if sub_row[7] else None
         else:
             plan_id = "free"; plan_name = "Free"; price = 0.0
-            analyses_limit = 3; executions_limit = 5
-            features = '["3 analyses/month","5 executions/month","Basic support"]'
+            analyses_limit = 10; executions_limit = 5
+            features = '["10 analyses/month","5 executions/month","Basic support"]'
             sub_status = "active"; expires_at = None
 
         return {
