@@ -490,7 +490,7 @@ class ApiService {
   // ── Subscription / Usage ───────────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> getUsageStatus(String vtUserId) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}/api/v1/subscription/status')
+    final uri = Uri.parse('${ApiConfig.baseUrl}/subscription/status')
         .replace(queryParameters: {'vt_user_id': vtUserId});
     final response = await http.get(uri).timeout(const Duration(seconds: 10));
     if (response.statusCode == 200) {
@@ -507,7 +507,7 @@ class ApiService {
     double? amountPaid,
   }) async {
     final response = await http.post(
-      Uri.parse('${ApiConfig.baseUrl}/api/v1/subscription/activate'),
+      Uri.parse('${ApiConfig.baseUrl}/subscription/activate'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'vt_user_id': vtUserId,
