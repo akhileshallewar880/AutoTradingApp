@@ -310,6 +310,7 @@ class Database:
     def _sync_increment_usage(self, vt_user_id: str, period: str, field: str) -> None:
         import uuid as _uuid
         from sqlalchemy import text
+        logger.info(f"[USAGE-SQL] _sync_increment_usage: field={field} uid={vt_user_id[:8]}... period={period}")
         # Explicit mapping — column name != field.replace('_count','_at')
         ts_col = 'last_analysis_at' if field == 'analyses_count' else 'last_execution_at'
         is_analysis = field == 'analyses_count'
@@ -337,6 +338,7 @@ class Database:
         with self._engine.connect() as conn:
             conn.execute(sql, {"uid": vt_user_id, "period": period, "record_id": str(_uuid.uuid4())})
             conn.commit()
+        logger.info(f"[USAGE-SQL] committed {field} increment for uid={vt_user_id[:8]}...")
 
     def _sync_get_usage_status(self, vt_user_id: str, period: str) -> dict:
         from sqlalchemy import text

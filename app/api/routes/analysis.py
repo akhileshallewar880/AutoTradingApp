@@ -75,7 +75,7 @@ active_executions: dict = {}  # analysis_id → list of ExecutionUpdate
 
 
 @router.post("/generate", response_model=AnalysisResponse)
-async def generate_analysis(request: AnalysisRequest, background_tasks: BackgroundTasks):
+async def generate_analysis(request: AnalysisRequest):
     """
     Step 1: Generate AI analysis with trade recommendations.
 
@@ -94,10 +94,14 @@ async def generate_analysis(request: AnalysisRequest, background_tasks: Backgrou
         api_key_mask = f"{request.api_key[:5]}...{request.api_key[-5:]}" if len(request.api_key) > 10 else "SHORT_KEY"
         token_mask = f"{request.access_token[:10]}...{request.access_token[-10:]}" if len(request.access_token) > 20 else "SHORT_TOKEN"
 
+        has_vt_uid = bool(request.vt_user_id and request.vt_user_id.strip())
+        has_vt_token = bool(request.vt_access_token and request.vt_access_token.strip())
         logger.info(
             f"[ANALYSIS-START] Generating analysis: {request.num_stocks} stocks | "
             f"sectors={request.sectors} | hold={request.hold_duration_days}d | "
-            f"user_api_key={api_key_mask} | user_token={token_mask}"
+            f"user_api_key={api_key_mask} | user_token={token_mask} | "
+            f"vt_user_id={'SET' if has_vt_uid else 'MISSING'} | "
+            f"vt_access_token={'SET' if has_vt_token else 'MISSING'}"
         )
 
         # ── Fetch real balance from Zerodha ──────────────────────────────
@@ -417,10 +421,10 @@ async def generate_analysis(request: AnalysisRequest, background_tasks: Backgrou
         }
         logger.info(f"Analysis generated: {analysis_id} with {len(stock_analyses)} stocks | vt_user_id={vt_uid!r}")
 
-        # Track usage: count only analyses with ≥1 valid stock result
+        # Track usage inline — sync call, no background task complexity
         if vt_uid:
             from app.storage.database import db as _db
-            background_tasks.add_task(_db.increment_analysis_count, vt_uid)
+            _db.increment_analysis_count(vt_uid)
 
         return analysis
 
