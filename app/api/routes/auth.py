@@ -238,7 +238,7 @@ async def verify_phone_token(body: PhoneVerifyRequest):
         )
     except Exception as exc:
         logger.error(f"[PhoneAuth] DB upsert failed: {exc}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to save user record")
+        raise HTTPException(status_code=500, detail=f"Failed to save user record: {exc}")
 
     vt_token = _create_vt_jwt(result["vt_user_id"], phone_number)
     logger.info(

@@ -687,10 +687,12 @@ class Database:
               (:vt_user_id, :fuid, :phone, :verified_at,
                '', 1, 'USER', GETUTCDATE(), GETUTCDATE())
         """)
+        # Also fill in vt_user_id if it was NULL (e.g. column added after first insert)
         sql_update = text("""
             UPDATE vantrade_users
                SET phone_number      = :phone,
                    phone_verified_at = :verified_at,
+                   vt_user_id        = ISNULL(vt_user_id, :vt_user_id),
                    updated_at        = GETUTCDATE()
              WHERE firebase_uid = :fuid
         """)
@@ -698,14 +700,17 @@ class Database:
         try:
             with self._engine.connect() as conn:
                 row = conn.execute(sql_lookup, {"fuid": firebase_uid}).fetchone()
-                if row and row[0]:
+                if row is not None:
+                    # Row already exists — use existing vt_user_id or assign a new one
+                    existing_vt_id = row[0] or str(_uuid.uuid4())
                     conn.execute(sql_update, {
                         "phone": phone_number,
                         "verified_at": phone_verified_at,
                         "fuid": firebase_uid,
+                        "vt_user_id": existing_vt_id,
                     })
                     conn.commit()
-                    return {"vt_user_id": row[0], "is_new_user": False}
+                    return {"vt_user_id": existing_vt_id, "is_new_user": False}
                 else:
                     new_id = str(_uuid.uuid4())
                     conn.execute(sql_insert, {
