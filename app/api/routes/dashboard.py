@@ -200,6 +200,7 @@ async def get_dashboard_summary(
                     "status_message": o.get("status_message") or "",
                     "order_type": o.get("order_type", ""),
                     "product": o.get("product", ""),
+                    "variety": o.get("variety", "regular"),
                     "placed_at": placed_at,
                 })
             # Most recent first

@@ -9,6 +9,7 @@ class OrderModel {
   final String statusMessage;
   final String orderType;
   final String product;
+  final String variety;
   final String placedAt;
 
   const OrderModel({
@@ -22,8 +23,21 @@ class OrderModel {
     required this.statusMessage,
     required this.orderType,
     required this.product,
+    required this.variety,
     required this.placedAt,
   });
+
+  bool get isOpen => const {
+        'OPEN',
+        'TRIGGER PENDING',
+        'OPEN PENDING',
+        'PUT ORDER REQ RECEIVED',
+        'MODIFY PENDING',
+        'CANCEL PENDING',
+        'MODIFY VALIDATION PENDING',
+      }.contains(status.toUpperCase());
+
+  bool get isAmo => variety.toLowerCase() == 'amo';
 
   factory OrderModel.fromJson(Map<String, dynamic> json) => OrderModel(
         orderId: json['order_id']?.toString() ?? '',
@@ -36,6 +50,7 @@ class OrderModel {
         statusMessage: json['status_message']?.toString() ?? '',
         orderType: json['order_type']?.toString() ?? '',
         product: json['product']?.toString() ?? '',
+        variety: json['variety']?.toString() ?? 'regular',
         placedAt: json['placed_at']?.toString() ?? '',
       );
 }

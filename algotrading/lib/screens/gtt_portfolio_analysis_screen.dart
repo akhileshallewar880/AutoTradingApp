@@ -2,7 +2,6 @@ import '../theme/vt_color_scheme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/dashboard_model.dart';
-import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import 'gtt_analysis_screen.dart';
@@ -10,7 +9,7 @@ import 'gtt_analysis_screen.dart';
 class GttPortfolioAnalysisScreen extends StatelessWidget {
   final List<GttModel> gtts;
 
-  GttPortfolioAnalysisScreen({super.key, required this.gtts});
+  const GttPortfolioAnalysisScreen({super.key, required this.gtts});
 
   @override
   Widget build(BuildContext context) {
@@ -33,13 +32,14 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
         elevation: 0,
       ),
       body: gtts.isEmpty
-          ? _buildEmpty()
+          ? _buildEmpty(context)
           : SingleChildScrollView(
               padding: const EdgeInsets.all(Sp.base),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildSummaryCard(
+                    context,
                     currency: currency,
                     totalMaxProfit: totalMaxProfit,
                     totalMaxLoss: totalMaxLoss,
@@ -50,10 +50,10 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: Sp.base),
 
-                  _buildRiskBar(totalMaxProfit, totalMaxLoss, currency),
+                  _buildRiskBar(context, totalMaxProfit, totalMaxLoss, currency),
                   const SizedBox(height: Sp.base),
 
-                  _sectionHeader('Individual GTT Analysis', Icons.alarm_on),
+                  _sectionHeader(context, 'Individual GTT Analysis', Icons.alarm_on),
                   const SizedBox(height: Sp.sm),
 
                   ...items.map((m) => _buildGttCard(context, m, currency)),
@@ -64,7 +64,8 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSummaryCard({
+  Widget _buildSummaryCard(
+    BuildContext context, {
     required NumberFormat currency,
     required double totalMaxProfit,
     required double totalMaxLoss,
@@ -73,15 +74,16 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
     required int total,
     required int twoLegCount,
   }) {
+    final vt = context.vt;
     final rrIsGood = overallRR >= 2.0;
     return Container(
       decoration: BoxDecoration(
-        color: context.vt.surface1,
+        color: vt.surface1,
         borderRadius: BorderRadius.circular(Rad.lg),
-        border: Border.all(color: context.vt.accentPurple.withValues(alpha: 0.3)),
+        border: Border.all(color: vt.accentPurple.withValues(alpha: 0.3)),
         boxShadow: [
           BoxShadow(
-            color: context.vt.accentPurple.withValues(alpha: 0.12),
+            color: vt.accentPurple.withValues(alpha: 0.12),
             blurRadius: 16,
             spreadRadius: -2,
           ),
@@ -95,50 +97,54 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('Portfolio Summary', style: AppTextStyles.caption),
-              _badge('$total Active GTTs'),
+              _badge(context, '$total Active GTTs'),
             ],
           ),
-          SizedBox(height: Sp.md),
+          const SizedBox(height: Sp.md),
           Row(
             children: [
               Expanded(
                 child: _summaryStatBox(
+                  context,
                   label: 'Max Profit',
                   value: currency.format(totalMaxProfit),
-                  color: context.vt.accentGreen,
+                  color: vt.accentGreen,
                   icon: Icons.trending_up,
                 ),
               ),
-              SizedBox(width: Sp.sm),
+              const SizedBox(width: Sp.sm),
               Expanded(
                 child: _summaryStatBox(
+                  context,
                   label: 'Max Loss',
                   value: currency.format(totalMaxLoss),
-                  color: context.vt.danger,
+                  color: vt.danger,
                   icon: Icons.trending_down,
                 ),
               ),
             ],
           ),
-          SizedBox(height: Sp.sm),
+          const SizedBox(height: Sp.sm),
           Row(
             children: [
               Expanded(
                 child: _summaryStatBox(
+                  context,
                   label: 'Total Exposure',
                   value: currency.format(totalExposure),
-                  color: context.vt.textSecondary,
+                  color: vt.textSecondary,
                   icon: Icons.account_balance_wallet_outlined,
                 ),
               ),
-              SizedBox(width: Sp.sm),
+              const SizedBox(width: Sp.sm),
               Expanded(
                 child: _summaryStatBox(
+                  context,
                   label: 'Risk / Reward',
                   value: overallRR > 0
                       ? '1 : ${overallRR.toStringAsFixed(2)}'
                       : 'N/A',
-                  color: rrIsGood ? context.vt.accentGreen : context.vt.warning,
+                  color: rrIsGood ? vt.accentGreen : vt.warning,
                   icon: Icons.balance,
                   note: overallRR > 0
                       ? (rrIsGood ? 'Favourable' : 'Below 1:2')
@@ -150,9 +156,9 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
           const SizedBox(height: Sp.md),
           Row(
             children: [
-              _badge('$twoLegCount Two-leg'),
+              _badge(context, '$twoLegCount Two-leg'),
               const SizedBox(width: Sp.sm),
-              _badge('${gtts.length - twoLegCount} Single'),
+              _badge(context, '${gtts.length - twoLegCount} Single'),
             ],
           ),
         ],
@@ -160,13 +166,15 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
     );
   }
 
-  Widget _summaryStatBox({
+  Widget _summaryStatBox(
+    BuildContext context, {
     required String label,
     required String value,
     required Color color,
     required IconData icon,
     String? note,
   }) {
+    final vt = context.vt;
     return Container(
       padding: const EdgeInsets.all(Sp.md),
       decoration: BoxDecoration(
@@ -184,10 +192,10 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
               Text(label, style: AppTextStyles.caption.copyWith(color: color)),
             ],
           ),
-          SizedBox(height: 4),
+          const SizedBox(height: 4),
           Text(value,
               style: AppTextStyles.mono.copyWith(
-                  fontSize: 14, fontWeight: FontWeight.bold, color: context.vt.textPrimary)),
+                  fontSize: 14, fontWeight: FontWeight.bold, color: vt.textPrimary)),
           if (note != null)
             Text(note, style: AppTextStyles.caption.copyWith(color: color)),
         ],
@@ -195,52 +203,54 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
     );
   }
 
-  Widget _badge(String label) {
+  Widget _badge(BuildContext context, String label) {
+    final vt = context.vt;
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: Sp.sm, vertical: Sp.xs),
+      padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: Sp.xs),
       decoration: BoxDecoration(
-        color: context.vt.accentPurple.withValues(alpha: 0.12),
+        color: vt.accentPurple.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(Rad.pill),
-        border: Border.all(color: context.vt.accentPurple.withValues(alpha: 0.25)),
+        border: Border.all(color: vt.accentPurple.withValues(alpha: 0.25)),
       ),
       child: Text(label,
           style: AppTextStyles.caption.copyWith(
-              color: context.vt.accentPurple, fontWeight: FontWeight.bold)),
+              color: vt.accentPurple, fontWeight: FontWeight.bold)),
     );
   }
 
-  Widget _buildRiskBar(double profit, double loss, NumberFormat currency) {
+  Widget _buildRiskBar(BuildContext context, double profit, double loss, NumberFormat currency) {
+    final vt = context.vt;
     final total = profit + loss;
     final profitFraction = total > 0 ? profit / total : 0.5;
 
     return Container(
-      padding: EdgeInsets.all(Sp.base),
+      padding: const EdgeInsets.all(Sp.base),
       decoration: BoxDecoration(
-        color: context.vt.surface1,
+        color: vt.surface1,
         borderRadius: BorderRadius.circular(Rad.lg),
-        border: Border.all(color: context.vt.divider),
+        border: Border.all(color: vt.divider),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.bar_chart, color: context.vt.accentPurple, size: 18),
+              Icon(Icons.bar_chart, color: vt.accentPurple, size: 18),
               const SizedBox(width: Sp.sm),
               Text('Profit vs Risk Distribution', style: AppTextStyles.h3),
             ],
           ),
-          SizedBox(height: Sp.md),
+          const SizedBox(height: Sp.md),
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(
               value: profitFraction,
-              backgroundColor: context.vt.danger.withValues(alpha: 0.3),
-              color: context.vt.accentGreen,
+              backgroundColor: vt.danger.withValues(alpha: 0.3),
+              color: vt.accentGreen,
               minHeight: 14,
             ),
           ),
-          SizedBox(height: Sp.sm),
+          const SizedBox(height: Sp.sm),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -250,12 +260,12 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
                       width: 10,
                       height: 10,
                       decoration: BoxDecoration(
-                          color: context.vt.accentGreen,
+                          color: vt.accentGreen,
                           shape: BoxShape.circle)),
-                  SizedBox(width: 4),
+                  const SizedBox(width: 4),
                   Text('Profit: ${currency.format(profit)}',
                       style: AppTextStyles.caption.copyWith(
-                          color: context.vt.accentGreen,
+                          color: vt.accentGreen,
                           fontWeight: FontWeight.w600)),
                 ],
               ),
@@ -265,12 +275,12 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
                       width: 10,
                       height: 10,
                       decoration: BoxDecoration(
-                          color: context.vt.danger,
+                          color: vt.danger,
                           shape: BoxShape.circle)),
-                  SizedBox(width: 4),
+                  const SizedBox(width: 4),
                   Text('Risk: ${currency.format(loss)}',
                       style: AppTextStyles.caption.copyWith(
-                          color: context.vt.danger,
+                          color: vt.danger,
                           fontWeight: FontWeight.w600)),
                 ],
               ),
@@ -282,15 +292,16 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
   }
 
   Widget _buildGttCard(BuildContext context, _GttMetrics m, NumberFormat currency) {
+    final vt = context.vt;
     final hasTarget = m.target > 0;
     final hasSl = m.stopLoss > 0;
 
     return Container(
-      margin: EdgeInsets.only(bottom: Sp.md),
+      margin: const EdgeInsets.only(bottom: Sp.md),
       decoration: BoxDecoration(
-        color: context.vt.surface1,
+        color: vt.surface1,
         borderRadius: BorderRadius.circular(Rad.lg),
-        border: Border.all(color: context.vt.divider),
+        border: Border.all(color: vt.divider),
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(Rad.lg),
@@ -299,35 +310,34 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
           MaterialPageRoute(builder: (_) => GttAnalysisScreen(gtt: m.gtt)),
         ),
         child: Padding(
-          padding: EdgeInsets.all(Sp.base),
+          padding: const EdgeInsets.all(Sp.base),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
                   Container(
-                    padding: EdgeInsets.all(Sp.sm),
+                    padding: const EdgeInsets.all(Sp.sm),
                     decoration: BoxDecoration(
-                      color: context.vt.accentPurpleDim,
+                      color: vt.accentPurpleDim,
                       borderRadius: BorderRadius.circular(Rad.sm),
                     ),
                     child: Icon(
                       m.isTwoLeg ? Icons.swap_vert : Icons.alarm_on,
                       size: 20,
-                      color: context.vt.accentPurple,
+                      color: vt.accentPurple,
                     ),
                   ),
-                  SizedBox(width: Sp.sm),
+                  const SizedBox(width: Sp.sm),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Text(m.gtt.symbol,
-                                style: AppTextStyles.h3),
+                            Text(m.gtt.symbol, style: AppTextStyles.h3),
                             const SizedBox(width: 6),
-                            _typeBadge(m.isTwoLeg),
+                            _typeBadge(context, m.isTwoLeg),
                           ],
                         ),
                         Text(
@@ -337,13 +347,12 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
                       ],
                     ),
                   ),
-                  Icon(Icons.chevron_right,
-                      size: 18, color: context.vt.textTertiary),
+                  Icon(Icons.chevron_right, size: 18, color: vt.textTertiary),
                 ],
               ),
-              SizedBox(height: Sp.md),
-              Divider(height: 1, color: context.vt.divider),
-              SizedBox(height: Sp.md),
+              const SizedBox(height: Sp.md),
+              Divider(height: 1, color: vt.divider),
+              const SizedBox(height: Sp.md),
 
               Row(
                 children: [
@@ -353,38 +362,36 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
                         label: 'Max Profit',
                         value: '+${currency.format(m.maxProfit)}',
                         sub: '${m.targetPct >= 0 ? '+' : ''}${m.targetPct.toStringAsFixed(2)}%',
-                        color: context.vt.accentGreen,
+                        color: vt.accentGreen,
                         icon: Icons.emoji_events_outlined,
                       ),
                     ),
-                  if (hasTarget && hasSl) SizedBox(width: Sp.sm),
+                  if (hasTarget && hasSl) const SizedBox(width: Sp.sm),
                   if (hasSl)
                     Expanded(
                       child: _statCell(
                         label: 'Max Loss',
                         value: currency.format(m.maxLoss.abs()),
                         sub: '${m.slPct.toStringAsFixed(2)}%',
-                        color: context.vt.danger,
+                        color: vt.danger,
                         icon: Icons.shield_outlined,
                       ),
                     ),
                   if ((hasTarget || hasSl) && m.riskReward > 0)
-                    SizedBox(width: Sp.sm),
+                    const SizedBox(width: Sp.sm),
                   if (m.riskReward > 0)
                     Expanded(
                       child: _statCell(
                         label: 'R:R',
                         value: '1:${m.riskReward.toStringAsFixed(2)}',
                         sub: m.riskReward >= 2.0 ? 'Favourable' : 'Below 1:2',
-                        color: m.riskReward >= 2.0
-                            ? context.vt.accentGreen
-                            : context.vt.warning,
+                        color: m.riskReward >= 2.0 ? vt.accentGreen : vt.warning,
                         icon: Icons.balance,
                       ),
                     ),
                 ],
               ),
-              SizedBox(height: Sp.sm),
+              const SizedBox(height: Sp.sm),
 
               if (hasTarget || hasSl)
                 Row(
@@ -394,17 +401,17 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
                         child: _distanceChip(
                           label: '📈 Target',
                           dist: m.distToTarget,
-                          color: context.vt.accentGreen,
+                          color: vt.accentGreen,
                           reachedMsg: 'Target reached!',
                         ),
                       ),
-                    if (hasTarget && hasSl) SizedBox(width: Sp.sm),
+                    if (hasTarget && hasSl) const SizedBox(width: Sp.sm),
                     if (hasSl)
                       Expanded(
                         child: _distanceChip(
                           label: '🛡 Stop-Loss',
                           dist: m.distToSl,
-                          color: context.vt.danger,
+                          color: vt.danger,
                           reachedMsg: 'SL triggered!',
                         ),
                       ),
@@ -477,8 +484,9 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
     );
   }
 
-  Widget _typeBadge(bool isTwoLeg) {
-    final color = isTwoLeg ? context.vt.accentPurple : context.vt.warning;
+  Widget _typeBadge(BuildContext context, bool isTwoLeg) {
+    final vt = context.vt;
+    final color = isTwoLeg ? vt.accentPurple : vt.warning;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
@@ -494,7 +502,7 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
     );
   }
 
-  Widget _sectionHeader(String title, IconData icon) {
+  Widget _sectionHeader(BuildContext context, String title, IconData icon) {
     return Row(
       children: [
         Icon(icon, size: 16, color: context.vt.accentPurple),
@@ -504,7 +512,7 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEmpty() {
+  Widget _buildEmpty(BuildContext context) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,

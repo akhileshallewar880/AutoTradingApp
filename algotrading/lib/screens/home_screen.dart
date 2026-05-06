@@ -10,7 +10,6 @@ import '../providers/auth_provider.dart';
 import '../services/streak_service.dart';
 import '../providers/dashboard_provider.dart';
 import '../models/dashboard_model.dart';
-import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../theme/vt_color_scheme.dart';
@@ -27,6 +26,9 @@ import 'backtest_screen.dart';
 import 'plans_screen.dart';
 import '../providers/subscription_provider.dart';
 import 'gtt_analysis_screen.dart';
+import 'gtt_portfolio_analysis_screen.dart';
+import 'history_screen.dart';
+import 'open_orders_screen.dart';
 import 'holdings_screen.dart';
 import 'performance_screen.dart';
 import '../main.dart' show routeObserver;
@@ -39,6 +41,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBindingObserver {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
 
   Map<String, dynamic> _indexPrices = {};
@@ -243,7 +246,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     return PopScope(
       canPop: false,
       child: Scaffold(
+        key: _scaffoldKey,
         backgroundColor: vt.surface0,
+        drawer: _buildSideDrawer(auth),
         appBar: _buildAppBar(auth, dash),
         bottomNavigationBar: _buildBottomBar(context),
         body: Column(
@@ -344,33 +349,35 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   // ── AppBar ─────────────────────────────────────────────────────────────────
   PreferredSizeWidget _buildAppBar(AuthProvider auth, DashboardProvider dash) {
     final vt = context.vt;
-    final isDark = vt.isDark;
     return AppBar(
       backgroundColor: vt.surface0,
-      titleSpacing: Sp.base,
+      leading: IconButton(
+        icon: Icon(Icons.menu_rounded, color: vt.textPrimary),
+        onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+        tooltip: 'Menu',
+      ),
+      titleSpacing: 0,
       title: Row(
         children: [
-          // Logo mark — green gradient (matches VanTradeLogoWidget)
           Container(
-            width: 32,
-            height: 32,
+            width: 28,
+            height: 28,
             decoration: BoxDecoration(
               gradient: const LinearGradient(
                 colors: [Color(0xFF1B5E20), Color(0xFF2E7D32)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(7),
               boxShadow: [
                 BoxShadow(
                   color: const Color(0xFF2E7D32).withValues(alpha: 0.30),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
                 ),
               ],
             ),
-            child: const Icon(Icons.candlestick_chart,
-                color: Colors.white, size: 18),
+            child: const Icon(Icons.candlestick_chart, color: Colors.white, size: 16),
           ),
           const SizedBox(width: Sp.sm),
           Text('VanTrade', style: AppTextStyles.h3),
@@ -386,86 +393,136 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
           type: _isMarketOpen ? BadgeType.success : BadgeType.neutral,
           pulseDot: _isMarketOpen,
         ),
-        const SizedBox(width: Sp.xs),
         if (dash.isLoading)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
             child: SizedBox(
               width: 16,
               height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: vt.accentGreen,
+              child: CircularProgressIndicator(strokeWidth: 2, color: vt.accentGreen),
+            ),
+          ),
+        const SizedBox(width: Sp.xs),
+      ],
+    );
+  }
+
+  // ── Side drawer ────────────────────────────────────────────────────────────
+  Widget _buildSideDrawer(AuthProvider auth) {
+    final vt = context.vt;
+    final isDark = vt.isDark;
+    final user = auth.user;
+    return Drawer(
+      backgroundColor: vt.surface1,
+      child: Column(
+        children: [
+          // Header
+          SafeArea(
+            bottom: false,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(Sp.base, Sp.md, Sp.base, Sp.base),
+              decoration: BoxDecoration(
+                color: vt.surface0,
+                border: Border(bottom: BorderSide(color: vt.divider)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF1B5E20), Color(0xFF2E7D32)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: const Icon(Icons.candlestick_chart, color: Colors.white, size: 20),
+                    ),
+                    const SizedBox(width: Sp.sm),
+                    Text('VanTrade',
+                        style: AppTextStyles.h3.copyWith(color: vt.textPrimary)),
+                  ]),
+                  if (user != null) ...[
+                    const SizedBox(height: Sp.sm),
+                    Text(
+                      user.userName.isNotEmpty ? user.userName : 'Trader',
+                      style: AppTextStyles.body
+                          .copyWith(color: vt.textPrimary, fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      user.email.isNotEmpty ? user.email : user.userId,
+                      style: AppTextStyles.caption.copyWith(color: vt.textTertiary),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert_rounded),
-          tooltip: 'More',
-          onSelected: (value) {
-            if (value == 'backtest') {
-              Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const BacktestScreen()));
-            } else if (value == 'plans') {
-              Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const PlansScreen()));
-            } else if (value == 'theme') {
-              context.read<ThemeProvider>().toggle();
-            } else if (value == 'logout') {
+
+          // Menu items
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: Sp.sm),
+              children: [
+                _DrawerItem(
+                  icon: Icons.workspace_premium_outlined,
+                  label: 'Plans & Usage',
+                  iconColor: vt.accentGreen,
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const PlansScreen()));
+                  },
+                ),
+                _DrawerItem(
+                  icon: Icons.science_outlined,
+                  label: 'Strategy Backtest',
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const BacktestScreen()));
+                  },
+                ),
+                _DrawerItem(
+                  icon: Icons.history_rounded,
+                  label: 'Trade History',
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const HistoryScreen()));
+                  },
+                ),
+                Divider(color: vt.divider, indent: Sp.base, endIndent: Sp.base, height: Sp.base),
+                _DrawerItem(
+                  icon: isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+                  label: isDark ? 'Light Mode' : 'Dark Mode',
+                  onTap: () => context.read<ThemeProvider>().toggle(),
+                ),
+              ],
+            ),
+          ),
+
+          // Logout
+          Divider(color: vt.divider, height: 1),
+          _DrawerItem(
+            icon: Icons.logout_rounded,
+            label: 'Logout',
+            iconColor: vt.danger,
+            textColor: vt.danger,
+            onTap: () {
+              Navigator.pop(context);
               _handleLogout(context);
-            }
-          },
-          itemBuilder: (_) => [
-            PopupMenuItem(
-              value: 'theme',
-              child: Row(
-                children: [
-                  Icon(
-                    isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                    size: 18, color: vt.textSecondary,
-                  ),
-                  const SizedBox(width: Sp.sm),
-                  Text(isDark ? 'Light Mode' : 'Dark Mode',
-                      style: AppTextStyles.body),
-                ],
-              ),
-            ),
-            PopupMenuItem(
-              value: 'backtest',
-              child: Row(
-                children: [
-                  Icon(Icons.science_outlined, size: 18, color: vt.textSecondary),
-                  const SizedBox(width: Sp.sm),
-                  Text('Strategy Backtest', style: AppTextStyles.body),
-                ],
-              ),
-            ),
-            PopupMenuItem(
-              value: 'plans',
-              child: Row(
-                children: [
-                  Icon(Icons.workspace_premium_outlined, size: 18, color: vt.accentGreen),
-                  const SizedBox(width: Sp.sm),
-                  Text('Plans & Usage', style: AppTextStyles.body),
-                ],
-              ),
-            ),
-            const PopupMenuDivider(),
-            PopupMenuItem(
-              value: 'logout',
-              child: Row(
-                children: [
-                  Icon(Icons.logout, size: 18, color: vt.danger),
-                  const SizedBox(width: Sp.sm),
-                  Text('Logout',
-                      style: AppTextStyles.body.copyWith(color: vt.danger)),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(width: Sp.xs),
-      ],
+            },
+          ),
+          const SizedBox(height: Sp.sm),
+        ],
+      ),
     );
   }
 
@@ -1356,63 +1413,95 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
 
   // ── Bottom bar ─────────────────────────────────────────────────────────────
   Widget _buildBottomBar(BuildContext context) {
+    final vt = context.vt;
     return Container(
       decoration: BoxDecoration(
-        color: context.vt.surface1,
-        border: Border(top: BorderSide(color: context.vt.divider, width: 1)),
+        color: vt.surface1,
+        border: Border(top: BorderSide(color: vt.divider, width: 1)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 12,
+            offset: const Offset(0, -3),
+          ),
+        ],
       ),
       child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(Sp.base, Sp.sm, Sp.base, Sp.sm),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+        child: SizedBox(
+          height: 68,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Primary CTA — full width
-              VtButton(
-                label: 'AI Analysis',
-                icon: const Icon(Icons.auto_awesome, size: 16,
-                    color: Colors.white),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const AnalysisInputScreen()),
-                ),
-                height: 48,
+              _NavItem(
+                icon: Icons.account_balance_wallet_outlined,
+                label: 'Holdings',
+                onTap: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const HoldingsScreen())),
               ),
-              const SizedBox(height: Sp.sm),
-              // Secondary row
-              Row(
-                children: [
-                  Expanded(
-                    child: VtButton(
-                      label: 'Holdings',
-                      icon: Icon(Icons.account_balance_wallet_outlined,
-                          size: 16, color: context.vt.textPrimary),
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const HoldingsScreen()),
+              _NavItem(
+                icon: Icons.receipt_long_outlined,
+                label: 'Orders',
+                onTap: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const OpenOrdersScreen())),
+              ),
+              // Centre hero — AI Analysis
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: GestureDetector(
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const AnalysisInputScreen())),
+                  child: Container(
+                    width: 62,
+                    height: 62,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF1B5E20), Color(0xFF2E7D32)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
                       ),
-                      variant: VtButtonVariant.secondary,
-                      height: 40,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF2E7D32).withValues(alpha: 0.45),
+                          blurRadius: 14,
+                          spreadRadius: 1,
+                          offset: const Offset(0, -2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.auto_awesome, color: Colors.white, size: 20),
+                        const SizedBox(height: 2),
+                        Text('AI',
+                            style: AppTextStyles.label.copyWith(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                            )),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: Sp.sm),
-                  Expanded(
-                    child: VtButton(
-                      label: 'Performance',
-                      icon: Icon(Icons.bar_chart_rounded,
-                          size: 16, color: context.vt.textPrimary),
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const PerformanceScreen()),
-                      ),
-                      variant: VtButtonVariant.secondary,
-                      height: 40,
-                    ),
-                  ),
-                ],
+                ),
+              ),
+              _NavItem(
+                icon: Icons.shield_outlined,
+                label: 'GTTs',
+                onTap: () {
+                  final dash = context.read<DashboardProvider>();
+                  final gtts = dash.dashboard?.gtts ?? [];
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => GttPortfolioAnalysisScreen(gtts: gtts)));
+                },
+              ),
+              _NavItem(
+                icon: Icons.bar_chart_rounded,
+                label: 'Portfolio',
+                onTap: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const PerformanceScreen())),
               ),
             ],
           ),
@@ -1452,7 +1541,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
 
 class _StreakBadge extends StatefulWidget {
   final int days;
-  _StreakBadge({required this.days});
+  const _StreakBadge({required this.days});
 
   @override
   State<_StreakBadge> createState() => _StreakBadgeState();
@@ -1576,6 +1665,79 @@ class _UsageChipState extends State<_UsageChip> {
               style: AppTextStyles.micro.copyWith(
                   color: chipColor, fontWeight: FontWeight.w700)),
         ]),
+      ),
+    );
+  }
+}
+
+// ─── Bottom Nav Item ──────────────────────────────────────────────────────────
+
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  const _NavItem({required this.icon, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final vt = context.vt;
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(Rad.md),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 22, color: vt.textSecondary),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: AppTextStyles.label.copyWith(
+                color: vt.textTertiary,
+                fontSize: 10,
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Drawer Item ──────────────────────────────────────────────────────────────
+
+class _DrawerItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color? iconColor;
+  final Color? textColor;
+  final VoidCallback onTap;
+  const _DrawerItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.iconColor,
+    this.textColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final vt = context.vt;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: Sp.base, vertical: Sp.md),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: iconColor ?? vt.textSecondary),
+            const SizedBox(width: Sp.md),
+            Text(
+              label,
+              style: AppTextStyles.body.copyWith(color: textColor ?? vt.textPrimary),
+            ),
+          ],
+        ),
       ),
     );
   }
