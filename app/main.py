@@ -78,6 +78,8 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         logger.info("Application starting up")
+        # Enforce strong secrets at startup — fails fast before serving traffic
+        settings.validate_production_secrets()
 
         # Start the swing trade expiry scheduler (checks daily at 9:15 AM IST)
         try:

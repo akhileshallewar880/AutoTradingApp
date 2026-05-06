@@ -53,31 +53,47 @@ class Settings(BaseSettings):
     def _nonempty_frontend_url(cls, v: str) -> str:
         return v if v else "https://vantrade.in"
 
-    # Admin Dashboard Config — no insecure defaults; must be set in environment
-    ADMIN_JWT_SECRET: str
+    # Admin Dashboard Config
+    ADMIN_JWT_SECRET: Optional[str] = None
     ADMIN_JWT_ALGORITHM: str = "HS256"
     ADMIN_JWT_EXPIRATION_MINUTES: int = 480
 
     # Firebase Phone Auth
     FIREBASE_PROJECT_ID: Optional[str] = None
     FIREBASE_SERVICE_ACCOUNT: Optional[str] = None
-    # VanTrade JWT — no insecure defaults; must be set in environment
-    VT_JWT_SECRET: str
+    # VanTrade JWT
+    VT_JWT_SECRET: Optional[str] = None
     VT_JWT_EXPIRY_HOURS: int = 720  # 30 days
 
     @model_validator(mode="after")
     def _reject_insecure_secrets(self) -> "Settings":
-        if self.ADMIN_JWT_SECRET in _INSECURE_DEFAULTS or len(self.ADMIN_JWT_SECRET) < 32:
-            raise ValueError(
+        """Reject weak values if secrets are explicitly set; defer None-check to startup."""
+        if self.ADMIN_JWT_SECRET is not None:
+            if self.ADMIN_JWT_SECRET in _INSECURE_DEFAULTS or len(self.ADMIN_JWT_SECRET) < 32:
+                raise ValueError(
+                    "ADMIN_JWT_SECRET is insecure. "
+                    "Set a strong random value (≥32 chars) in your environment."
+                )
+        if self.VT_JWT_SECRET is not None:
+            if self.VT_JWT_SECRET in _INSECURE_DEFAULTS or len(self.VT_JWT_SECRET) < 32:
+                raise ValueError(
+                    "VT_JWT_SECRET is insecure. "
+                    "Set a strong random value (≥32 chars) in your environment."
+                )
+        return self
+
+    def validate_production_secrets(self) -> None:
+        """Call at app startup to enforce that secrets are present and strong."""
+        if not self.ADMIN_JWT_SECRET or self.ADMIN_JWT_SECRET in _INSECURE_DEFAULTS or len(self.ADMIN_JWT_SECRET) < 32:
+            raise RuntimeError(
                 "ADMIN_JWT_SECRET is missing or insecure. "
                 "Set a strong random value (≥32 chars) in your environment."
             )
-        if self.VT_JWT_SECRET in _INSECURE_DEFAULTS or len(self.VT_JWT_SECRET) < 32:
-            raise ValueError(
+        if not self.VT_JWT_SECRET or self.VT_JWT_SECRET in _INSECURE_DEFAULTS or len(self.VT_JWT_SECRET) < 32:
+            raise RuntimeError(
                 "VT_JWT_SECRET is missing or insecure. "
                 "Set a strong random value (≥32 chars) in your environment."
             )
-        return self
 
     @property
     def allowed_origins_list(self) -> List[str]:
