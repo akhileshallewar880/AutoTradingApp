@@ -78,7 +78,7 @@ active_executions: dict = {}  # analysis_id → list of ExecutionUpdate
 
 @router.post("/generate", response_model=AnalysisResponse)
 @limiter.limit("10/minute")
-async def generate_analysis(http_request: Request, request: AnalysisRequest):
+async def generate_analysis(request: Request, body: AnalysisRequest):
     """
     Step 1: Generate AI analysis with trade recommendations.
 
@@ -94,12 +94,12 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
     """
     try:
         # Log request details — never log token values, only presence flags
-        has_vt_uid = bool(request.vt_user_id and request.vt_user_id.strip())
-        has_vt_token = bool(request.vt_access_token and request.vt_access_token.strip())
+        has_vt_uid = bool(body.vt_user_id and body.vt_user_id.strip())
+        has_vt_token = bool(body.vt_access_token and body.vt_access_token.strip())
         logger.info(
-            f"[ANALYSIS-START] Generating analysis: {request.num_stocks} stocks | "
-            f"sectors={request.sectors} | hold={request.hold_duration_days}d | "
-            f"api_key_present={bool(request.api_key)} | token_present={bool(request.access_token)} | "
+            f"[ANALYSIS-START] Generating analysis: {body.num_stocks} stocks | "
+            f"sectors={body.sectors} | hold={body.hold_duration_days}d | "
+            f"api_key_present={bool(body.api_key)} | token_present={bool(body.access_token)} | "
             f"vt_user_id={'SET' if has_vt_uid else 'MISSING'} | "
             f"vt_access_token={'SET' if has_vt_token else 'MISSING'}"
         )
@@ -107,8 +107,8 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
         # ── Fetch real balance from Zerodha ──────────────────────────────
         try:
             from kiteconnect import KiteConnect
-            kite = KiteConnect(api_key=request.api_key)
-            kite.set_access_token(request.access_token)
+            kite = KiteConnect(api_key=body.api_key)
+            kite.set_access_token(body.access_token)
             logger.debug("[ANALYSIS-BALANCE] Created user-specific KiteConnect instance")
             margins = kite.margins()
             available_balance = margins.get("equity", {}).get("net", 100000)
@@ -119,33 +119,33 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
 
         # Use user-specified capital if provided; otherwise fall back to full balance
         capital_for_sizing = (
-            request.capital_to_use
-            if request.capital_to_use > 0
+            body.capital_to_use
+            if body.capital_to_use > 0
             else available_balance
         )
-        if request.capital_to_use > 0:
+        if body.capital_to_use > 0:
             logger.info(
                 f"[ANALYSIS-CAPITAL] Using user-specified capital ₹{capital_for_sizing:,.2f} "
                 f"(full balance: ₹{available_balance:,.2f})"
             )
 
         # ── Stage 1+2: Screen + enrich ────────────────────────────────────
-        screen_limit = min(request.num_stocks * 3, 60)
-        logger.info(f"[ANALYSIS-SCREEN] Starting screen_and_enrich with limit={screen_limit}, hold={request.hold_duration_days}d")
+        screen_limit = min(body.num_stocks * 3, 60)
+        logger.info(f"[ANALYSIS-SCREEN] Starting screen_and_enrich with limit={screen_limit}, hold={body.hold_duration_days}d")
 
         stocks_data = await analysis_service.screen_and_enrich(
             limit=screen_limit,
-            analysis_date=datetime.combine(request.analysis_date, datetime.min.time()),
-            sectors=request.sectors,
-            hold_duration_days=request.hold_duration_days,
-            user_api_key=request.api_key,
-            user_access_token=request.access_token,
-            symbols=request.symbols,
+            analysis_date=datetime.combine(body.analysis_date, datetime.min.time()),
+            sectors=body.sectors,
+            hold_duration_days=body.hold_duration_days,
+            user_api_key=body.api_key,
+            user_access_token=body.access_token,
+            symbols=body.symbols,
         )
 
         if not stocks_data:
-            logger.error(f"[ANALYSIS-SCREEN-FAIL] screen_and_enrich returned EMPTY list. No stocks found for criteria: sectors={request.sectors}, hold={request.hold_duration_days}d")
-            if request.hold_duration_days == 0:
+            logger.error(f"[ANALYSIS-SCREEN-FAIL] screen_and_enrich returned EMPTY list. No stocks found for criteria: sectors={body.sectors}, hold={body.hold_duration_days}d")
+            if body.hold_duration_days == 0:
                 detail = (
                     "Intraday analysis requires an open market. NSE appears to be closed or on a holiday — "
                     "try swing analysis (1W or longer) instead."
@@ -157,7 +157,7 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
         logger.info(f"[ANALYSIS-SCREEN-OK] Screen returned {len(stocks_data)} enriched candidates for LLM")
 
         # ── Prepare compact market data for LLM ───────────────────────────
-        is_intraday = request.hold_duration_days == 0
+        is_intraday = body.hold_duration_days == 0
         market_data_for_llm = []
         for stock in stocks_data:
             entry = {
@@ -184,10 +184,10 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
         llm_response = await llm_agent.analyze_opportunities(
             market_data=market_data_for_llm,
             available_balance=available_balance,
-            risk_percent=request.risk_percent,
-            hold_duration_days=request.hold_duration_days,
-            sectors=request.sectors,
-            num_stocks=request.num_stocks,
+            risk_percent=body.risk_percent,
+            hold_duration_days=body.hold_duration_days,
+            sectors=body.sectors,
+            num_stocks=body.num_stocks,
         )
 
         # ── Stage 4: Position sizing + validation ──────────────────────────
@@ -259,18 +259,18 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
                 risk_reward_ratio = (target - entry) / (entry - sl) if entry > sl else 1.0
 
             # Apply leverage only for intraday MIS trades
-            effective_leverage = request.leverage if request.hold_duration_days == 0 else 1
+            effective_leverage = body.leverage if body.hold_duration_days == 0 else 1
 
             # Swing: allocate capital equally across all recommended stocks so the
             # full balance is deployed (num_stocks > 0 triggers capital-allocation mode).
             # Intraday: use risk-based sizing (num_stocks=0) with leverage.
-            is_intraday = request.hold_duration_days == 0
-            num_stocks_for_sizing = 0 if is_intraday else max(request.num_stocks, 1)
+            is_intraday = body.hold_duration_days == 0
+            num_stocks_for_sizing = 0 if is_intraday else max(body.num_stocks, 1)
 
             quantity = risk_engine.calculate_quantity(
                 entry_price=entry,
                 stop_loss=sl,
-                risk_per_trade=request.risk_percent,
+                risk_per_trade=body.risk_percent,
                 capital=capital_for_sizing,
                 action=action,
                 leverage=effective_leverage,
@@ -301,7 +301,7 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
 
         # Scale down if required margin exceeds balance.
         # With MIS leverage, Zerodha only requires (total_investment / leverage) as margin.
-        effective_leverage = request.leverage if request.hold_duration_days == 0 else 1
+        effective_leverage = body.leverage if body.hold_duration_days == 0 else 1
         required_margin = total_investment / effective_leverage
         if required_margin > capital_for_sizing and preliminary_stocks:
             logger.warning(
@@ -353,7 +353,7 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
             analysis_id = str(uuid.uuid4())
             analysis = AnalysisResponse(
                 analysis_id=analysis_id,
-                request=request,
+                request=body,
                 stocks=[],  # Empty list - no valid stocks found
                 portfolio_metrics={
                     "total_investment": 0.0,
@@ -361,10 +361,10 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
                     "max_profit": 0.0,
                     "max_loss": 0.0,
                     "num_stocks": 0,
-                    "risk_percent": request.risk_percent,
+                    "risk_percent": body.risk_percent,
                     "available_balance": available_balance,
-                    "sectors": request.sectors,
-                    "hold_duration_days": request.hold_duration_days,
+                    "sectors": body.sectors,
+                    "hold_duration_days": body.hold_duration_days,
                     "universe": "Nifty 50 + Next 50" if is_intraday else "Full NSE Market",
                 },
                 available_balance=available_balance,
@@ -386,7 +386,7 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
         analysis_id = str(uuid.uuid4())
         analysis = AnalysisResponse(
             analysis_id=analysis_id,
-            request=request,
+            request=body,
             stocks=stock_analyses,
             portfolio_metrics={
                 "total_investment": round(total_investment, 2),
@@ -395,27 +395,27 @@ async def generate_analysis(http_request: Request, request: AnalysisRequest):
                 "max_profit": round(max_profit, 2),
                 "max_loss": round(max_loss, 2),
                 "num_stocks": len(stock_analyses),
-                "risk_percent": request.risk_percent,
+                "risk_percent": body.risk_percent,
                 "available_balance": available_balance,
                 "capital_to_use": round(capital_for_sizing, 2),
                 "leverage": effective_leverage,
                 "effective_capital": round(capital_for_sizing * effective_leverage, 2),
-                "sectors": request.sectors,
-                "hold_duration_days": request.hold_duration_days,
+                "sectors": body.sectors,
+                "hold_duration_days": body.hold_duration_days,
                 "universe": "Nifty 50 + Next 50" if is_intraday else "Full NSE Market",
             },
             available_balance=available_balance,
             status="PENDING_CONFIRMATION",
         )
 
-        vt_uid = _resolve_vt_user_id(request)
+        vt_uid = _resolve_vt_user_id(body)
 
         # Store in-memory for confirm/status endpoints
         _analyses[analysis_id] = {
             "analysis_id": analysis_id,
             "status": "PENDING_CONFIRMATION",
             "stocks": [s.dict() for s in stock_analyses],
-            "hold_duration_days": request.hold_duration_days,
+            "hold_duration_days": body.hold_duration_days,
             "created_at": datetime.utcnow().isoformat(),
             "vt_user_id": vt_uid,
         }
