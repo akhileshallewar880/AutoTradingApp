@@ -104,7 +104,75 @@ class Database:
         self._engine = _get_engine()
         if self._engine:
             self._ensure_swing_positions_table()
+            self._ensure_users_table()
             self._ready = True
+
+    def _ensure_users_table(self):
+        """Ensure vantrade_users exists and has all phone-auth columns (idempotent)."""
+        if not self._engine:
+            return
+        try:
+            from sqlalchemy import text
+            with self._engine.connect() as conn:
+                # Create table if it doesn't exist at all
+                conn.execute(text("""
+                    IF NOT EXISTS (
+                        SELECT 1 FROM sys.tables WHERE name = 'vantrade_users'
+                    )
+                    CREATE TABLE vantrade_users (
+                        user_id          INT IDENTITY(1,1) PRIMARY KEY,
+                        zerodha_user_id  VARCHAR(255)  NULL,
+                        email            VARCHAR(255)  NULL,
+                        full_name        VARCHAR(255)  NOT NULL DEFAULT '',
+                        is_active        BIT           NOT NULL DEFAULT 1,
+                        user_type        VARCHAR(10)   NOT NULL DEFAULT 'USER',
+                        created_at       DATETIMEOFFSET NOT NULL DEFAULT GETUTCDATE(),
+                        updated_at       DATETIMEOFFSET NOT NULL DEFAULT GETUTCDATE(),
+                        phone_number     VARCHAR(20)   NULL,
+                        firebase_uid     VARCHAR(128)  NULL,
+                        phone_verified_at DATETIMEOFFSET NULL,
+                        vt_user_id       VARCHAR(36)   NULL
+                    );
+                """))
+                conn.commit()
+
+                # Add phone-auth columns if missing (safe on existing tables)
+                for col, col_def in [
+                    ("phone_number",      "VARCHAR(20) NULL"),
+                    ("firebase_uid",      "VARCHAR(128) NULL"),
+                    ("phone_verified_at", "DATETIMEOFFSET NULL"),
+                    ("vt_user_id",        "VARCHAR(36) NULL"),
+                ]:
+                    conn.execute(text(f"""
+                        IF NOT EXISTS (
+                            SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                             WHERE TABLE_NAME = 'vantrade_users'
+                               AND COLUMN_NAME = '{col}'
+                        )
+                            ALTER TABLE vantrade_users ADD {col} {col_def};
+                    """))
+                conn.commit()
+
+                # Unique filtered indexes (safe to re-run)
+                for idx_name, col in [
+                    ("uq_vt_users_phone",    "phone_number"),
+                    ("uq_vt_users_firebase", "firebase_uid"),
+                    ("uq_vt_users_vt_id",   "vt_user_id"),
+                ]:
+                    conn.execute(text(f"""
+                        IF NOT EXISTS (
+                            SELECT 1 FROM sys.indexes
+                             WHERE object_id = OBJECT_ID('vantrade_users')
+                               AND name = '{idx_name}'
+                        )
+                            CREATE UNIQUE INDEX {idx_name}
+                                ON vantrade_users({col})
+                             WHERE {col} IS NOT NULL;
+                    """))
+                conn.commit()
+                logger.info("[DB] vantrade_users table + phone-auth columns ready")
+        except Exception as e:
+            logger.warning(f"[DB] Could not ensure vantrade_users table: {e}")
 
     def _ensure_swing_positions_table(self):
         """Create vantrade_swing_positions and its MS SQL trigger (idempotent)."""
@@ -627,26 +695,33 @@ class Database:
              WHERE firebase_uid = :fuid
         """)
 
-        with self._engine.connect() as conn:
-            row = conn.execute(sql_lookup, {"fuid": firebase_uid}).fetchone()
-            if row and row[0]:
-                conn.execute(sql_update, {
-                    "phone": phone_number,
-                    "verified_at": phone_verified_at,
-                    "fuid": firebase_uid,
-                })
-                conn.commit()
-                return {"vt_user_id": row[0], "is_new_user": False}
-            else:
-                new_id = str(_uuid.uuid4())
-                conn.execute(sql_insert, {
-                    "vt_user_id": new_id,
-                    "fuid": firebase_uid,
-                    "phone": phone_number,
-                    "verified_at": phone_verified_at,
-                })
-                conn.commit()
-                return {"vt_user_id": new_id, "is_new_user": True}
+        try:
+            with self._engine.connect() as conn:
+                row = conn.execute(sql_lookup, {"fuid": firebase_uid}).fetchone()
+                if row and row[0]:
+                    conn.execute(sql_update, {
+                        "phone": phone_number,
+                        "verified_at": phone_verified_at,
+                        "fuid": firebase_uid,
+                    })
+                    conn.commit()
+                    return {"vt_user_id": row[0], "is_new_user": False}
+                else:
+                    new_id = str(_uuid.uuid4())
+                    conn.execute(sql_insert, {
+                        "vt_user_id": new_id,
+                        "fuid": firebase_uid,
+                        "phone": phone_number,
+                        "verified_at": phone_verified_at,
+                    })
+                    conn.commit()
+                    return {"vt_user_id": new_id, "is_new_user": True}
+        except Exception as exc:
+            logger.error(
+                f"[DB] upsert_user SQL error — phone={phone_number} uid={firebase_uid}: {exc}",
+                exc_info=True,
+            )
+            raise
 
     async def upsert_user_by_firebase_uid(
         self,
