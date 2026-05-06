@@ -163,19 +163,10 @@ class _LoginScreenState extends State<LoginScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           VtButton(
-                            label: 'Sign in with Phone',
-                            icon: const Icon(Icons.phone_android_outlined,
-                                size: 18, color: Colors.white),
-                            onPressed: () =>
-                                Navigator.pushNamed(context, '/phone-auth'),
-                          ),
-                          SizedBox(height: Sp.sm),
-                          VtButton(
                             label: 'Connect Zerodha',
-                            icon: Icon(Icons.link_rounded,
-                                size: 18, color: context.vt.textSecondary),
+                            icon: const Icon(Icons.link_rounded,
+                                size: 18, color: Colors.white),
                             onPressed: () => _handleLogin(context, auth),
-                            variant: VtButtonVariant.ghost,
                           ),
                           SizedBox(height: Sp.sm),
                           VtButton(
@@ -279,7 +270,7 @@ class _LoginScreenState extends State<LoginScreen>
 
 // Compact feature pill chip
 class _FeaturePill extends StatelessWidget {
-  _FeaturePill({required this.icon, required this.label});
+  const _FeaturePill({required this.icon, required this.label});
   final IconData icon;
   final String label;
 

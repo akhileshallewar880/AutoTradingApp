@@ -233,17 +233,35 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
           ),
         ),
 
-        // Fixed bottom CTA
+        // Fixed bottom CTAs
         Container(
           padding: EdgeInsets.fromLTRB(Sp.xl, Sp.base, Sp.xl, Sp.xxl),
           decoration: BoxDecoration(
             color: context.vt.surface1,
             border: Border(top: BorderSide(color: context.vt.divider)),
           ),
-          child: VtButton(
-            label: 'Save & Continue',
-            onPressed: bothFilled ? _validateAndSaveCredentials : null,
-            loading: _isValidating,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              VtButton(
+                label: 'Save & Continue',
+                onPressed: bothFilled ? _validateAndSaveCredentials : null,
+                loading: _isValidating,
+              ),
+              const SizedBox(height: Sp.sm),
+              VtButton(
+                label: 'Continue with Demo',
+                icon: Icon(Icons.science_outlined,
+                    size: 18, color: context.vt.textSecondary),
+                variant: VtButtonVariant.ghost,
+                onPressed: _isValidating ? null : () async {
+                  await context.read<AuthProvider>().loginWithDemoData();
+                  if (mounted) {
+                    Navigator.pushReplacementNamed(context, '/home');
+                  }
+                },
+              ),
+            ],
           ),
         ),
       ],

@@ -41,6 +41,14 @@ class SessionManager {
     await prefs.remove(_keyPhoneNumber);
   }
 
+  /// Clears only the Zerodha access token + user data.
+  /// VT phone token, phone number, and API credentials are kept intact.
+  static Future<void> clearZerodhaSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyAccessToken);
+    await prefs.remove(_keyUserData);
+  }
+
   // ── Phone / VT auth ────────────────────────────────────────────────────────
 
   static Future<void> saveVtSession({

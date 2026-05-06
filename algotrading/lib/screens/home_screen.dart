@@ -204,7 +204,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     if (!mounted) return;
     await context.read<AuthProvider>().logout();
     if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/login');
+    Navigator.pushReplacementNamed(context, '/phone-auth');
   }
 
   Future<void> _refresh() async {
@@ -1422,7 +1422,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       context.read<DashboardProvider>().stopAutoRefresh();
       await context.read<AuthProvider>().logout();
       if (context.mounted) {
-        Navigator.pushReplacementNamed(context, '/login');
+        Navigator.pushReplacementNamed(context, '/phone-auth');
       }
     }
   }

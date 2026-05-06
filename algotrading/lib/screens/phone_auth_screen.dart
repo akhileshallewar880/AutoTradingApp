@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pinput/pinput.dart';
 import 'package:provider/provider.dart';
+import 'package:sms_autofill/sms_autofill.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
@@ -31,6 +32,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
   int _resendSeconds = 0;
   Timer? _resendTimer;
   Timer? _autoSubmitTimer;
+  StreamSubscription<String>? _smsSub;
 
   String get _rawPhone => _phoneCtrl.text.replaceAll(' ', '');
   bool get _phoneComplete => _rawPhone.length == 10;
@@ -53,8 +55,23 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
     });
   }
 
+  void _startSmsListener() {
+    _smsSub?.cancel();
+    SmsAutoFill().listenForCode();
+    _smsSub = SmsAutoFill().code.listen((raw) {
+      if (!mounted || _phase != _Phase.enterOtp) return;
+      final digits = raw.replaceAll(RegExp(r'\D'), '');
+      if (digits.length == 6) {
+        setState(() => _otpCtrl.text = digits);
+        Future.delayed(const Duration(milliseconds: 400), _verifyOtp);
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _smsSub?.cancel();
+    SmsAutoFill().unregisterListener();
     _glowCtrl.dispose();
     _phoneCtrl.dispose();
     _otpCtrl.dispose();
@@ -88,10 +105,15 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
     setState(() => _phase = _Phase.sendingCode);
     context.read<AuthProvider>().startPhoneVerification(
       phoneNumber: phone,
+      onAutoVerified: () {
+        if (!mounted) return;
+        _navigateAfterAuth();
+      },
       onCodeSent: (_) {
         if (!mounted) return;
         setState(() => _phase = _Phase.enterOtp);
         _startResendTimer();
+        _startSmsListener();
         Future.delayed(const Duration(milliseconds: 300),
             () => _otpFocus.requestFocus());
       },
@@ -428,6 +450,8 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
           defaultPinTheme: defaultTheme,
           focusedPinTheme: focusedTheme,
           submittedPinTheme: filledTheme,
+          autofillHints: const [AutofillHints.oneTimeCode],
+          keyboardType: TextInputType.number,
           onCompleted: (_) => _verifyOtp(),
           onChanged: (_) => setState(() {}),
         ),

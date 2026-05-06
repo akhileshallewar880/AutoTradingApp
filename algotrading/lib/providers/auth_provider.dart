@@ -159,6 +159,22 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  /// Called when the Zerodha access token expires (daily).
+  /// Only wipes the Zerodha session — phone verification and API credentials
+  /// are preserved so the user only needs to redo Zerodha OAuth, not the
+  /// full onboarding flow.
+  Future<void> expireZerodhaSession() async {
+    if (!isDemoMode) {
+      try {
+        if (_user != null) await ApiService.logout(_user!.accessToken);
+      } catch (_) {}
+    }
+    await SessionManager.clearZerodhaSession();
+    _user = null;
+    _error = null;
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     // Skip API call for demo mode — there is no real session to invalidate
     if (!isDemoMode) {
@@ -172,7 +188,7 @@ class AuthProvider with ChangeNotifier {
     }
 
     await SessionManager.clearSession();
-    // Note: Do NOT clear API credentials on logout.
+    await clearApiCredentials();
     _user = null;
     _error = null;
     _vtAccessToken = null;
@@ -191,6 +207,7 @@ class AuthProvider with ChangeNotifier {
     required String phoneNumber,
     required void Function(String verificationId) onCodeSent,
     required void Function(String error) onError,
+    void Function()? onAutoVerified,
   }) async {
     _phoneVerifying = true;
     _phoneError = null;
@@ -201,8 +218,16 @@ class AuthProvider with ChangeNotifier {
         phoneNumber: '+91$phoneNumber',
         timeout: const Duration(seconds: 60),
         verificationCompleted: (PhoneAuthCredential credential) async {
-          // Android auto-retrieval — complete without OTP input
-          await _completePhoneAuth(credential);
+          // Android SMS Retriever auto-read — sign in without any user input
+          try {
+            await _completePhoneAuth(credential);
+            onAutoVerified?.call();
+          } catch (e) {
+            _phoneError = e.toString().replaceFirst('Exception: ', '');
+            _phoneVerifying = false;
+            notifyListeners();
+            onError(_phoneError!);
+          }
         },
         verificationFailed: (FirebaseAuthException e) {
           _phoneError = e.message ?? 'Verification failed. Check the number and try again.';

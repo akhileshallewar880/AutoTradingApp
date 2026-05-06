@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/auth_provider.dart';
-import '../services/session_manager.dart';
-import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/vantrade_logo.dart';
 
@@ -91,37 +89,42 @@ class _SplashScreenState extends State<SplashScreen>
       return;
     }
 
-    final phoneVerified = await SessionManager.isPhoneVerified();
+    // Restore all persisted session state (VT token, Zerodha session, demo flag)
+    final authProvider = context.read<AuthProvider>();
+    await authProvider.checkSession();
     if (!mounted) return;
-    if (!phoneVerified) {
+
+    // Demo mode: skip phone + Zerodha gates, go straight to home
+    if (authProvider.isDemoMode) {
+      Navigator.pushReplacementNamed(context, '/home');
+      return;
+    }
+
+    // Real users must have verified phone
+    if (!authProvider.isPhoneVerified) {
       Navigator.pushReplacementNamed(context, '/phone-auth');
       return;
     }
 
-    final authProvider = context.read<AuthProvider>();
+    // Must have Zerodha API credentials saved
     final hasCredentials = await authProvider.getSavedApiCredentials() != null;
     if (!mounted) return;
-
     if (!hasCredentials) {
       Navigator.pushReplacementNamed(context, '/api-settings');
       return;
     }
 
-    await authProvider.checkSession();
-    if (!mounted) return;
-
+    // Validate Zerodha session
     if (authProvider.isAuthenticated) {
-      if (!authProvider.isDemoMode) {
-        final tokenValid = await authProvider
-            .validateSession()
-            .timeout(Duration(seconds: 6), onTimeout: () => true);
+      final tokenValid = await authProvider
+          .validateSession()
+          .timeout(const Duration(seconds: 6), onTimeout: () => true);
+      if (!mounted) return;
+      if (!tokenValid) {
+        await authProvider.expireZerodhaSession();
         if (!mounted) return;
-        if (!tokenValid) {
-          await authProvider.logout();
-          if (!mounted) return;
-          Navigator.pushReplacementNamed(context, '/login');
-          return;
-        }
+        Navigator.pushReplacementNamed(context, '/login');
+        return;
       }
       Navigator.pushReplacementNamed(context, '/home');
     } else {
