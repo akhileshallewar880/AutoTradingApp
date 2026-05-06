@@ -19,6 +19,27 @@ import asyncio
 router = APIRouter()
 
 
+def _resolve_vt_user_id(request: AnalysisRequest) -> str:
+    """Return vt_user_id from the request field, or decode it from the VT JWT fallback."""
+    if request.vt_user_id and request.vt_user_id.strip():
+        return request.vt_user_id.strip()
+    if request.vt_access_token and request.vt_access_token.strip():
+        try:
+            from jose import jwt as jose_jwt
+            from app.core.config import settings
+            payload = jose_jwt.decode(
+                request.vt_access_token, settings.VT_JWT_SECRET, algorithms=["HS256"]
+            )
+            uid = payload.get("sub", "")
+            if uid:
+                logger.info(f"[USAGE] Resolved vt_user_id from JWT: {uid}")
+                return uid
+        except Exception as e:
+            logger.warning(f"[USAGE] Could not decode vt_access_token: {e}")
+    logger.warning("[USAGE] vt_user_id not resolved — usage will not be tracked")
+    return ""
+
+
 @router.get("/sectors")
 async def get_sector_activity():
     """
@@ -383,6 +404,8 @@ async def generate_analysis(request: AnalysisRequest, background_tasks: Backgrou
             status="PENDING_CONFIRMATION",
         )
 
+        vt_uid = _resolve_vt_user_id(request)
+
         # Store in-memory for confirm/status endpoints
         _analyses[analysis_id] = {
             "analysis_id": analysis_id,
@@ -390,14 +413,14 @@ async def generate_analysis(request: AnalysisRequest, background_tasks: Backgrou
             "stocks": [s.dict() for s in stock_analyses],
             "hold_duration_days": request.hold_duration_days,
             "created_at": datetime.utcnow().isoformat(),
-            "vt_user_id": request.vt_user_id or "",
+            "vt_user_id": vt_uid,
         }
-        logger.info(f"Analysis generated: {analysis_id} with {len(stock_analyses)} stocks")
+        logger.info(f"Analysis generated: {analysis_id} with {len(stock_analyses)} stocks | vt_user_id={vt_uid!r}")
 
         # Track usage: count only analyses with ≥1 valid stock result
-        if request.vt_user_id:
+        if vt_uid:
             from app.storage.database import db as _db
-            background_tasks.add_task(_db.increment_analysis_count, request.vt_user_id)
+            background_tasks.add_task(_db.increment_analysis_count, vt_uid)
 
         return analysis
 

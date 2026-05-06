@@ -911,6 +911,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           apiKey: authProvider.user!.apiKey,
           userId: userId,
           vtUserId: authProvider.vtUserId,
+          vtAccessToken: authProvider.vtAccessToken,
           capitalToUse: capitalToUse,
           leverage: _holdDurationDays == 0 ? _leverage : 1,
           symbols: symbols,

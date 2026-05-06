@@ -38,6 +38,10 @@ class AnalysisRequest(BaseModel):
         default=None,
         description="VanTrade user UUID (from phone auth). Used for usage tracking."
     )
+    vt_access_token: Optional[str] = Field(
+        default=None,
+        description="VT JWT (from phone auth). Fallback to resolve vt_user_id server-side."
+    )
 
 
 class StockAnalysis(BaseModel):
