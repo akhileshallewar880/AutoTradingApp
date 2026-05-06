@@ -130,6 +130,22 @@ class SubscriptionProvider with ChangeNotifier {
     }
   }
 
+  Future<void> activate({
+    required String vtUserId,
+    required String planId,
+    required String paymentProvider,
+    required String paymentId,
+    required double amountPaid,
+  }) async {
+    await ApiService.activateSubscription(
+      vtUserId: vtUserId,
+      planId: planId,
+      paymentProvider: paymentProvider,
+      paymentId: paymentId,
+      amountPaid: amountPaid,
+    );
+  }
+
   void reset() {
     _status = UsageStatus.empty;
     _error = null;

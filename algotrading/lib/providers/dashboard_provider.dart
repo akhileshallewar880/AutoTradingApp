@@ -90,6 +90,7 @@ class DashboardProvider with ChangeNotifier {
           statusMessage: 'Order complete',
           orderType: 'MARKET',
           product: 'MIS',
+          variety: 'regular',
           placedAt: fmt(now.subtract(const Duration(hours: 4, minutes: 39))),
         ),
         OrderModel(
@@ -103,6 +104,7 @@ class DashboardProvider with ChangeNotifier {
           statusMessage: 'Order complete',
           orderType: 'LIMIT',
           product: 'MIS',
+          variety: 'regular',
           placedAt: fmt(now.subtract(const Duration(hours: 3, minutes: 45))),
         ),
         OrderModel(
@@ -116,6 +118,7 @@ class DashboardProvider with ChangeNotifier {
           statusMessage: 'Pending',
           orderType: 'LIMIT',
           product: 'CNC',
+          variety: 'amo',
           placedAt: fmt(now.subtract(const Duration(hours: 2, minutes: 57))),
         ),
       ],

@@ -54,8 +54,8 @@ def apply(engine=None):
             MERGE vantrade_plans AS target
             USING (VALUES
                 ('free',  'Free',  0.00,   10,   5,    '["10 analyses/month","5 executions/month","Basic support"]', 1),
-                ('pro',   'Pro',   499.00, 30,   50,   '["30 analyses/month","50 executions/month","Priority support","Advanced indicators"]', 1),
-                ('elite', 'Elite', 999.00, NULL, NULL, '["Unlimited analyses","Unlimited executions","Dedicated support","All features"]', 1)
+                ('pro',   'Pro',    99.00, 30,   50,   '["30 analyses/month","50 executions/month","Priority support","Advanced indicators"]', 1),
+                ('elite', 'Elite', 499.00, NULL, NULL, '["Unlimited analyses","Unlimited executions","Dedicated support","All features"]', 1)
             ) AS src (plan_id, name, price_monthly, analyses_per_month, executions_per_month, features, is_active)
             ON target.plan_id = src.plan_id
             WHEN MATCHED THEN

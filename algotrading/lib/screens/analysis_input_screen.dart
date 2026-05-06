@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/analysis_provider.dart';
 import '../providers/dashboard_provider.dart';
+import '../providers/subscription_provider.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/animated_loading_overlay.dart';
@@ -884,6 +885,18 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
 
   Future<void> _handleGenerate() async {
     if (_formKey.currentState!.validate()) {
+      // ── Usage limit gate ──────────────────────────────────────────────────
+      final sub = context.read<SubscriptionProvider>();
+      if (sub.status.isOverAnalysisLimit) {
+        await showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => _UpgradeSheet(usedCount: sub.status.analysesCount),
+        );
+        return;
+      }
+
       final authProvider = context.read<AuthProvider>();
       final analysisProvider = context.read<AnalysisProvider>();
       final capitalToUse =
@@ -935,7 +948,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
 // ── Stepper button ────────────────────────────────────────────────────────────
 
 class _StepperButton extends StatelessWidget {
-  _StepperButton({required this.icon, required this.onTap});
+  const _StepperButton({required this.icon, required this.onTap});
   final IconData icon;
   final VoidCallback? onTap;
 
@@ -965,5 +978,218 @@ class _StepperButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// ── Upgrade bottom sheet shown when analysis limit is reached ─────────────────
+
+class _UpgradeSheet extends StatelessWidget {
+  final int usedCount;
+  const _UpgradeSheet({required this.usedCount});
+
+  static const _kProPrice  = 99.0;
+  static const _kElitePrice = 499.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final vt = context.vt;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: vt.surface0,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Handle
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: vt.divider,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Limit reached message
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.lock_outline_rounded,
+                  color: Colors.orangeAccent, size: 22),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Monthly limit reached',
+                      style: AppTextStyles.h3.copyWith(
+                          color: Colors.orangeAccent)),
+                  Text('You\'ve used all $usedCount / 10 free analyses this month.',
+                      style: AppTextStyles.caption.copyWith(
+                          color: vt.textSecondary)),
+                ],
+              ),
+            ),
+          ]),
+
+          const SizedBox(height: 20),
+
+          // Promo badge
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+            decoration: BoxDecoration(
+              color: vt.accentGreen.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(Rad.md),
+              border: Border.all(color: vt.accentGreen.withValues(alpha: 0.35)),
+            ),
+            child: Row(children: [
+              const Text('🎉', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Beta launch — 100% OFF on all plans. Upgrade free today!',
+                  style: AppTextStyles.caption.copyWith(
+                      color: vt.accentGreen, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ]),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Plan options
+          _PlanOption(
+            name: 'Pro',
+            originalPrice: _kProPrice,
+            analyses: '30 analyses/month',
+            color: vt.accentGreen,
+            planId: 'pro',
+          ),
+          const SizedBox(height: 10),
+          _PlanOption(
+            name: 'Elite',
+            originalPrice: _kElitePrice,
+            analyses: 'Unlimited analyses',
+            color: const Color(0xFFFFD700),
+            planId: 'elite',
+          ),
+
+          const SizedBox(height: 20),
+          Center(
+            child: TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Maybe later',
+                  style: AppTextStyles.caption.copyWith(
+                      color: vt.textTertiary)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanOption extends StatelessWidget {
+  final String name;
+  final double originalPrice;
+  final String analyses;
+  final Color color;
+  final String planId;
+
+  const _PlanOption({
+    required this.name,
+    required this.originalPrice,
+    required this.analyses,
+    required this.color,
+    required this.planId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final vt = context.vt;
+    return InkWell(
+      onTap: () => _activate(context),
+      borderRadius: BorderRadius.circular(Rad.md),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(Rad.md),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Row(children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name,
+                    style: AppTextStyles.body.copyWith(
+                        color: color, fontWeight: FontWeight.w700)),
+                Text(analyses,
+                    style: AppTextStyles.caption.copyWith(
+                        color: vt.textSecondary)),
+              ],
+            ),
+          ),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text(
+              '₹${originalPrice.toStringAsFixed(0)}/mo',
+              style: AppTextStyles.caption.copyWith(
+                color: vt.textTertiary,
+                decoration: TextDecoration.lineThrough,
+              ),
+            ),
+            Text('₹0 / mo',
+                style: AppTextStyles.body.copyWith(
+                    color: color, fontWeight: FontWeight.w800)),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _activate(BuildContext context) async {
+    Navigator.pop(context);
+    final sub = context.read<SubscriptionProvider>();
+    final auth = context.read<AuthProvider>();
+    final vtId = auth.vtUserId ?? '';
+    if (vtId.isEmpty) return;
+
+    try {
+      await sub.activate(
+        vtUserId: vtId,
+        planId: planId,
+        paymentProvider: 'promo',
+        paymentId: 'beta_100pct_off_${DateTime.now().millisecondsSinceEpoch}',
+        amountPaid: 0.0,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('🎉 $name plan activated! You now have more analyses.'),
+          backgroundColor: Colors.green,
+        ));
+        sub.loadStatus(vtId);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Activation failed: $e'),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
   }
 }
