@@ -310,6 +310,9 @@ class Database:
     def _sync_increment_usage(self, vt_user_id: str, period: str, field: str) -> None:
         import uuid as _uuid
         from sqlalchemy import text
+        # Explicit mapping — column name != field.replace('_count','_at')
+        ts_col = 'last_analysis_at' if field == 'analyses_count' else 'last_execution_at'
+        is_analysis = field == 'analyses_count'
         sql = text(f"""
             IF EXISTS (
                 SELECT 1 FROM vantrade_usage_records
@@ -317,18 +320,18 @@ class Database:
             )
                 UPDATE vantrade_usage_records
                    SET {field} = {field} + 1,
-                       last_{field.replace('_count', '_at')} = GETUTCDATE(),
+                       {ts_col} = GETUTCDATE(),
                        updated_at = GETUTCDATE()
                  WHERE vt_user_id = :uid AND period_month = :period
             ELSE
                 INSERT INTO vantrade_usage_records
                   (record_id, vt_user_id, period_month, analyses_count,
-                   executions_count, last_{field.replace('_count', '_at')},
+                   executions_count, {ts_col},
                    created_at, updated_at)
                 VALUES
                   (:record_id, :uid, :period,
-                   {'1' if field == 'analyses_count' else '0'},
-                   {'1' if field == 'executions_count' else '0'},
+                   {'1' if is_analysis else '0'},
+                   {'0' if is_analysis else '1'},
                    GETUTCDATE(), GETUTCDATE(), GETUTCDATE())
         """)
         with self._engine.connect() as conn:
