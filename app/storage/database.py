@@ -413,47 +413,48 @@ class Database:
             ],
         }
 
-    async def increment_analysis_count(self, vt_user_id: str) -> None:
-        """Increment analysis count for current month. Fire-and-forget safe."""
-        if not vt_user_id or not self._ready:
+    def increment_analysis_count(self, vt_user_id: str) -> None:
+        """Increment analysis count for current month. Called via BackgroundTasks (sync)."""
+        if not vt_user_id:
+            logger.warning("[USAGE] increment_analysis_count: vt_user_id is empty — skipping")
+            return
+        if not self._ready:
+            logger.warning("[USAGE] increment_analysis_count: DB not ready — skipping")
             return
         from datetime import datetime
         period = datetime.utcnow().strftime("%Y-%m")
-        loop = asyncio.get_event_loop()
         try:
-            await loop.run_in_executor(
-                None, self._sync_increment_usage, vt_user_id, period, "analyses_count"
-            )
+            self._sync_increment_usage(vt_user_id, period, "analyses_count")
+            logger.info(f"[USAGE] analysis_count incremented for vt_user_id={vt_user_id[:8]}...")
         except Exception as e:
-            logger.warning(f"[DB] increment_analysis_count failed: {e}")
+            logger.error(f"[USAGE] increment_analysis_count failed: {e}", exc_info=True)
 
-    async def increment_execution_count(self, vt_user_id: str) -> None:
-        """Increment execution count for current month. Fire-and-forget safe."""
-        if not vt_user_id or not self._ready:
+    def increment_execution_count(self, vt_user_id: str) -> None:
+        """Increment execution count for current month. Called via BackgroundTasks (sync)."""
+        if not vt_user_id:
+            logger.warning("[USAGE] increment_execution_count: vt_user_id is empty — skipping")
+            return
+        if not self._ready:
+            logger.warning("[USAGE] increment_execution_count: DB not ready — skipping")
             return
         from datetime import datetime
         period = datetime.utcnow().strftime("%Y-%m")
-        loop = asyncio.get_event_loop()
         try:
-            await loop.run_in_executor(
-                None, self._sync_increment_usage, vt_user_id, period, "executions_count"
-            )
+            self._sync_increment_usage(vt_user_id, period, "executions_count")
+            logger.info(f"[USAGE] execution_count incremented for vt_user_id={vt_user_id[:8]}...")
         except Exception as e:
-            logger.warning(f"[DB] increment_execution_count failed: {e}")
+            logger.error(f"[USAGE] increment_execution_count failed: {e}", exc_info=True)
 
-    async def get_usage_status(self, vt_user_id: str) -> dict:
+    def get_usage_status(self, vt_user_id: str) -> dict:
         """Return current plan, usage counts, limits, and all available plans."""
         from datetime import datetime
         period = datetime.utcnow().strftime("%Y-%m")
         if not self._ready:
             return _default_usage_status(period)
-        loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(
-                None, self._sync_get_usage_status, vt_user_id, period
-            )
+            return self._sync_get_usage_status(vt_user_id, period)
         except Exception as e:
-            logger.warning(f"[DB] get_usage_status failed: {e}")
+            logger.error(f"[DB] get_usage_status failed: {e}", exc_info=True)
             return _default_usage_status(period)
 
     def _ensure_swing_positions_table(self):

@@ -21,7 +21,7 @@ async def get_usage_status(vt_user_id: str = Query(..., description="VanTrade us
     """Return current plan, monthly usage counts, and limits for a user."""
     from app.storage.database import db
     try:
-        status = await db.get_usage_status(vt_user_id)
+        status = db.get_usage_status(vt_user_id)
         return UsageStatusResponse(**status)
     except Exception as e:
         logger.error(f"[Subscription] get_usage_status failed: {e}", exc_info=True)
@@ -33,7 +33,7 @@ async def list_plans():
     """Return all available subscription plans."""
     from app.storage.database import db
     try:
-        status = await db.get_usage_status("__probe__")
+        status = db.get_usage_status("__probe__")
         return {"plans": status.get("all_plans", [])}
     except Exception as e:
         logger.error(f"[Subscription] list_plans failed: {e}", exc_info=True)

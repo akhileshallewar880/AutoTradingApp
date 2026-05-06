@@ -578,7 +578,7 @@ async def execute_trades(
             vt_uid = _analyses.get(analysis_id, {}).get("vt_user_id") or user_id
             if vt_uid:
                 from app.storage.database import db as _db
-                await _db.increment_execution_count(vt_uid)
+                _db.increment_execution_count(vt_uid)
 
     except Exception as e:
         logger.error(f"Trade execution failed: {e}")
