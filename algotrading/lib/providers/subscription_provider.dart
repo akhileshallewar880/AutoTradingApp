@@ -95,11 +95,11 @@ class UsageStatus {
   static UsageStatus get empty => UsageStatus(
     plan: const PlanInfo(
       planId: 'free', name: 'Free', priceMonthly: 0,
-      analysesPerMonth: 3, executionsPerMonth: 5,
-      features: ['3 analyses/month', '5 executions/month', 'Basic support'],
+      analysesPerMonth: 10, executionsPerMonth: 5,
+      features: ['10 analyses/month', '5 executions/month', 'Basic support'],
     ),
     analysesCount: 0, executionsCount: 0,
-    analysesRemaining: 3, executionsRemaining: 5,
+    analysesRemaining: 10, executionsRemaining: 5,
     isOverAnalysisLimit: false, isOverExecutionLimit: false,
     period: '', allPlans: [],
   );

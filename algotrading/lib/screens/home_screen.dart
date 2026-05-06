@@ -84,6 +84,11 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       );
       _fetchIndexPrices();
     }
+    // Refresh usage counts whenever we return to home (e.g. after analysis)
+    final vtId = auth.vtUserId ?? '';
+    if (vtId.isNotEmpty) {
+      context.read<SubscriptionProvider>().loadStatus(vtId);
+    }
   }
 
   @override
