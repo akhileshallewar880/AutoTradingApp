@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from app.core.limiter import limiter
 from app.models.analysis_models import (
     AnalysisRequest, AnalysisResponse, StockAnalysis,
     OrderConfirmation, ExecutionStatus, ExecutionUpdate
@@ -28,7 +29,8 @@ def _resolve_vt_user_id(request: AnalysisRequest) -> str:
             from jose import jwt as jose_jwt
             from app.core.config import settings
             payload = jose_jwt.decode(
-                request.vt_access_token, settings.VT_JWT_SECRET, algorithms=["HS256"]
+                request.vt_access_token, settings.VT_JWT_SECRET,
+                algorithms=["HS256"], options={"verify_exp": True},
             )
             uid = payload.get("sub", "")
             if uid:
@@ -75,7 +77,8 @@ active_executions: dict = {}  # analysis_id → list of ExecutionUpdate
 
 
 @router.post("/generate", response_model=AnalysisResponse)
-async def generate_analysis(request: AnalysisRequest):
+@limiter.limit("10/minute")
+async def generate_analysis(http_request: Request, request: AnalysisRequest):
     """
     Step 1: Generate AI analysis with trade recommendations.
 
@@ -90,16 +93,13 @@ async def generate_analysis(request: AnalysisRequest):
       Same as before — yfinance daily candles + standard indicators
     """
     try:
-        # Log request details
-        api_key_mask = f"{request.api_key[:5]}...{request.api_key[-5:]}" if len(request.api_key) > 10 else "SHORT_KEY"
-        token_mask = f"{request.access_token[:10]}...{request.access_token[-10:]}" if len(request.access_token) > 20 else "SHORT_TOKEN"
-
+        # Log request details — never log token values, only presence flags
         has_vt_uid = bool(request.vt_user_id and request.vt_user_id.strip())
         has_vt_token = bool(request.vt_access_token and request.vt_access_token.strip())
         logger.info(
             f"[ANALYSIS-START] Generating analysis: {request.num_stocks} stocks | "
             f"sectors={request.sectors} | hold={request.hold_duration_days}d | "
-            f"user_api_key={api_key_mask} | user_token={token_mask} | "
+            f"api_key_present={bool(request.api_key)} | token_present={bool(request.access_token)} | "
             f"vt_user_id={'SET' if has_vt_uid else 'MISSING'} | "
             f"vt_access_token={'SET' if has_vt_token else 'MISSING'}"
         )
@@ -109,7 +109,7 @@ async def generate_analysis(request: AnalysisRequest):
             from kiteconnect import KiteConnect
             kite = KiteConnect(api_key=request.api_key)
             kite.set_access_token(request.access_token)
-            logger.debug(f"[ANALYSIS-BALANCE] Created user-specific KiteConnect instance with token: {token_mask}")
+            logger.debug("[ANALYSIS-BALANCE] Created user-specific KiteConnect instance")
             margins = kite.margins()
             available_balance = margins.get("equity", {}).get("net", 100000)
             logger.info(f"[ANALYSIS-BALANCE] Real balance: ₹{available_balance:,.2f}")

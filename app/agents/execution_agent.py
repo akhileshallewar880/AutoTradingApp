@@ -133,7 +133,6 @@ class ExecutionAgent:
                             "entry_order_id":     str(entry_order_id),
                             "hold_duration_days": int(hold_duration_days),
                             "api_key":            api_key,
-                            "access_token":       access_token,
                             "status":             "AMO_PENDING",
                         })
                     except Exception as db_err:
@@ -511,7 +510,6 @@ class ExecutionAgent:
                         "entry_order_id":     str(entry_order_id),
                         "hold_duration_days": int(hold_duration_days),
                         "api_key":            api_key,
-                        "access_token":       access_token,
                     })
                     logger.info(
                         f"[ExecutionAgent] Swing position persisted for {stock_symbol} "

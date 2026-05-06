@@ -196,21 +196,20 @@ class ApiService {
     }
   }
 
-  // Dashboard
+  // Dashboard — tokens travel in headers, never in URL query params
   static Future<DashboardModel> getDashboard(
     String accessToken, {
     String? apiKey,
   }) async {
-    final queryParams = {'access_token': accessToken};
-    if (apiKey != null) {
-      queryParams['api_key'] = apiKey;
-    }
+    final headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $accessToken',
+      if (apiKey != null && apiKey.isNotEmpty) 'X-Api-Key': apiKey,
+    };
 
-    final uri = Uri.parse(ApiConfig.dashboardUrl)
-        .replace(queryParameters: queryParams);
     final response = await http.get(
-      uri,
-      headers: {'Content-Type': 'application/json'},
+      Uri.parse(ApiConfig.dashboardUrl),
+      headers: headers,
     ).timeout(const Duration(seconds: 30));
 
     if (response.statusCode == 200) {
@@ -230,15 +229,15 @@ class ApiService {
     required String apiKey,
   }) async {
     try {
-      final uri = Uri.parse('${ApiConfig.baseUrl}/auth/validate-token')
-          .replace(queryParameters: {
-        'access_token': accessToken,
-        'api_key': apiKey,
-      });
-      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/auth/validate-token'),
+        headers: {
+          'Authorization': 'Bearer $accessToken',
+          'X-Api-Key': apiKey,
+        },
+      ).timeout(const Duration(seconds: 15));
       return response.statusCode == 200;
     } catch (_) {
-      // Network error — treat as inconclusive (let the home screen handle it)
       return true;
     }
   }
@@ -489,10 +488,16 @@ class ApiService {
 
   // ── Subscription / Usage ───────────────────────────────────────────────────
 
-  static Future<Map<String, dynamic>> getUsageStatus(String vtUserId) async {
+  static Future<Map<String, dynamic>> getUsageStatus(
+    String vtUserId, {
+    required String vtAccessToken,
+  }) async {
     final uri = Uri.parse('${ApiConfig.baseUrl}/subscription/status')
         .replace(queryParameters: {'vt_user_id': vtUserId});
-    final response = await http.get(uri).timeout(const Duration(seconds: 10));
+    final response = await http.get(
+      uri,
+      headers: {'Authorization': 'Bearer $vtAccessToken'},
+    ).timeout(const Duration(seconds: 10));
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }

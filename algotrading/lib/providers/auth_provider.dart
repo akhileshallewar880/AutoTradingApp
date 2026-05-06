@@ -1,6 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/user_model.dart';
 import '../services/api_service.dart';
 import '../services/session_manager.dart';
@@ -303,22 +303,23 @@ class AuthProvider with ChangeNotifier {
       phoneNumber: _phoneNumber!,
       vtUserId: _vtUserId,
     );
+    _phoneVerificationId = null; // invalidate so it can't be replayed
     _phoneVerifying = false;
     notifyListeners();
   }
 
-  /// Retrieve saved API credentials from secure local storage
+  static const _secureStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+
+  /// Retrieve saved Zerodha API credentials from encrypted secure storage
   Future<Map<String, String>?> getSavedApiCredentials() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final apiKey = prefs.getString('zerodha_api_key');
-      final apiSecret = prefs.getString('zerodha_api_secret');
-
+      final apiKey    = await _secureStorage.read(key: 'zerodha_api_key');
+      final apiSecret = await _secureStorage.read(key: 'zerodha_api_secret');
       if (apiKey != null && apiSecret != null) {
-        return {
-          'apiKey': apiKey,
-          'apiSecret': apiSecret,
-        };
+        return {'apiKey': apiKey, 'apiSecret': apiSecret};
       }
       return null;
     } catch (e) {
@@ -357,13 +358,13 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  /// Save API credentials securely to local storage
+  /// Save Zerodha API credentials to encrypted secure storage
   Future<void> saveApiCredentials(String apiKey, String apiSecret) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('zerodha_api_key', apiKey);
-      await prefs.setString('zerodha_api_secret', apiSecret);
-
+      await Future.wait([
+        _secureStorage.write(key: 'zerodha_api_key',    value: apiKey),
+        _secureStorage.write(key: 'zerodha_api_secret', value: apiSecret),
+      ]);
       _error = null;
       notifyListeners();
     } catch (e) {
@@ -373,12 +374,13 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  /// Clear saved API credentials from local storage
+  /// Delete Zerodha API credentials from encrypted secure storage
   Future<void> clearApiCredentials() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('zerodha_api_key');
-      await prefs.remove('zerodha_api_secret');
+      await Future.wait([
+        _secureStorage.delete(key: 'zerodha_api_key'),
+        _secureStorage.delete(key: 'zerodha_api_secret'),
+      ]);
       _error = null;
       notifyListeners();
     } catch (e) {

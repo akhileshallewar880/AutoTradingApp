@@ -44,6 +44,9 @@ dependencies:
   
   # Local storage for session management
   shared_preferences: ^2.2.2
+
+  # Encrypted storage for sensitive credentials (uses Android Keystore / iOS Keychain)
+  flutter_secure_storage: ^9.2.2
   
   # WebView for Zerodha login
   webview_flutter: ^4.4.2

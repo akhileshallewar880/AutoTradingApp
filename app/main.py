@@ -1,27 +1,66 @@
 import asyncio
-from fastapi import FastAPI
+import uuid as _uuid
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings
 from app.api.routes import agent, performance, auth, analysis, dashboard, credentials, live_trading, backtest, portfolio, ticker, subscription
 from app.core.logging import logger
 
 settings = get_settings()
 
+# Shared rate limiter — key by client IP
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         description="Agentic AI Trading System Backend",
-        version="2.0.0"
+        version="2.0.0",
+        # Disable /docs and /redoc in production to avoid exposing API schema
+        docs_url="/docs" if settings.DEBUG else None,
+        redoc_url="/redoc" if settings.DEBUG else None,
     )
 
-    # CORS
+    # Rate limiter state
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # CORS — restrict to known origins only
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.allowed_origins_list,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Api-Key", "X-Request-ID"],
     )
+
+    # Request correlation ID — stamped on every response so logs can be traced
+    @app.middleware("http")
+    async def add_correlation_id(request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+    # Security headers — added to every response
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # HSTS — only set over HTTPS (nginx handles this; here as defence in depth)
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
     # Routes
     app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])

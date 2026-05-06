@@ -9,6 +9,7 @@ from app.models.auth_models import (
 from app.services.zerodha_service import zerodha_service
 from app.core.logging import logger
 from app.core.config import get_settings
+from app.core.limiter import limiter
 
 # ── Firebase Admin SDK — lazy import, safe if not installed ──────────────────
 try:
@@ -71,7 +72,8 @@ def _create_vt_jwt(vt_user_id: str, phone_number: str) -> str:
 router = APIRouter()
 
 @router.get("/login", response_model=LoginUrlResponse)
-async def get_login_url(api_key: str = Query(...)):
+@limiter.limit("20/minute")
+async def get_login_url(request: Request, api_key: str = Query(...)):
     """
     Step 1: Get Kite Connect login URL.
     Accepts user's API key to generate login URL with their registered Kite Connect app.
@@ -86,7 +88,8 @@ async def get_login_url(api_key: str = Query(...)):
         raise HTTPException(status_code=500, detail="Failed to generate Zerodha login URL")
 
 @router.post("/session", response_model=SessionResponse)
-async def create_session(session_request: SessionRequest):
+@limiter.limit("10/minute")
+async def create_session(request: Request, session_request: SessionRequest):
     """
     Step 2: Exchange request_token for access_token.
     After user completes login on Kite, you'll receive a request_token in the callback URL.
@@ -151,15 +154,22 @@ async def zerodha_callback(request: Request):
     return RedirectResponse(url=redirect_url, status_code=302)
 
 @router.get("/validate-token")
+@limiter.limit("30/minute")
 async def validate_token(
-    api_key: str = Query(..., description="User's Zerodha API key"),
-    access_token: str = Query(..., description="Zerodha access token to validate"),
+    request: Request,
+    authorization: str = Header(..., description="Bearer <zerodha_access_token>"),
+    x_api_key: str = Header(..., alias="X-Api-Key", description="Zerodha API key"),
 ):
     """
     Lightweight endpoint to check if a Zerodha access token is still valid.
     Returns 200 if valid, 401 if expired or invalid.
-    Used by the Flutter app on startup to avoid sending users to /home with a dead session.
+    Tokens are passed in headers — never in query params to avoid URL logging.
     """
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid Authorization header")
+    access_token = authorization.split(" ", 1)[1].strip()
+    api_key = x_api_key.strip()
+
     try:
         from kiteconnect import KiteConnect
         import asyncio
@@ -190,7 +200,8 @@ async def logout():
 
 
 @router.post("/phone/verify", response_model=PhoneAuthResponse)
-async def verify_phone_token(body: PhoneVerifyRequest):
+@limiter.limit("5/minute")
+async def verify_phone_token(request: Request, body: PhoneVerifyRequest):
     """
     Exchange a Firebase ID token (issued after OTP success on client) for a VanTrade JWT.
     Creates or retrieves the user record in vantrade_users.

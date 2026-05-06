@@ -114,13 +114,16 @@ class SubscriptionProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
 
-  Future<void> loadStatus(String vtUserId) async {
-    if (vtUserId.isEmpty) return;
+  Future<void> loadStatus(String vtUserId, {required String vtAccessToken}) async {
+    if (vtUserId.isEmpty || vtAccessToken.isEmpty) return;
     _isLoading = true;
     _error = null;
     notifyListeners();
     try {
-      final data = await ApiService.getUsageStatus(vtUserId);
+      final data = await ApiService.getUsageStatus(
+        vtUserId,
+        vtAccessToken: vtAccessToken,
+      );
       _status = UsageStatus.fromJson(data);
     } catch (e) {
       _error = e.toString();

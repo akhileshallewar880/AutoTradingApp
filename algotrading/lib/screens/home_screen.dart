@@ -7,7 +7,6 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/auth_provider.dart';
-import '../services/streak_service.dart';
 import '../providers/dashboard_provider.dart';
 import '../models/dashboard_model.dart';
 import '../theme/app_spacing.dart';
@@ -46,7 +45,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
 
   Map<String, dynamic> _indexPrices = {};
   Timer? _indexRefreshTimer;
-  int _streakDays = 0;
   bool _insightDismissed = false;
 
   static const _insights = [
@@ -89,8 +87,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     }
     // Refresh usage counts whenever we return to home (e.g. after analysis)
     final vtId = auth.vtUserId ?? '';
-    if (vtId.isNotEmpty) {
-      context.read<SubscriptionProvider>().loadStatus(vtId);
+    final vtToken = auth.vtAccessToken ?? '';
+    if (vtId.isNotEmpty && vtToken.isNotEmpty) {
+      context.read<SubscriptionProvider>().loadStatus(vtId, vtAccessToken: vtToken);
     }
   }
 
@@ -139,31 +138,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
         const Duration(seconds: 60),
         (_) => _fetchIndexPrices(),
       );
-      _checkStreak();
     }
-  }
-
-  Future<void> _checkStreak() async {
-    final result = await StreakService.instance.checkAndUpdate();
-    if (!mounted) return;
-    setState(() => _streakDays = result.streakDays);
-    if (!result.isNewDay) return;
-    final days = result.streakDays;
-    final msg = days == 1
-        ? '🔥 Welcome back! Streak started.'
-        : '🔥 Day $days streak! Keep it up.';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: AppTextStyles.bodyLarge.copyWith(color: context.vt.textPrimary)),
-        backgroundColor: context.vt.surface2,
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 3),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(Rad.md),
-          side: BorderSide(color: context.vt.accentGold),
-        ),
-      ),
-    );
   }
 
   Future<void> _fetchIndexPrices() async {
@@ -384,8 +359,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
         ],
       ),
       actions: [
-        if (_streakDays > 0) _StreakBadge(days: _streakDays),
-        const SizedBox(width: Sp.xs),
         _UsageChip(auth: auth),
         const SizedBox(width: Sp.xs),
         StatusBadge(
@@ -1539,72 +1512,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
   }
 }
 
-class _StreakBadge extends StatefulWidget {
-  final int days;
-  const _StreakBadge({required this.days});
-
-  @override
-  State<_StreakBadge> createState() => _StreakBadgeState();
-}
-
-class _StreakBadgeState extends State<_StreakBadge>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse;
-  late final Animation<double> _glow;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-    _glow = Tween<double>(begin: 0.25, end: 0.65).animate(
-      CurvedAnimation(parent: _pulse, curve: Curves.easeInOut),
-    );
-    if (widget.days >= 7) _pulse.repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final gold = context.vt.accentGold;
-    return AnimatedBuilder(
-      animation: _glow,
-      builder: (context, _) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 4),
-        decoration: BoxDecoration(
-          color: gold.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(Rad.pill),
-          border: Border.all(color: gold.withValues(alpha: 0.35)),
-          boxShadow: widget.days >= 7
-              ? [BoxShadow(color: gold.withValues(alpha: _glow.value * 0.4), blurRadius: 10, spreadRadius: -2)]
-              : null,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('🔥', style: TextStyle(fontSize: 13)),
-            const SizedBox(width: 3),
-            Text(
-              '${widget.days}',
-              style: AppTextStyles.caption.copyWith(
-                color: gold,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// Small pill in the AppBar showing "N analyses used this month".
 /// Tapping opens the Plans screen.
 class _UsageChip extends StatefulWidget {
@@ -1621,8 +1528,9 @@ class _UsageChipState extends State<_UsageChip> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final vtId = widget.auth.vtUserId ?? '';
-      if (vtId.isNotEmpty) {
-        context.read<SubscriptionProvider>().loadStatus(vtId);
+      final vtToken = widget.auth.vtAccessToken ?? '';
+      if (vtId.isNotEmpty && vtToken.isNotEmpty) {
+        context.read<SubscriptionProvider>().loadStatus(vtId, vtAccessToken: vtToken);
       }
     });
   }

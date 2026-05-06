@@ -1,12 +1,19 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 
-# Resolve .env relative to the project root (3 levels up from app/core/config.py)
-# This works regardless of the working directory uvicorn is started from
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
+
+_INSECURE_DEFAULTS = {
+    "your-secret-key-change-in-production",
+    "change-me-in-production-vt-jwt-secret",
+    "changeme",
+    "secret",
+    "",
+}
+
 
 class Settings(BaseSettings):
     # App Config
@@ -14,11 +21,9 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # Zerodha Kite Connect Config
-    # Note: ZERODHA_API_KEY and ZERODHA_API_SECRET should come from user's own Kite Connect app
-    # Users provide their credentials during app setup; these are optional for server startup
     ZERODHA_API_KEY: Optional[str] = None
     ZERODHA_API_SECRET: Optional[str] = None
-    ZERODHA_ACCESS_TOKEN: Optional[str] = None # Can be set manually or via login flow (not fully implemented here)
+    ZERODHA_ACCESS_TOKEN: Optional[str] = None
 
     # OpenAI Config
     OPENAI_API_KEY: str
@@ -37,6 +42,9 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
 
+    # CORS — comma-separated list of allowed origins
+    ALLOWED_ORIGINS: str = "https://vantrade.in"
+
     # Frontend URL for OAuth redirects
     FRONTEND_URL: str = "https://vantrade.in"
 
@@ -45,18 +53,38 @@ class Settings(BaseSettings):
     def _nonempty_frontend_url(cls, v: str) -> str:
         return v if v else "https://vantrade.in"
 
-    # Admin Dashboard Config
-    ADMIN_JWT_SECRET: str = "your-secret-key-change-in-production"
+    # Admin Dashboard Config — no insecure defaults; must be set in environment
+    ADMIN_JWT_SECRET: str
     ADMIN_JWT_ALGORITHM: str = "HS256"
     ADMIN_JWT_EXPIRATION_MINUTES: int = 480
 
     # Firebase Phone Auth
     FIREBASE_PROJECT_ID: Optional[str] = None
-    FIREBASE_SERVICE_ACCOUNT: Optional[str] = None  # base64-encoded service account JSON
-    VT_JWT_SECRET: str = "change-me-in-production-vt-jwt-secret"
+    FIREBASE_SERVICE_ACCOUNT: Optional[str] = None
+    # VanTrade JWT — no insecure defaults; must be set in environment
+    VT_JWT_SECRET: str
     VT_JWT_EXPIRY_HOURS: int = 720  # 30 days
 
+    @model_validator(mode="after")
+    def _reject_insecure_secrets(self) -> "Settings":
+        if self.ADMIN_JWT_SECRET in _INSECURE_DEFAULTS or len(self.ADMIN_JWT_SECRET) < 32:
+            raise ValueError(
+                "ADMIN_JWT_SECRET is missing or insecure. "
+                "Set a strong random value (≥32 chars) in your environment."
+            )
+        if self.VT_JWT_SECRET in _INSECURE_DEFAULTS or len(self.VT_JWT_SECRET) < 32:
+            raise ValueError(
+                "VT_JWT_SECRET is missing or insecure. "
+                "Set a strong random value (≥32 chars) in your environment."
+            )
+        return self
+
+    @property
+    def allowed_origins_list(self) -> List[str]:
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
+
     model_config = SettingsConfigDict(env_file=str(_ENV_FILE), env_file_encoding="utf-8", extra="ignore")
+
 
 @lru_cache()
 def get_settings():

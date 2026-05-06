@@ -21,8 +21,10 @@ class _PlansScreenState extends State<PlansScreen> {
   }
 
   void _load() {
-    final vtId = context.read<AuthProvider>().vtUserId ?? '';
-    context.read<SubscriptionProvider>().loadStatus(vtId);
+    final auth = context.read<AuthProvider>();
+    final vtId = auth.vtUserId ?? '';
+    final vtToken = auth.vtAccessToken ?? '';
+    context.read<SubscriptionProvider>().loadStatus(vtId, vtAccessToken: vtToken);
   }
 
   @override
@@ -544,6 +546,7 @@ class _ActivateSheet extends StatelessWidget {
     final sub = context.read<SubscriptionProvider>();
     final auth = context.read<AuthProvider>();
     final vtId = auth.vtUserId ?? '';
+    final vtToken = auth.vtAccessToken ?? '';
     if (vtId.isEmpty) return;
 
     // Activate with ₹0 payment (100% discount)
@@ -560,7 +563,7 @@ class _ActivateSheet extends StatelessWidget {
           content: Text('🎉 ${plan.name} activated successfully!'),
           backgroundColor: Colors.green,
         ));
-        sub.loadStatus(vtId);
+        sub.loadStatus(vtId, vtAccessToken: vtToken);
       }
     } catch (e) {
       if (context.mounted) {

@@ -1181,7 +1181,7 @@ class _PlanOption extends StatelessWidget {
           content: Text('🎉 $name plan activated! You now have more analyses.'),
           backgroundColor: Colors.green,
         ));
-        sub.loadStatus(vtId);
+        sub.loadStatus(vtId, vtAccessToken: auth.vtAccessToken ?? '');
       }
     } catch (e) {
       if (context.mounted) {

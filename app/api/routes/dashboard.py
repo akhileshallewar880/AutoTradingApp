@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, Header, HTTPException
 from app.services.zerodha_service import zerodha_service
 from app.core.logging import logger
 from datetime import datetime
@@ -78,8 +78,8 @@ def _calc_month_pnl(trades: List[Dict]) -> Dict:
 
 @router.get("/summary")
 async def get_dashboard_summary(
-    access_token: str = Query(..., description="Zerodha access token"),
-    api_key: str = Query(..., description="User's Zerodha API key"),
+    authorization: str = Header(..., description="Bearer <zerodha_access_token>"),
+    x_api_key: str = Header(..., alias="X-Api-Key", description="Zerodha API key"),
 ):
     """
     Returns a consolidated dashboard summary:
@@ -91,7 +91,14 @@ async def get_dashboard_summary(
     - Active GTTs
     """
     try:
-        # Create a kite client with the user's API key and set their access token
+        # Extract bearer token — "Bearer <token>"
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Invalid Authorization header format")
+        access_token = authorization.split(" ", 1)[1].strip()
+        api_key = x_api_key.strip()
+        if not access_token or not api_key:
+            raise HTTPException(status_code=401, detail="Missing credentials")
+
         from kiteconnect import KiteConnect
         kite = KiteConnect(api_key=api_key)
         kite.set_access_token(access_token)

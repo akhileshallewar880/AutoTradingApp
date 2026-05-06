@@ -92,16 +92,29 @@ class AdminUserResponse(BaseModel):
 # ============================================================================
 
 def verify_admin_token(token: str) -> dict:
-    """Verify JWT admin token."""
+    """Verify JWT admin token and confirm account is still active in DB."""
     try:
         payload = jwt.decode(
             token,
             settings.ADMIN_JWT_SECRET,
             algorithms=[settings.ADMIN_JWT_ALGORITHM],
         )
-        return payload
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token: missing sub")
+
+    # Confirm account still exists and is active
+    with Session(engine) as session:
+        admin_user = session.exec(
+            select(AdminUser).where(AdminUser.username == username)
+        ).first()
+    if not admin_user or not admin_user.is_active:
+        raise HTTPException(status_code=401, detail="Admin account is inactive or deleted")
+
+    return payload
 
 
 def create_admin_token(username: str) -> str:

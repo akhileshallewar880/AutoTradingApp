@@ -493,7 +493,6 @@ class Database:
                         exit_price         DECIMAL(10,2)     NULL,
                         pnl                DECIMAL(12,2)     NULL,
                         api_key            NVARCHAR(MAX)     NULL,
-                        access_token       NVARCHAR(MAX)     NULL,
                         error_message      NVARCHAR(MAX)     NULL,
                         created_at         DATETIMEOFFSET    NOT NULL DEFAULT GETUTCDATE(),
                         closed_at          DATETIMEOFFSET    NULL,
@@ -569,11 +568,11 @@ class Database:
             INSERT INTO vantrade_swing_positions
               (user_id, analysis_id, stock_symbol, action, quantity,
                entry_price, stop_loss, target_price, fill_price, gtt_id,
-               entry_order_id, hold_duration_days, api_key, access_token)
+               entry_order_id, hold_duration_days, api_key)
             VALUES
               (:user_id, :analysis_id, :stock_symbol, :action, :quantity,
                :entry_price, :stop_loss, :target_price, :fill_price, :gtt_id,
-               :entry_order_id, :hold_duration_days, :api_key, :access_token)
+               :entry_order_id, :hold_duration_days, :api_key)
         """)
         with self._engine.connect() as conn:
             conn.execute(sql, data)
@@ -599,7 +598,7 @@ class Database:
         sql = text("""
             SELECT id, user_id, analysis_id, stock_symbol, action, quantity,
                    entry_price, fill_price, gtt_id, entry_order_id,
-                   hold_duration_days, expiry_date, api_key, access_token
+                   hold_duration_days, expiry_date, api_key
               FROM vantrade_swing_positions
              WHERE status      = 'OPEN'
                AND expiry_date <= CAST(GETDATE() AS DATE)
@@ -608,7 +607,7 @@ class Database:
             rows = conn.execute(sql).fetchall()
         keys = ["id","user_id","analysis_id","stock_symbol","action","quantity",
                 "entry_price","fill_price","gtt_id","entry_order_id",
-                "hold_duration_days","expiry_date","api_key","access_token"]
+                "hold_duration_days","expiry_date","api_key"]
         return [dict(zip(keys, r)) for r in rows]
 
     async def get_expired_swing_positions(self) -> list:
@@ -870,7 +869,7 @@ class Database:
         sql = text("""
             SELECT id, user_id, analysis_id, stock_symbol, action, quantity,
                    entry_price, stop_loss, target_price, entry_order_id,
-                   hold_duration_days, api_key, access_token
+                   hold_duration_days, api_key
               FROM vantrade_swing_positions
              WHERE status = 'AMO_PENDING'
         """)
@@ -878,7 +877,7 @@ class Database:
             rows = conn.execute(sql).fetchall()
         keys = ["id", "user_id", "analysis_id", "stock_symbol", "action", "quantity",
                 "entry_price", "stop_loss", "target_price", "entry_order_id",
-                "hold_duration_days", "api_key", "access_token"]
+                "hold_duration_days", "api_key"]
         return [dict(zip(keys, r)) for r in rows]
 
     async def get_amo_pending_positions(self) -> list:
