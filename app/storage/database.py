@@ -420,6 +420,7 @@ class Database:
         if not vt_user_id:
             logger.warning("[USAGE] increment_analysis_count: vt_user_id is empty — skipping")
             return
+        self._ensure_engine()
         if not self._ready:
             logger.warning("[USAGE] increment_analysis_count: DB not ready — skipping")
             return
@@ -436,6 +437,7 @@ class Database:
         if not vt_user_id:
             logger.warning("[USAGE] increment_execution_count: vt_user_id is empty — skipping")
             return
+        self._ensure_engine()
         if not self._ready:
             logger.warning("[USAGE] increment_execution_count: DB not ready — skipping")
             return
