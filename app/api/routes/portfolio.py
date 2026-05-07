@@ -708,6 +708,13 @@ async def suggest_gtt_levels(
             reasoning = f"ATR-based: SL = avg − 2×ATR (₹{round(atr,2)}), Target = avg + 3×ATR"
             confidence = 0.65
 
+        # SL must also be below the current LTP (Zerodha OCO requires sl < ltp < target).
+        # If the stock has fallen, clamp SL to 3% below LTP so the GTT can be created.
+        if sl >= ltp:
+            sl = round(ltp * 0.97, 2)
+            reasoning += f" (SL adjusted below current LTP ₹{round(ltp, 2)})"
+            confidence = max(0.0, confidence - 0.1)
+
         risk   = avg_price - sl
         reward = target - avg_price
         rr     = round(reward / risk, 2) if risk > 0 else 0.0
@@ -771,7 +778,7 @@ async def create_gtt(request: GttCreateRequest):
         if target <= request.avg_price:
             raise HTTPException(status_code=400, detail="Target must be above entry price")
 
-        # Resolve LTP — use provided value, else fetch, else fall back to avg_price
+        # Resolve LTP — use provided value, else fetch live, else fall back to avg_price
         ltp = request.ltp if request.ltp and request.ltp > 0 else None
         if not ltp:
             try:
@@ -783,6 +790,26 @@ async def create_gtt(request: GttCreateRequest):
                 pass
         if not ltp or ltp <= 0:
             ltp = request.avg_price
+
+        # Zerodha OCO GTT requires: trigger_values[0] < last_price < trigger_values[1]
+        if ltp <= sl:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Current price ₹{round(ltp, 2)} is at or below your stop-loss ₹{sl}. "
+                    "The stop-loss level has already been breached — "
+                    "please exit the position instead of creating a GTT."
+                ),
+            )
+        if ltp >= target:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Current price ₹{round(ltp, 2)} has already reached or passed "
+                    f"your target ₹{target}. "
+                    "Exit the position to lock in your profits."
+                ),
+            )
 
         trigger_values = sorted([sl, target])
         orders = [
