@@ -30,6 +30,9 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   String? _exitingSymbol;
   String? _suggestingSymbol;
   Timer? _ltpTimer;
+  // Track which symbols have already received a "hold ended" push notification
+  // this session so we don't spam the user on every refresh.
+  final Set<String> _notifiedHoldEnded = {};
 
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
 
@@ -95,12 +98,14 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                 (h['quantity'] as num? ?? 0) > 0 ||
                 (h['t1_quantity'] as num? ?? 0) > 0)
             .toList();
+        final parsed = list.map(Holding.fromJson).toList();
         setState(() {
-          _holdings = list.map(Holding.fromJson).toList();
+          _holdings = parsed;
           _summary = HoldingsSummary.fromJson(
               (data['summary'] as Map<String, dynamic>?) ?? {});
           _loading = false;
         });
+        _notifyHoldEndedOnce(parsed);
       } else if (resp.statusCode == 403) {
         setState(() {
           _error = '__UPGRADE_REQUIRED__';
@@ -171,6 +176,22 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
         }).toList();
       });
     } catch (_) {}
+  }
+
+  // ── Hold-ended notification ────────────────────────────────────────────────
+
+  void _notifyHoldEndedOnce(List<Holding> holdings) {
+    for (final h in holdings) {
+      if ((h.daysLeft ?? 0) < 0 && !_notifiedHoldEnded.contains(h.symbol)) {
+        _notifiedHoldEnded.add(h.symbol);
+        NotificationService.instance.showOrderUpdate(
+          stockSymbol: h.symbol,
+          message:
+              'Hold period ended for ${h.symbol}. Please review and exit your position.',
+          updateType: 'GTT_PLACED',
+        );
+      }
+    }
   }
 
   // ── Exit Actions ───────────────────────────────────────────────────────────
@@ -771,6 +792,12 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                       else
                         _buildGttNudge(h, isDemo),
 
+                      // ── Hold-ended banner ─────────────────────────────
+                      if ((h.daysLeft ?? 0) < 0) ...[
+                        SizedBox(height: Sp.sm),
+                        _buildHoldEndedBanner(h, isDemo),
+                      ],
+
                       // ── T+1 badge ──────────────────────────────────────
                       if (h.t1Quantity > 0) ...[
                         SizedBox(height: Sp.sm),
@@ -978,6 +1005,78 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     );
   }
 
+  Widget _buildHoldEndedBanner(Holding h, bool isDemo) {
+    final color = context.vt.warning;
+    final isExiting = _exitingSymbol == h.symbol;
+    return Container(
+      padding: const EdgeInsets.all(Sp.md),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(Rad.md),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.timer_off_outlined, size: 14, color: color),
+              const SizedBox(width: Sp.xs),
+              Text(
+                'Hold period ended',
+                style: AppTextStyles.label
+                    .copyWith(color: color, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          const SizedBox(height: Sp.xs),
+          Text(
+            'The planned ${h.holdDurationDays ?? ""}‑day hold for ${h.symbol} '
+            'has ended. Review your position and exit when ready.',
+            style: AppTextStyles.caption
+                .copyWith(color: context.vt.textSecondary, height: 1.4),
+          ),
+          if (!isDemo) ...[
+            const SizedBox(height: Sp.sm),
+            GestureDetector(
+              onTap: isExiting ? null : () => _exitHolding(h),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: Sp.md, vertical: Sp.sm),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(Rad.sm),
+                  border:
+                      Border.all(color: color.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    isExiting
+                        ? SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: color),
+                          )
+                        : Icon(Icons.exit_to_app_rounded,
+                            size: 12, color: color),
+                    const SizedBox(width: Sp.xs),
+                    Text(
+                      isExiting ? 'Exiting…' : 'Exit Position',
+                      style: AppTextStyles.label
+                          .copyWith(color: color, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Future<void> _suggestGtt(Holding h) async {
     setState(() => _suggestingSymbol = h.symbol);
     try {
@@ -1036,6 +1135,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
       text: (suggestion['target'] as num?)?.toStringAsFixed(2) ?? '',
     );
 
+    bool gttCreated = false;
     try {
       await showModalBottomSheet<void>(
         context: context,
@@ -1094,7 +1194,8 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                   Sp.base,
                   Sp.base + MediaQuery.of(ctx).viewInsets.bottom,
                 ),
-                child: Column(
+                child: SingleChildScrollView(
+                  child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1342,7 +1443,8 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                     setSheetState(() => isCreating = true);
                                     final ok =
                                         await _createGtt(h, ltp, sl, tgt);
-                                    if (ok && mounted) {
+                                    if (ok && ctx.mounted) {
+                                      gttCreated = true;
                                       Navigator.pop(ctx);
                                     } else if (mounted) {
                                       setSheetState(
@@ -1368,6 +1470,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                     ),
                   ],
                 ),
+                ), // SingleChildScrollView
               );
             },
           );
@@ -1377,22 +1480,29 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
       slCtrl.dispose();
       tgtCtrl.dispose();
     }
+    // Refresh holdings AFTER the sheet is fully closed and controllers disposed
+    if (gttCreated && mounted) _fetchHoldings();
   }
 
   Future<bool> _createGtt(
       Holding h, double ltp, double sl, double target) async {
+    // Capture context-dependent values before any await
+    final messenger   = ScaffoldMessenger.of(context);
+    final accentGreen = context.vt.accentGreen;
+    final danger      = context.vt.danger;
+    final auth        = context.read<AuthProvider>();
+
     try {
-      final auth = context.read<AuthProvider>();
-      final uri = Uri.parse(ApiConfig.gttCreateUrl);
+      final uri  = Uri.parse(ApiConfig.gttCreateUrl);
       final body = jsonEncode({
-        'symbol': h.symbol,
-        'exchange': h.exchange,
-        'avg_price': h.averagePrice,
-        'quantity': h.quantity,
-        'stop_loss': sl,
-        'target': target,
-        'ltp': ltp,
-        'api_key': auth.user!.apiKey,
+        'symbol':      h.symbol,
+        'exchange':    h.exchange,
+        'avg_price':   h.averagePrice,
+        'quantity':    h.quantity,
+        'stop_loss':   sl,
+        'target':      target,
+        'ltp':         ltp,
+        'api_key':     auth.user!.apiKey,
         'access_token': auth.user!.accessToken,
       });
       final resp = await http
@@ -1403,9 +1513,9 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
       if (!mounted) return false;
 
       if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final data  = jsonDecode(resp.body) as Map<String, dynamic>;
         final gttId = data['gtt_id']?.toString() ?? '';
-        ScaffoldMessenger.of(context)
+        messenger
           ..clearSnackBars()
           ..showSnackBar(SnackBar(
             content: Text(
@@ -1413,7 +1523,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               'SL: ₹${sl.toStringAsFixed(2)}, '
               'Target: ₹${target.toStringAsFixed(2)}',
             ),
-            backgroundColor: context.vt.accentGreen,
+            backgroundColor: accentGreen,
             duration: const Duration(seconds: 5),
           ));
         NotificationService.instance.showOrderUpdate(
@@ -1423,17 +1533,18 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               '${gttId.isNotEmpty ? ' (ID: $gttId)' : ''}',
           updateType: 'GTT_CREATED',
         );
-        _fetchHoldings();
+        // _fetchHoldings() intentionally NOT called here — caller does it
+        // after the sheet is fully closed to avoid disposing controllers mid-animation
         return true;
       } else {
         String msg = 'GTT creation failed';
         try {
           msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg;
         } catch (_) {}
-        ScaffoldMessenger.of(context)
+        messenger
           ..clearSnackBars()
-          ..showSnackBar(SnackBar(
-              content: Text(msg), backgroundColor: context.vt.danger));
+          ..showSnackBar(
+              SnackBar(content: Text(msg), backgroundColor: danger));
         NotificationService.instance.showOrderUpdate(
           stockSymbol: h.symbol,
           message: msg,
@@ -1442,13 +1553,10 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
         return false;
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(
-              content: Text(e.toString()),
-              backgroundColor: context.vt.danger));
-      }
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(
+            content: Text(e.toString()), backgroundColor: danger));
       return false;
     }
   }

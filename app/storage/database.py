@@ -681,13 +681,28 @@ class Database:
         except Exception as e:
             logger.error(f"[DB] mark_swing_position_error failed: {e}")
 
+    async def mark_swing_position_hold_ended(self, position_id: int):
+        """Mark a position as HOLD_ENDED — hold period elapsed, no exit order placed."""
+        self._ensure_engine()
+        if not self._ready:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, self._sync_update_swing_position_status,
+                position_id, "HOLD_ENDED", None, None
+            )
+            logger.info(f"[DB] swing position {position_id} marked HOLD_ENDED")
+        except Exception as e:
+            logger.error(f"[DB] mark_swing_position_hold_ended failed: {e}")
+
     def _sync_get_open_swing_positions_by_api_key(self, api_key: str) -> list:
         from sqlalchemy import text
         sql = text("""
             SELECT stock_symbol, action, stop_loss, target_price, gtt_id
               FROM vantrade_swing_positions
              WHERE api_key = :api_key
-               AND status  IN ('OPEN', 'AMO_PENDING')
+               AND status  IN ('OPEN', 'AMO_PENDING', 'HOLD_ENDED')
         """)
         with self._engine.connect() as conn:
             rows = conn.execute(sql, {"api_key": api_key}).fetchall()
@@ -716,7 +731,7 @@ class Database:
             SELECT stock_symbol, hold_duration_days, expiry_date, created_at
               FROM vantrade_swing_positions
              WHERE api_key = :api_key
-               AND status  IN ('OPEN', 'AMO_PENDING')
+               AND status  IN ('OPEN', 'AMO_PENDING', 'HOLD_ENDED')
         """)
         result = {}
         with self._engine.connect() as conn:

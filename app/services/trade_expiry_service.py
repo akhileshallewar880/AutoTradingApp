@@ -4,15 +4,13 @@ Swing Trade Expiry Service.
 Runs as a background asyncio task (started at app startup).
 Every weekday at 9:15 AM IST it queries vantrade_swing_positions for any
 OPEN positions whose hold period has elapsed (expiry_date <= today).
-For each expired position it:
-  1. Marks the position as EXITING in DB (prevents double-exit).
-  2. Cancels the active GTT via Zerodha.
-  3. Places a MARKET exit order (SELL for BUY positions, BUY for SELL positions).
-  4. Marks the position EXPIRED with the exit order ID.
 
-If the access_token has expired (daily Zerodha token), the exit will fail
-and the position is flagged ERROR — the user must exit manually via the
-Zerodha app. This is logged as a warning.
+For each expired position it:
+  1. Marks the position as HOLD_ENDED in DB (prevents reprocessing).
+  2. Logs a prominent warning that the user must exit manually.
+
+NO automatic exit order is placed.  The GTT remains active.
+The user is notified via in-app banner (holdings screen) and push notification.
 """
 import asyncio
 from datetime import datetime, timedelta
@@ -21,7 +19,7 @@ from app.storage.database import db
 
 
 class TradeExpiryService:
-    """Background scheduler that auto-exits expired swing positions."""
+    """Background scheduler that flags expired swing positions for manual exit."""
 
     async def run_scheduler(self):
         logger.info("[ExpiryService] Swing trade expiry scheduler started")
@@ -31,7 +29,7 @@ class TradeExpiryService:
                 # Wait 2 extra minutes so AMO fills settle before we query them
                 await asyncio.sleep(120)
                 await self._process_amo_pending_positions()
-                await self._exit_expired_positions()
+                await self._flag_expired_positions()
             except asyncio.CancelledError:
                 logger.info("[ExpiryService] Scheduler cancelled")
                 break
@@ -155,75 +153,46 @@ class TradeExpiryService:
                 f"(id={position_id}): {e}"
             )
 
-    async def _exit_expired_positions(self):
+    async def _flag_expired_positions(self):
+        """
+        Mark positions whose hold duration has elapsed as HOLD_ENDED.
+        Does NOT place any exit order — the user must exit manually via the app.
+        """
         expired = await db.get_expired_swing_positions()
         if not expired:
             logger.info("[ExpiryService] No expired swing positions today")
             return
-        logger.info(f"[ExpiryService] Auto-exiting {len(expired)} expired position(s)")
+
+        logger.warning(
+            f"[ExpiryService] {len(expired)} position(s) have reached their "
+            "hold duration. Flagging as HOLD_ENDED — NO automatic exit placed. "
+            "Users must exit via the app."
+        )
         for pos in expired:
-            await self._exit_one_position(pos)
+            await self._flag_one_position(pos)
 
-    async def _exit_one_position(self, pos: dict):
-        symbol       = pos.get("stock_symbol", "")
-        position_id  = pos.get("id")
-        action       = pos.get("action", "BUY")
-        quantity     = int(pos.get("quantity", 0) or 0)
-        api_key      = pos.get("api_key", "") or ""
-        access_token = pos.get("access_token", "") or ""
-        gtt_id       = pos.get("gtt_id")
-        hold_days    = pos.get("hold_duration_days", 0)
+    async def _flag_one_position(self, pos: dict):
+        """
+        Mark a single expired position as HOLD_ENDED.
+        The GTT remains active — if the user doesn't exit, the GTT still protects them.
+        """
+        symbol      = pos.get("stock_symbol", "")
+        position_id = pos.get("id")
+        hold_days   = pos.get("hold_duration_days", 0)
 
-        exit_action = "SELL" if action == "BUY" else "BUY"
-        logger.info(
-            f"[ExpiryService] Expiry exit: {symbol} {quantity} shares "
-            f"(held {hold_days}d) — placing {exit_action} MARKET"
+        logger.warning(
+            f"[ExpiryService] HOLD ENDED: {symbol} held {hold_days}d — "
+            "marking HOLD_ENDED, GTT kept active, NO exit order placed. "
+            "User should exit via the Holdings screen."
         )
 
-        # Guard: mark EXITING to prevent double processing on repeated scheduler runs
-        await db.mark_swing_position_exiting(position_id)
-
         try:
-            from app.services.zerodha_service import zerodha_service
-            from app.services.order_service import order_service
-
-            zerodha_service.set_credentials(api_key, access_token)
-
-            # Step 1: Cancel the GTT so it doesn't trigger after our market exit
-            if gtt_id:
-                try:
-                    zerodha_service.kite.delete_gtt(int(gtt_id))
-                    logger.info(f"[ExpiryService] GTT {gtt_id} cancelled for {symbol}")
-                except Exception as gtt_err:
-                    logger.warning(
-                        f"[ExpiryService] Could not cancel GTT {gtt_id} "
-                        f"for {symbol}: {gtt_err}"
-                    )
-
-            # Step 2: Place MARKET exit order (exit is market, entry was limit)
-            exit_order_id = await order_service.execute_trade(
-                symbol=symbol,
-                quantity=quantity,
-                price=0,
-                stop_loss=0,
-                target=0,
-                product="CNC",
-                transaction_type=exit_action,
-                order_type="MARKET",
-            )
-
-            logger.info(
-                f"[ExpiryService] {symbol} exited via expiry — "
-                f"order {exit_order_id} ({exit_action} {quantity} CNC MARKET)"
-            )
-            await db.mark_swing_position_expired(position_id, exit_order_id=str(exit_order_id))
-
+            await db.mark_swing_position_hold_ended(position_id)
         except Exception as e:
             logger.error(
-                f"[ExpiryService] Failed to exit {symbol} (id={position_id}): {e}. "
-                f"Manual exit required in Zerodha app."
+                f"[ExpiryService] Failed to flag {symbol} (id={position_id}) "
+                f"as HOLD_ENDED: {e}"
             )
-            await db.mark_swing_position_error(position_id, error=str(e))
 
 
 trade_expiry_service = TradeExpiryService()
