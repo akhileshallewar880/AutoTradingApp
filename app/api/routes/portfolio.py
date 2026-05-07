@@ -16,6 +16,7 @@ from app.services.zerodha_service import zerodha_service
 from app.core.logging import logger
 from typing import List, Optional
 import asyncio
+import json
 
 _PERMISSION_ERROR_MSG = (
     "This feature requires the Zerodha Kite Connect paid API plan. "
@@ -295,8 +296,15 @@ async def exit_holding(
         if not target:
             raise HTTPException(status_code=404, detail=f"Holding '{symbol}' not found")
 
-        qty = int(target.get("quantity", 0) or 0) + int(target.get("t1_quantity", 0) or 0)
+        # Only sell settled shares — T+1 shares bought today cannot be sold until settlement
+        qty    = int(target.get("quantity", 0) or 0)
+        t1_qty = int(target.get("t1_quantity", 0) or 0)
         if qty <= 0:
+            if t1_qty > 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{t1_qty} share(s) of '{symbol}' are pending T+1 settlement and cannot be sold today. They will be available tomorrow.",
+                )
             raise HTTPException(status_code=400, detail=f"No quantity available to exit for '{symbol}'")
 
         exch = target.get("exchange", "NSE")
@@ -328,8 +336,10 @@ async def exit_holding(
             "order_id": str(order_id),
             "symbol": symbol.upper(),
             "quantity": qty,
+            "t1_quantity": t1_qty,
             "exchange": exch,
-            "message": f"Exit order placed for {qty} shares of {symbol}",
+            "price": limit_price,
+            "message": f"Exit order placed for {qty} shares of {symbol} @ ₹{limit_price}",
         }
     except HTTPException:
         raise
@@ -363,10 +373,14 @@ async def exit_all_holdings(
         errors = []
 
         for h in (holdings or []):
-            qty = int(h.get("quantity", 0) or 0) + int(h.get("t1_quantity", 0) or 0)
+            # Only sell settled shares — skip T+1 pending settlement
+            qty    = int(h.get("quantity", 0) or 0)
+            t1_qty = int(h.get("t1_quantity", 0) or 0)
+            sym    = h.get("tradingsymbol", "")
             if qty <= 0:
+                if t1_qty > 0:
+                    errors.append({"symbol": sym, "error": f"{t1_qty} share(s) pending T+1 settlement — available tomorrow"})
                 continue
-            sym  = h.get("tradingsymbol", "")
             exch = h.get("exchange", "NSE")
             ltp  = float(h.get("last_price") or 0)
             if ltp <= 0:
@@ -384,7 +398,7 @@ async def exit_all_holdings(
                     order_type=kite.ORDER_TYPE_LIMIT,
                     price=limit_price,
                 ))
-                results.append({"symbol": sym, "quantity": qty, "order_id": str(order_id)})
+                results.append({"symbol": sym, "quantity": qty, "order_id": str(order_id), "price": limit_price})
                 logger.info(f"[ExitAll] {sym} SELL LIMIT qty={qty} price={limit_price} order_id={order_id}")
             except Exception as e:
                 errors.append({"symbol": sym, "error": str(e)})
@@ -583,3 +597,242 @@ async def get_order_history(
         _check_permission_error(e)
         logger.error(f"[OrderHistory] {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Order history fetch failed: {e}")
+
+
+# ── GET /portfolio/gtt-suggest ────────────────────────────────────────────────
+
+@router.get("/gtt-suggest")
+async def suggest_gtt_levels(
+    symbol: str = Query(...),
+    avg_price: float = Query(...),
+    quantity: int = Query(...),
+    exchange: str = Query(default="NSE"),
+    api_key: str = Query(...),
+    access_token: str = Query(...),
+):
+    """
+    AI-powered GTT stop-loss and target suggestion for a CNC holding.
+    Fetches 30-day price history, computes ATR(14), then asks GPT to suggest
+    optimal levels with reasoning.
+    """
+    try:
+        import yfinance as yf
+
+        suffix = ".NS" if exchange.upper() == "NSE" else ".BO"
+        ticker_sym = f"{symbol.upper()}{suffix}"
+        df = yf.download(ticker_sym, period="45d", interval="1d", progress=False)
+
+        if df is None or df.empty or len(df) < 10:
+            raise HTTPException(status_code=400, detail=f"Insufficient price data for {symbol}")
+
+        # Flatten MultiIndex columns (newer yfinance returns (field, ticker))
+        try:
+            import pandas as pd
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+        except Exception:
+            pass
+
+        closes = [float(v) for v in df["Close"].dropna().tolist()]
+        highs  = [float(v) for v in df["High"].dropna().tolist()]
+        lows   = [float(v) for v in df["Low"].dropna().tolist()]
+
+        if len(closes) < 5:
+            raise HTTPException(status_code=400, detail=f"Not enough data points for {symbol}")
+
+        ltp = closes[-1]
+
+        # ATR(14)
+        trs = [
+            max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+            for i in range(1, len(closes))
+        ]
+        atr_vals = trs[-14:] if len(trs) >= 14 else trs
+        atr = sum(atr_vals) / len(atr_vals)
+
+        recent_low  = min(lows[-20:])
+        recent_high = max(highs[-20:])
+
+        # ATR-based baseline: SL = avg - 2×ATR, Target = avg + 3×ATR
+        base_sl     = round(max(avg_price - 2.0 * atr, recent_low * 0.97), 2)
+        base_target = round(avg_price + 3.0 * atr, 2)
+
+        # GPT refinement
+        from openai import AsyncOpenAI
+        from app.core.config import get_settings
+        settings_obj = get_settings()
+        client = AsyncOpenAI(api_key=settings_obj.OPENAI_API_KEY)
+
+        prompt = (
+            f"You are a professional equity trader. Set a GTT stop-loss and target "
+            f"for a CNC (delivery) long position.\n\n"
+            f"Stock: {symbol} ({exchange})\n"
+            f"Avg Buy Price: ₹{avg_price}\n"
+            f"Current LTP: ₹{round(ltp, 2)}\n"
+            f"ATR(14): ₹{round(atr, 2)}\n"
+            f"20-day Low: ₹{round(recent_low, 2)}, 20-day High: ₹{round(recent_high, 2)}\n"
+            f"Quantity: {quantity} shares\n"
+            f"ATR-based baseline — SL: ₹{base_sl}, Target: ₹{base_target}\n\n"
+            f"Rules:\n"
+            f"1. stop_loss MUST be below avg_price\n"
+            f"2. target MUST be above avg_price\n"
+            f"3. Minimum R:R = 1.5\n"
+            f"4. Stop loss must be at least 1.5% below avg_price\n"
+            f"5. Stop loss must not be more than 8% below avg_price\n\n"
+            f"Respond ONLY with valid JSON:\n"
+            f'{{"stop_loss": <price>, "target": <price>, '
+            f'"reasoning": "<1-2 sentences>", "confidence": <0.0-1.0>, '
+            f'"key_level": "<brief support/resistance note>"}}'
+        )
+
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.3,
+            max_tokens=300,
+        )
+
+        raw = response.choices[0].message.content or "{}"
+        suggestion = json.loads(raw)
+
+        sl        = float(suggestion.get("stop_loss", base_sl))
+        target    = float(suggestion.get("target", base_target))
+        reasoning = str(suggestion.get("reasoning", "ATR-based suggestion"))
+        confidence = float(suggestion.get("confidence", 0.7))
+        key_level  = str(suggestion.get("key_level", ""))
+
+        # Validate: fall back to ATR-based if GPT returned bad values
+        if sl >= avg_price or target <= avg_price:
+            sl, target = base_sl, base_target
+            reasoning = f"ATR-based: SL = avg − 2×ATR (₹{round(atr,2)}), Target = avg + 3×ATR"
+            confidence = 0.65
+
+        risk   = avg_price - sl
+        reward = target - avg_price
+        rr     = round(reward / risk, 2) if risk > 0 else 0.0
+
+        logger.info(f"[GTT Suggest] {symbol} SL={round(sl,2)} Target={round(target,2)} RR={rr} conf={confidence}")
+
+        return {
+            "symbol":      symbol.upper(),
+            "exchange":    exchange.upper(),
+            "avg_price":   avg_price,
+            "ltp":         round(ltp, 2),
+            "atr":         round(atr, 2),
+            "stop_loss":   round(sl, 2),
+            "target":      round(target, 2),
+            "risk_reward": rr,
+            "max_profit":  round((target - avg_price) * quantity, 2),
+            "max_loss":    round((sl - avg_price) * quantity, 2),
+            "reasoning":   reasoning,
+            "confidence":  confidence,
+            "key_level":   key_level,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[GTT Suggest] {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"GTT suggestion failed: {e}")
+
+
+# ── POST /portfolio/gtt-create ────────────────────────────────────────────────
+
+class GttCreateRequest(BaseModel):
+    symbol: str
+    exchange: str = "NSE"
+    avg_price: float
+    quantity: int
+    stop_loss: float
+    target: float
+    ltp: Optional[float] = None
+    api_key: str
+    access_token: str
+
+
+@router.post("/gtt-create")
+async def create_gtt(request: GttCreateRequest):
+    """
+    Place a two-leg CNC GTT for a long (BUY) holding:
+      Leg 1 — SELL LIMIT at stop_loss  (lower trigger)
+      Leg 2 — SELL LIMIT at target     (upper trigger)
+    """
+    try:
+        from kiteconnect import KiteConnect
+        kite = KiteConnect(api_key=request.api_key)
+        kite.set_access_token(request.access_token)
+
+        sl     = round(request.stop_loss, 2)
+        target = round(request.target, 2)
+        qty    = request.quantity
+
+        if sl >= request.avg_price:
+            raise HTTPException(status_code=400, detail="Stop loss must be below entry price")
+        if target <= request.avg_price:
+            raise HTTPException(status_code=400, detail="Target must be above entry price")
+
+        # Resolve LTP — use provided value, else fetch, else fall back to avg_price
+        ltp = request.ltp if request.ltp and request.ltp > 0 else None
+        if not ltp:
+            try:
+                loop = asyncio.get_event_loop()
+                instrument = f"{request.exchange.upper()}:{request.symbol.upper()}"
+                quote_raw = await loop.run_in_executor(None, lambda: kite.quote([instrument]))
+                ltp = float(quote_raw.get(instrument, {}).get("last_price", 0))
+            except Exception:
+                pass
+        if not ltp or ltp <= 0:
+            ltp = request.avg_price
+
+        trigger_values = sorted([sl, target])
+        orders = [
+            {
+                "transaction_type": kite.TRANSACTION_TYPE_SELL,
+                "quantity": qty,
+                "order_type": kite.ORDER_TYPE_LIMIT,
+                "product": kite.PRODUCT_CNC,
+                "price": sl,
+            },
+            {
+                "transaction_type": kite.TRANSACTION_TYPE_SELL,
+                "quantity": qty,
+                "order_type": kite.ORDER_TYPE_LIMIT,
+                "product": kite.PRODUCT_CNC,
+                "price": target,
+            },
+        ]
+
+        loop = asyncio.get_event_loop()
+        raw_result = await loop.run_in_executor(
+            None,
+            lambda: kite.place_gtt(
+                trigger_type=kite.GTT_TYPE_TWO_LEG,
+                tradingsymbol=request.symbol.upper(),
+                exchange=request.exchange.upper(),
+                trigger_values=trigger_values,
+                last_price=ltp,
+                orders=orders,
+            ),
+        )
+
+        gtt_id = raw_result.get("trigger_id", raw_result) if isinstance(raw_result, dict) else raw_result
+
+        logger.info(f"[GTT Create] {request.symbol} SL={sl} Target={target} qty={qty} gtt_id={gtt_id}")
+
+        return {
+            "success":    True,
+            "gtt_id":     str(gtt_id),
+            "symbol":     request.symbol.upper(),
+            "stop_loss":  sl,
+            "target":     target,
+            "quantity":   qty,
+            "max_profit": round((target - request.avg_price) * qty, 2),
+            "max_loss":   round((sl - request.avg_price) * qty, 2),
+            "message":    f"GTT created for {request.symbol} — SL: ₹{sl}, Target: ₹{target}",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        _check_permission_error(e)
+        logger.error(f"[GTT Create] {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"GTT creation failed: {e}")

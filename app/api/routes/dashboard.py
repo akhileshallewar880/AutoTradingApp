@@ -15,64 +15,55 @@ def _safe_float(val, default=0.0) -> float:
         return default
 
 
-def _calc_month_pnl(trades: List[Dict]) -> Dict:
+async def _calc_month_stats(
+    api_key: str,
+    positions_data: Any,
+) -> Dict:
     """
-    Sum realised P&L for trades in the current calendar month.
-    Zerodha tradebook entries have: tradingsymbol, transaction_type,
-    quantity, price, fill_timestamp / trade_date.
-    We compute realised P&L as: SELL proceeds - BUY cost (per symbol, FIFO).
-    Simpler approach: sum (sell_value - buy_value) per trade pair.
+    Build current-month performance stats by combining:
+    1. Today's intraday P&L already available in live Zerodha positions (day bucket)
+    2. This month's closed swing positions stored in the DB
+
+    kite.trades() only returns today's fills, so using it for monthly P&L always
+    returns 0 on non-trading days.  Positions + DB gives the correct full-month view.
     """
-    now = datetime.now()
-    month_trades = []
-    for t in trades:
-        ts = t.get("fill_timestamp") or t.get("trade_date") or ""
-        try:
-            if isinstance(ts, str):
-                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            else:
-                dt = ts  # already datetime
-            if dt.month == now.month and dt.year == now.year:
-                month_trades.append(t)
-        except Exception:
-            pass
-
-    # Group by symbol and compute realised P&L
-    buys: Dict[str, List] = {}
-    sells: Dict[str, List] = {}
-    for t in month_trades:
-        sym = t.get("tradingsymbol", "")
-        qty = _safe_float(t.get("quantity", 0))
-        price = _safe_float(t.get("price", 0) or t.get("average_price", 0))
-        if t.get("transaction_type", "").upper() == "BUY":
-            buys.setdefault(sym, []).append((qty, price))
-        else:
-            sells.setdefault(sym, []).append((qty, price))
-
-    total_pnl = 0.0
+    # ── Today's intraday contribution (from already-fetched positions) ─────────
+    month_pnl: float = 0.0
     wins = 0
     losses = 0
-    for sym, sell_list in sells.items():
-        buy_list = buys.get(sym, [])
-        if not buy_list:
-            continue
-        avg_buy = sum(q * p for q, p in buy_list) / sum(q for q, _ in buy_list)
-        for qty, sell_price in sell_list:
-            pnl = (sell_price - avg_buy) * qty
-            total_pnl += pnl
-            if pnl >= 0:
+
+    if isinstance(positions_data, dict):
+        for pos in positions_data.get("day", []):
+            pnl = _safe_float(pos.get("pnl"))
+            month_pnl += pnl
+            if pnl > 0:
                 wins += 1
-            else:
+            elif pnl < 0:
                 losses += 1
 
+    # ── This month's closed swing positions from DB ────────────────────────────
+    try:
+        from app.storage.database import db
+        from app.api.routes.performance import _compute_perf_from_positions
+        now_dt = datetime.now()
+        swing_positions = await db.get_closed_swing_positions_for_month(
+            api_key, now_dt.year, now_dt.month
+        )
+        swing = _compute_perf_from_positions(swing_positions, "")
+        month_pnl = round(month_pnl + swing["realized_pnl"], 2)
+        wins   += swing["winning_positions"]
+        losses += swing["losing_positions"]
+    except Exception as e:
+        logger.warning(f"[Dashboard] swing month fetch skipped: {e}")
+
     total_closed = wins + losses
-    win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
+    win_rate = round((wins / total_closed) * 100, 1) if total_closed > 0 else 0.0
     return {
-        "month_pnl": round(total_pnl, 2),
-        "month_trades": total_closed,
-        "month_wins": wins,
-        "month_losses": losses,
-        "month_win_rate": round(win_rate, 1),
+        "month_pnl":      round(month_pnl, 2),
+        "month_trades":   total_closed,
+        "month_wins":     wins,
+        "month_losses":   losses,
+        "month_win_rate": win_rate,
     }
 
 
@@ -116,25 +107,20 @@ async def get_dashboard_summary(
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, kite.orders)
 
-        async def get_trades():
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, kite.trades)
-
         async def get_gtts():
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, kite.get_gtts)
 
-        margins_data, positions_data, orders_data, trades_data, gtts_data = await asyncio.gather(
+        margins_data, positions_data, orders_data, gtts_data = await asyncio.gather(
             get_margins(),
             get_positions(),
             get_orders(),
-            get_trades(),
             get_gtts(),
             return_exceptions=True,
         )
 
         # ── Check for token/auth errors ───────────────────────────────────
-        for result in [margins_data, positions_data, orders_data, trades_data, gtts_data]:
+        for result in [margins_data, positions_data, orders_data, gtts_data]:
             if isinstance(result, Exception):
                 err_str = str(result).lower()
                 if any(kw in err_str for kw in ("token", "forbidden", "invalid api_key", "access_token", "403", "unauthorized")):
@@ -214,9 +200,7 @@ async def get_dashboard_summary(
             formatted_orders.sort(key=lambda x: x["placed_at"], reverse=True)
 
         # ── Month P&L ────────────────────────────────────────────────────
-        month_stats = {"month_pnl": 0.0, "month_trades": 0, "month_win_rate": 0.0}
-        if isinstance(trades_data, list):
-            month_stats = _calc_month_pnl(trades_data)
+        month_stats = await _calc_month_stats(api_key, positions_data)
 
         # ── GTTs ─────────────────────────────────────────────────────────
         formatted_gtts = []

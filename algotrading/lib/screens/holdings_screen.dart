@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart' show AuthProvider, kDemoAccessToken;
 import '../models/holdings_model.dart';
+import '../services/notification_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
@@ -27,6 +28,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   bool _loading = true;
   String? _error;
   String? _exitingSymbol;
+  String? _suggestingSymbol;
   Timer? _ltpTimer;
 
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
@@ -174,13 +176,44 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   // ── Exit Actions ───────────────────────────────────────────────────────────
 
   Future<void> _exitHolding(Holding h) async {
+    // Only settled shares can be sold; T+1 shares need one more day to settle
+    final sellableQty = h.quantity;
+    if (sellableQty <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+          h.t1Quantity > 0
+              ? '${h.symbol}: ${h.t1Quantity} share(s) are pending T+1 settlement and can be sold tomorrow.'
+              : '${h.symbol}: No shares available to sell.',
+        ),
+        backgroundColor: context.vt.warning,
+        duration: const Duration(seconds: 5),
+      ));
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Exit Holding'),
-        content: Text(
-          'Sell all ${h.quantity} shares of ${h.symbol} at current price (limit order).\n\n'
-          'The order will fill immediately for liquid stocks. This cannot be undone.',
+        title: const Text('Exit Holding'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Place a SELL LIMIT order for $sellableQty share(s) of ${h.symbol} '
+              'at the current market price.',
+            ),
+            if (h.t1Quantity > 0) ...[
+              const SizedBox(height: 12),
+              Text(
+                '⚠️ ${h.t1Quantity} T+1 share(s) bought today are pending settlement '
+                'and will NOT be included — they can be sold tomorrow.',
+                style: TextStyle(fontSize: 13, color: Colors.orange),
+              ),
+            ],
+            const SizedBox(height: 12),
+            const Text('This cannot be undone.'),
+          ],
         ),
         actions: [
           TextButton(
@@ -203,32 +236,78 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
 
     try {
       final auth = context.read<AuthProvider>();
-      final uri =
-          Uri.parse(ApiConfig.exitHoldingUrl(h.symbol)).replace(queryParameters: {
+      final uri = Uri.parse(ApiConfig.exitHoldingUrl(h.symbol))
+          .replace(queryParameters: {
         'api_key': auth.user!.apiKey,
         'access_token': auth.user!.accessToken,
       });
-      final resp = await http.post(uri).timeout(Duration(seconds: 20));
+      final resp = await http.post(uri).timeout(const Duration(seconds: 20));
 
       if (!mounted) return;
       if (resp.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('${h.symbol} exit order placed successfully'),
+        final body = jsonDecode(resp.body) as Map<String, dynamic>;
+        final orderId = body['order_id']?.toString() ?? '';
+        final qty     = (body['quantity'] as num?)?.toInt() ?? sellableQty;
+        final t1qty   = (body['t1_quantity'] as num?)?.toInt() ?? 0;
+
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.clearSnackBars();
+        messenger.showSnackBar(SnackBar(
+          content: Text('${h.symbol}: SELL order for $qty share(s) placed'
+              '${orderId.isNotEmpty ? ' · ID $orderId' : ''}'),
           backgroundColor: context.vt.accentGreen,
+          duration: const Duration(seconds: 5),
         ));
+
+        // Push notification so the user sees it even if they navigate away
+        NotificationService.instance.showOrderUpdate(
+          stockSymbol: h.symbol,
+          message: 'SELL order placed for $qty share(s)'
+              '${orderId.isNotEmpty ? ' (Order ID: $orderId)' : ''}',
+          updateType: 'ORDER_PLACED',
+        );
+
+        if (t1qty > 0 && mounted) {
+          Future.delayed(const Duration(seconds: 4), () {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                '${h.symbol}: $t1qty T+1 share(s) will be available to sell tomorrow.',
+              ),
+              backgroundColor: context.vt.warning,
+              duration: const Duration(seconds: 5),
+            ));
+          });
+        }
+
         _fetchHoldings();
       } else {
         String msg = 'Exit failed';
         try {
           msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg;
         } catch (_) {}
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(msg), backgroundColor: context.vt.danger));
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+              SnackBar(content: Text(msg), backgroundColor: context.vt.danger));
+        NotificationService.instance.showOrderUpdate(
+          stockSymbol: h.symbol,
+          message: msg,
+          updateType: 'FAILED',
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.toString()), backgroundColor: context.vt.danger));
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(
+              content: Text(e.toString()),
+              backgroundColor: context.vt.danger));
+        NotificationService.instance.showOrderUpdate(
+          stockSymbol: h.symbol,
+          message: 'Exit order failed: ${e.toString()}',
+          updateType: 'FAILED',
+        );
       }
     } finally {
       if (mounted) setState(() => _exitingSymbol = null);
@@ -690,7 +769,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                           h.maxLoss != null)
                         _buildExpectedPnl(h)
                       else
-                        _buildNoGttHint(),
+                        _buildGttNudge(h, isDemo),
 
                       // ── T+1 badge ──────────────────────────────────────
                       if (h.t1Quantity > 0) ...[
@@ -834,19 +913,544 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     );
   }
 
-  Widget _buildNoGttHint() {
-    return Row(
-      children: [
-        Icon(Icons.info_outline_rounded,
-            size: 12, color: context.vt.textTertiary),
-        SizedBox(width: Sp.xs),
-        Text(
-          'No active GTT — Expected P&L unavailable',
-          style: AppTextStyles.caption
-              .copyWith(color: context.vt.textTertiary, fontSize: 11),
-        ),
-      ],
+  // ── GTT Nudge + AI Suggest ─────────────────────────────────────────────────
+
+  static const _purple = Color(0xFF9B59B6);
+
+  Widget _buildGttNudge(Holding h, bool isDemo) {
+    final isSuggesting = _suggestingSymbol == h.symbol;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: Sp.md, vertical: Sp.sm),
+      decoration: BoxDecoration(
+        color: _purple.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(Rad.md),
+        border: Border.all(color: _purple.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.auto_awesome_rounded, size: 13, color: _purple),
+          const SizedBox(width: Sp.xs),
+          Expanded(
+            child: Text(
+              'No GTT — set SL & target with AI',
+              style: AppTextStyles.caption
+                  .copyWith(color: _purple, fontSize: 11),
+            ),
+          ),
+          if (!isDemo) ...[
+            const SizedBox(width: Sp.xs),
+            isSuggesting
+                ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: _purple),
+                  )
+                : GestureDetector(
+                    onTap: () => _suggestGtt(h),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: Sp.sm, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _purple.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(Rad.sm),
+                        border: Border.all(
+                            color: _purple.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.psychology_alt_rounded,
+                              size: 10, color: _purple),
+                          const SizedBox(width: 3),
+                          Text(
+                            'AI Suggest',
+                            style: AppTextStyles.label
+                                .copyWith(color: _purple, fontSize: 10),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+          ],
+        ],
+      ),
     );
+  }
+
+  Future<void> _suggestGtt(Holding h) async {
+    setState(() => _suggestingSymbol = h.symbol);
+    try {
+      final auth = context.read<AuthProvider>();
+      final uri = Uri.parse(ApiConfig.gttSuggestUrl).replace(
+        queryParameters: {
+          'symbol': h.symbol,
+          'avg_price': h.averagePrice.toString(),
+          'quantity': h.quantity.toString(),
+          'exchange': h.exchange,
+          'api_key': auth.user!.apiKey,
+          'access_token': auth.user!.accessToken,
+        },
+      );
+      final resp = await http.get(uri).timeout(const Duration(seconds: 35));
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        final suggestion = jsonDecode(resp.body) as Map<String, dynamic>;
+        await _showGttConfirmSheet(h, suggestion);
+      } else {
+        String msg = 'Failed to get AI suggestion';
+        try {
+          msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg;
+        } catch (_) {}
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+              SnackBar(content: Text(msg), backgroundColor: context.vt.danger));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(
+              content: Text('AI suggestion failed: $e'),
+              backgroundColor: context.vt.danger));
+      }
+    } finally {
+      if (mounted) setState(() => _suggestingSymbol = null);
+    }
+  }
+
+  Future<void> _showGttConfirmSheet(
+      Holding h, Map<String, dynamic> suggestion) async {
+    final avgPrice  = h.averagePrice;
+    final ltp       = (suggestion['ltp'] as num?)?.toDouble() ?? h.lastPrice;
+    final qty       = h.quantity;
+    final reasoning = suggestion['reasoning'] as String? ?? '';
+    final confidence = (suggestion['confidence'] as num?)?.toDouble() ?? 0.7;
+    final atr       = (suggestion['atr'] as num?)?.toDouble() ?? 0.0;
+
+    final slCtrl = TextEditingController(
+      text: (suggestion['stop_loss'] as num?)?.toStringAsFixed(2) ?? '',
+    );
+    final tgtCtrl = TextEditingController(
+      text: (suggestion['target'] as num?)?.toStringAsFixed(2) ?? '',
+    );
+
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) {
+          // Declared in the outer builder so it persists across StatefulBuilder rebuilds
+          bool isCreating = false;
+
+          return StatefulBuilder(
+            builder: (ctx, setSheetState) {
+              final sl  = double.tryParse(slCtrl.text)  ?? 0.0;
+              final tgt = double.tryParse(tgtCtrl.text) ?? 0.0;
+
+              final slValid   = sl > 0 && sl < avgPrice;
+              final tgtValid  = tgt > avgPrice;
+              final maxProfit = (tgt - avgPrice) * qty;
+              final maxLoss   = (sl - avgPrice) * qty;
+              final risk      = avgPrice - sl;
+              final reward    = tgt - avgPrice;
+              final rr        = risk > 0 ? reward / risk : 0.0;
+
+              InputDecoration fieldDecor(Color accent, String? error) =>
+                  InputDecoration(
+                    prefixText: '₹',
+                    isDense: true,
+                    errorText: error,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: Sp.md, vertical: Sp.sm),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(Rad.md),
+                      borderSide:
+                          BorderSide(color: accent.withValues(alpha: 0.3)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(Rad.md),
+                      borderSide:
+                          BorderSide(color: accent.withValues(alpha: 0.3)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(Rad.md),
+                      borderSide: BorderSide(color: accent),
+                    ),
+                  );
+
+              return Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(ctx).scaffoldBackgroundColor,
+                  borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(20)),
+                ),
+                padding: EdgeInsets.fromLTRB(
+                  Sp.base,
+                  Sp.md,
+                  Sp.base,
+                  Sp.base + MediaQuery.of(ctx).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Handle
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: context.vt.divider,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: Sp.md),
+
+                    // Title
+                    Row(
+                      children: [
+                        const Icon(Icons.auto_awesome_rounded,
+                            color: _purple, size: 20),
+                        const SizedBox(width: Sp.sm),
+                        Text('AI GTT Suggestion',
+                            style: AppTextStyles.h3),
+                      ],
+                    ),
+                    const SizedBox(height: Sp.xs),
+                    Text(
+                      '${h.symbol} · ${h.exchange} · $qty shares · '
+                      'Avg ₹${avgPrice.toStringAsFixed(2)} · '
+                      'LTP ₹${ltp.toStringAsFixed(2)}',
+                      style: AppTextStyles.caption,
+                    ),
+                    const SizedBox(height: Sp.md),
+
+                    // Reasoning box
+                    if (reasoning.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.all(Sp.md),
+                        decoration: BoxDecoration(
+                          color: _purple.withValues(alpha: 0.07),
+                          borderRadius: BorderRadius.circular(Rad.md),
+                          border: Border.all(
+                              color: _purple.withValues(alpha: 0.2)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(reasoning,
+                                style: AppTextStyles.caption
+                                    .copyWith(height: 1.5)),
+                            const SizedBox(height: Sp.xs),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: Sp.sm, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: context.vt.accentGreen
+                                        .withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(
+                                        Rad.pill),
+                                  ),
+                                  child: Text(
+                                    'Confidence ${(confidence * 100).toStringAsFixed(0)}%',
+                                    style: AppTextStyles.caption.copyWith(
+                                      color: context.vt.accentGreen,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                if (atr > 0) ...[
+                                  const SizedBox(width: Sp.sm),
+                                  Text(
+                                    'ATR ₹${atr.toStringAsFixed(2)}',
+                                    style: AppTextStyles.caption
+                                        .copyWith(fontSize: 10),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: Sp.md),
+                    ],
+
+                    // SL + Target fields
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Stop Loss',
+                                  style: AppTextStyles.caption.copyWith(
+                                      color: context.vt.danger)),
+                              const SizedBox(height: Sp.xs),
+                              TextField(
+                                controller: slCtrl,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                style: AppTextStyles.mono
+                                    .copyWith(fontSize: 14),
+                                onChanged: (_) => setSheetState(() {}),
+                                decoration: fieldDecor(
+                                  context.vt.danger,
+                                  sl > 0 && sl >= avgPrice
+                                      ? 'Below ₹${avgPrice.toStringAsFixed(0)}'
+                                      : null,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: Sp.md),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Target',
+                                  style: AppTextStyles.caption.copyWith(
+                                      color: context.vt.accentGreen)),
+                              const SizedBox(height: Sp.xs),
+                              TextField(
+                                controller: tgtCtrl,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                style: AppTextStyles.mono
+                                    .copyWith(fontSize: 14),
+                                onChanged: (_) => setSheetState(() {}),
+                                decoration: fieldDecor(
+                                  context.vt.accentGreen,
+                                  tgt > 0 && tgt <= avgPrice
+                                      ? 'Above ₹${avgPrice.toStringAsFixed(0)}'
+                                      : null,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: Sp.md),
+
+                    // Live P&L preview
+                    if (slValid && tgtValid) ...[
+                      Container(
+                        padding: const EdgeInsets.all(Sp.md),
+                        decoration: BoxDecoration(
+                          color: context.vt.surface2,
+                          borderRadius: BorderRadius.circular(Rad.md),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Max Profit',
+                                      style: AppTextStyles.caption.copyWith(
+                                          color: context.vt.accentGreen,
+                                          fontSize: 10)),
+                                  Text(
+                                    '+₹${maxProfit.toStringAsFixed(0)}',
+                                    style: AppTextStyles.monoSm.copyWith(
+                                        color: context.vt.accentGreen,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Max Loss',
+                                      style: AppTextStyles.caption.copyWith(
+                                          color: context.vt.danger,
+                                          fontSize: 10)),
+                                  Text(
+                                    '₹${maxLoss.toStringAsFixed(0)}',
+                                    style: AppTextStyles.monoSm.copyWith(
+                                        color: context.vt.danger,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text('R:R',
+                                    style: AppTextStyles.caption
+                                        .copyWith(fontSize: 10)),
+                                Text(
+                                  '1:${rr.toStringAsFixed(1)}',
+                                  style: AppTextStyles.monoSm.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: rr >= 1.5
+                                          ? context.vt.accentGreen
+                                          : context.vt.warning),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: Sp.md),
+                    ],
+
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: isCreating
+                                ? null
+                                : () => Navigator.pop(ctx),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: Sp.sm),
+                        Expanded(
+                          flex: 2,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: (slValid && tgtValid && !isCreating)
+                                  ? _purple
+                                  : context.vt.divider,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: Sp.md),
+                              shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(Rad.md),
+                              ),
+                            ),
+                            onPressed: (slValid && tgtValid && !isCreating)
+                                ? () async {
+                                    setSheetState(() => isCreating = true);
+                                    final ok =
+                                        await _createGtt(h, ltp, sl, tgt);
+                                    if (ok && mounted) {
+                                      Navigator.pop(ctx);
+                                    } else if (mounted) {
+                                      setSheetState(
+                                          () => isCreating = false);
+                                    }
+                                  }
+                                : null,
+                            icon: isCreating
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white),
+                                  )
+                                : const Icon(Icons.shield_rounded,
+                                    size: 16),
+                            label: Text(
+                                isCreating ? 'Setting GTT…' : 'Set GTT'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      slCtrl.dispose();
+      tgtCtrl.dispose();
+    }
+  }
+
+  Future<bool> _createGtt(
+      Holding h, double ltp, double sl, double target) async {
+    try {
+      final auth = context.read<AuthProvider>();
+      final uri = Uri.parse(ApiConfig.gttCreateUrl);
+      final body = jsonEncode({
+        'symbol': h.symbol,
+        'exchange': h.exchange,
+        'avg_price': h.averagePrice,
+        'quantity': h.quantity,
+        'stop_loss': sl,
+        'target': target,
+        'ltp': ltp,
+        'api_key': auth.user!.apiKey,
+        'access_token': auth.user!.accessToken,
+      });
+      final resp = await http
+          .post(uri,
+              headers: {'Content-Type': 'application/json'}, body: body)
+          .timeout(const Duration(seconds: 20));
+
+      if (!mounted) return false;
+
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final gttId = data['gtt_id']?.toString() ?? '';
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(
+            content: Text(
+              'GTT set for ${h.symbol} — '
+              'SL: ₹${sl.toStringAsFixed(2)}, '
+              'Target: ₹${target.toStringAsFixed(2)}',
+            ),
+            backgroundColor: context.vt.accentGreen,
+            duration: const Duration(seconds: 5),
+          ));
+        NotificationService.instance.showOrderUpdate(
+          stockSymbol: h.symbol,
+          message: 'GTT created — SL: ₹${sl.toStringAsFixed(2)}, '
+              'Target: ₹${target.toStringAsFixed(2)}'
+              '${gttId.isNotEmpty ? ' (ID: $gttId)' : ''}',
+          updateType: 'GTT_CREATED',
+        );
+        _fetchHoldings();
+        return true;
+      } else {
+        String msg = 'GTT creation failed';
+        try {
+          msg = (jsonDecode(resp.body) as Map)['detail'] ?? msg;
+        } catch (_) {}
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(
+              content: Text(msg), backgroundColor: context.vt.danger));
+        NotificationService.instance.showOrderUpdate(
+          stockSymbol: h.symbol,
+          message: msg,
+          updateType: 'GTT_FAILED',
+        );
+        return false;
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(
+              content: Text(e.toString()),
+              backgroundColor: context.vt.danger));
+      }
+      return false;
+    }
   }
 
   Widget _metric(String label, String value) {

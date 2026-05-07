@@ -58,6 +58,8 @@ class ApiConfig {
   static String modifyOrderUrl(String id) => '$baseUrl/portfolio/orders/$id';
   static String cancelOrderUrl(String id) => '$baseUrl/portfolio/orders/$id';
   static String orderHistoryUrl(String id) => '$baseUrl/portfolio/orders/$id/history';
+  static const String gttSuggestUrl = '$baseUrl/portfolio/gtt-suggest';
+  static const String gttCreateUrl = '$baseUrl/portfolio/gtt-create';
 
   // Live ticker (KiteTicker SSE)
   static const String tickerStreamUrl = '$baseUrl/ticker/stream';
