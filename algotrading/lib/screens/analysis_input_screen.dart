@@ -12,6 +12,7 @@ import '../widgets/animated_loading_overlay.dart';
 import '../widgets/section_header.dart';
 import '../widgets/vt_button.dart';
 import '../widgets/vt_card.dart';
+import '../widgets/vt_tour.dart';
 import 'analysis_results_screen.dart';
 
 // ── NSE stock catalogue used by the search feature ───────────────────────────
@@ -169,6 +170,13 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
 
   static const int _maxSymbols = 10;
 
+  // Tour keys
+  final _tourSearchKey   = GlobalKey();
+  final _tourHoldKey     = GlobalKey();
+  final _tourCapitalKey  = GlobalKey();
+  final _tourParamsKey   = GlobalKey();
+  final _tourGenerateKey = GlobalKey();
+
   static const _holdOptions = [
     (label: 'Intraday', days: 0),
     (label: '1D', days: 1),
@@ -189,7 +197,45 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           context.read<DashboardProvider>().dashboard?.availableBalance ?? 0;
       setState(() => _availableBalance = balance);
       _capitalController.text = balance > 0 ? balance.floor().toString() : '';
+      _startTour();
     });
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'analysis_input',
+      steps: [
+        VtTourStep(
+          targetKey: _tourSearchKey,
+          title: 'Pick Your Stocks',
+          body: 'Search for NSE symbols like "RELIANCE" or "HDFC Bank". You can select up to 10 stocks. Leave this empty to let the AI auto-pick the best opportunities from 140+ stocks.',
+        ),
+        VtTourStep(
+          targetKey: _tourHoldKey,
+          title: 'Choose How Long to Hold',
+          body: 'Intraday: All positions are auto-closed today before 3:15 PM.\n1D–1M: Swing trades held overnight — AI uses daily candle data and sets GTT orders for protection.',
+        ),
+        VtTourStep(
+          targetKey: _tourCapitalKey,
+          title: 'How Much to Invest',
+          body: 'Enter the amount you want to deploy. Tap 25%, 50%, 75%, or MAX to quickly fill a fraction of your available Zerodha balance. AI splits this across the selected stocks.',
+        ),
+        VtTourStep(
+          targetKey: _tourParamsKey,
+          title: 'Fine-Tune the Analysis',
+          body: 'Number of Stocks: how many AI picks to generate (1–20).\nAnalysis Date: analyse market data for a specific date — useful for backtesting ideas.',
+        ),
+        VtTourStep(
+          targetKey: _tourGenerateKey,
+          title: 'Launch the AI Analysis',
+          body: 'Tap here to send your request to GPT-4o. It will scan the market, apply technical indicators (VWAP, RSI, MACD, Bollinger Bands), and return trade setups in seconds.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 10,
+        ),
+      ],
+    );
   }
 
   @override
@@ -277,11 +323,15 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             // ── Stock Search ──────────────────────────────
-                            _buildStockSearchCard(),
+                            KeyedSubtree(
+                              key: _tourSearchKey,
+                              child: _buildStockSearchCard(),
+                            ),
                             const SizedBox(height: Sp.base),
 
                             // ── Hold Duration ─────────────────────────────
                             VtCard(
+                              key: _tourHoldKey,
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -307,11 +357,15 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                             const SizedBox(height: Sp.base),
 
                             // ── Capital ───────────────────────────────────
-                            _buildCapitalCard(),
+                            KeyedSubtree(
+                              key: _tourCapitalKey,
+                              child: _buildCapitalCard(),
+                            ),
                             const SizedBox(height: Sp.base),
 
                             // ── Parameters ────────────────────────────────
                             VtCard(
+                              key: _tourParamsKey,
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -374,6 +428,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                             top: BorderSide(color: context.vt.divider)),
                       ),
                       child: VtButton(
+                        key: _tourGenerateKey,
                         label: _selectedSymbols.isNotEmpty
                             ? 'Analyse ${_selectedSymbols.length} Stock${_selectedSymbols.length == 1 ? '' : 's'}'
                             : 'Generate AI Analysis',

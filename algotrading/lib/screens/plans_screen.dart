@@ -5,6 +5,7 @@ import '../providers/subscription_provider.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../theme/vt_color_scheme.dart';
+import '../widgets/vt_tour.dart';
 
 class PlansScreen extends StatefulWidget {
   const PlansScreen({super.key});
@@ -14,10 +15,18 @@ class PlansScreen extends StatefulWidget {
 }
 
 class _PlansScreenState extends State<PlansScreen> {
+  // Tour keys
+  final _tourUsageKey = GlobalKey();
+  final _tourPromoKey = GlobalKey();
+  final _tourPlansKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _load();
+      _startTour();
+    });
   }
 
   void _load() {
@@ -25,6 +34,33 @@ class _PlansScreenState extends State<PlansScreen> {
     final vtId = auth.vtUserId ?? '';
     final vtToken = auth.vtAccessToken ?? '';
     context.read<SubscriptionProvider>().loadStatus(vtId, vtAccessToken: vtToken);
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'plans',
+      steps: [
+        VtTourStep(
+          targetKey: _tourUsageKey,
+          title: 'Your Current Plan & Usage',
+          body: 'See which plan you\'re on, how many AI analyses you\'ve used this month, and how many executions remain. The usage resets at the start of every month.',
+        ),
+        VtTourStep(
+          targetKey: _tourPromoKey,
+          title: 'Beta Launch — Everything is FREE!',
+          body: 'During our beta, all paid plans are activated at ₹0/month. Upgrade to Pro or Elite for free to unlock more monthly analyses and executions.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        ),
+        VtTourStep(
+          targetKey: _tourPlansKey,
+          title: 'Choose the Right Plan for You',
+          body: 'Free: 10 analyses/month.\nPro: 30 analyses + 50 executions.\nElite: Unlimited analyses & executions.\n\nAll plans are currently 100% FREE — tap any plan card to activate it instantly!',
+          padding: const EdgeInsets.symmetric(vertical: 6),
+        ),
+      ],
+    );
   }
 
   @override
@@ -51,11 +87,15 @@ class _PlansScreenState extends State<PlansScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(Sp.base),
                 children: [
-                  _UsageSummaryCard(status: sub.status),
+                  KeyedSubtree(
+                    key: _tourUsageKey,
+                    child: _UsageSummaryCard(status: sub.status),
+                  ),
                   const SizedBox(height: Sp.xl),
 
                   // ── Limited-time promo banner ───────────────────────────
                   Container(
+                    key: _tourPromoKey,
                     padding: const EdgeInsets.symmetric(
                         horizontal: Sp.base, vertical: Sp.md),
                     decoration: BoxDecoration(
@@ -94,7 +134,7 @@ class _PlansScreenState extends State<PlansScreen> {
                   ),
                   const SizedBox(height: Sp.base),
 
-                  Text('Available Plans', style: AppTextStyles.h3),
+                  Text('Available Plans', key: _tourPlansKey, style: AppTextStyles.h3),
                   const SizedBox(height: Sp.sm),
 
                   if (sub.status.allPlans.isEmpty) ...[

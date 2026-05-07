@@ -11,6 +11,7 @@ import '../widgets/status_badge.dart';
 import '../widgets/stock_card.dart';
 import '../widgets/trade_risk_disclaimer.dart';
 import '../widgets/vt_button.dart';
+import '../widgets/vt_tour.dart';
 import 'execution_tracking_screen.dart';
 
 class AnalysisResultsScreen extends StatefulWidget {
@@ -23,6 +24,52 @@ class AnalysisResultsScreen extends StatefulWidget {
 class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
   bool _allExpanded = false;
   String? _confirmError;
+
+  // Tour keys
+  final _tourSummaryKey  = GlobalKey();
+  final _tourSelectKey   = GlobalKey();
+  final _tourStockListKey = GlobalKey();
+  final _tourExecuteKey  = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startTour());
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'analysis_results',
+      steps: [
+        VtTourStep(
+          targetKey: _tourSummaryKey,
+          title: 'Your AI Trade Plan at a Glance',
+          body: 'Capital: total money needed.\nMax Gain: best-case profit if all targets hit.\nMax Risk: worst-case loss if all stop-losses trigger.\nAI Conf: average confidence across all picks.',
+        ),
+        VtTourStep(
+          targetKey: _tourSelectKey,
+          title: 'Select the Trades You Want',
+          body: 'Tick the checkbox on each stock card to include it in your trade. Tap "Select All" to pick everything, or choose only the setups you like most.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        ),
+        VtTourStep(
+          targetKey: _tourStockListKey,
+          title: 'Expand a Stock Card',
+          body: 'Tap any card to see the full details: BUY or SELL signal, Entry price, Target price, Stop-loss, Quantity, and the AI\'s reasoning behind the pick.',
+          padding: const EdgeInsets.symmetric(vertical: 4),
+        ),
+        VtTourStep(
+          targetKey: _tourExecuteKey,
+          title: 'Place Your Trades — One Tap!',
+          body: 'After selecting stocks, tap here to place real orders on Zerodha. The app also automatically sets GTT stop-loss and target orders to protect every position.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 10,
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -65,10 +112,14 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
       body: Column(
         children: [
           // ── Metrics strip ──────────────────────────────────────────────────
-          _buildMetricsStrip(analysis, analysisProvider),
+          KeyedSubtree(
+            key: _tourSummaryKey,
+            child: _buildMetricsStrip(analysis, analysisProvider),
+          ),
 
           // ── Selection controls + disclaimer ────────────────────────────────
           Padding(
+            key: _tourSelectKey,
             padding:
                 EdgeInsets.symmetric(horizontal: Sp.base, vertical: Sp.xs),
             child: Row(
@@ -127,6 +178,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
 
           // ── Stock list ──────────────────────────────────────────────────────
           Expanded(
+            key: _tourStockListKey,
             child: ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: Sp.base),
               itemCount: analysis.stocks.length,
@@ -473,6 +525,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
               // Execute
               Expanded(
                 child: VtButton(
+                  key: _tourExecuteKey,
                   label: hasSelection
                       ? 'Execute $selectedCount Trade${selectedCount == 1 ? '' : 's'}'
                       : 'Select Trades',

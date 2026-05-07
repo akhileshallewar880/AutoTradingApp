@@ -1,6 +1,7 @@
 import '../theme/vt_color_scheme.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../widgets/vt_tour.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
@@ -32,6 +33,10 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
   int _notifiedUpdateCount = 0;
   bool _completionNotified = false;
 
+  // Tour keys
+  final _tourStatusKey = GlobalKey();
+  final _tourLogKey    = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -43,6 +48,28 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
     _startPolling();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startTour());
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'execution_tracking',
+      steps: [
+        VtTourStep(
+          targetKey: _tourStatusKey,
+          title: 'Live Order Execution',
+          body: 'Your orders are being placed on Zerodha right now. This card shows the overall status — how many stocks were placed, completed, or failed. It refreshes every 3 seconds automatically.',
+        ),
+        VtTourStep(
+          targetKey: _tourLogKey,
+          title: 'Real-Time Order Log',
+          body: 'Each entry shows one order update. GREEN = order filled successfully. RED = rejected (check Zerodha for reason). PURPLE = GTT stop-loss/target set.\n\nAfter completion, open the Zerodha Kite app to verify.',
+          padding: const EdgeInsets.symmetric(vertical: 6),
+        ),
+      ],
+    );
   }
 
   @override
@@ -133,8 +160,12 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
           ? _buildInitialLoading()
           : Column(
               children: [
-                _buildStatusCard(status, isDone, isSuccess),
+                KeyedSubtree(
+                  key: _tourStatusKey,
+                  child: _buildStatusCard(status, isDone, isSuccess),
+                ),
                 Expanded(
+                  key: _tourLogKey,
                   child: status.updates.isEmpty
                       ? _buildEmptyUpdates()
                       : ListView.builder(

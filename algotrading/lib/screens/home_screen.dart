@@ -20,6 +20,7 @@ import '../widgets/price_text.dart';
 import '../widgets/skeleton_loader.dart';
 import '../widgets/status_badge.dart';
 import '../widgets/section_header.dart';
+import '../widgets/vt_tour.dart';
 import 'analysis_input_screen.dart';
 import 'backtest_screen.dart';
 import 'plans_screen.dart';
@@ -42,6 +43,14 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBindingObserver {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
+
+  // Tour keys
+  final _tourBalanceKey  = GlobalKey();
+  final _tourPerfKey     = GlobalKey();
+  final _tourInsightKey  = GlobalKey();
+  final _tourAiBtnKey    = GlobalKey();
+  final _tourBottomNavKey = GlobalKey();
+  final _tourMenuBtnKey  = GlobalKey();
 
   Map<String, dynamic> _indexPrices = {};
   Timer? _indexRefreshTimer;
@@ -72,7 +81,55 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initDashboard();
       routeObserver.subscribe(this, ModalRoute.of(context)!);
+      _startTour();
     });
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'home',
+      steps: [
+        VtTourStep(
+          targetKey: _tourBalanceKey,
+          title: 'Your Portfolio at a Glance',
+          body: 'This card shows your live Zerodha balance, today\'s profit or loss, and how many positions you have open right now.',
+        ),
+        VtTourStep(
+          targetKey: _tourPerfKey,
+          title: 'Performance Overview',
+          body: 'See Today\'s P&L, Monthly P&L, Win Rate, and total trades. Tap this card to open the full Performance screen with detailed charts.',
+          padding: const EdgeInsets.all(6),
+        ),
+        VtTourStep(
+          targetKey: _tourInsightKey,
+          title: 'Daily Market Pulse',
+          body: 'A fresh AI market insight every day to sharpen your trading mindset. Swipe left to dismiss it, or tap it to jump straight to AI Analysis.',
+          padding: const EdgeInsets.all(6),
+        ),
+        VtTourStep(
+          targetKey: _tourAiBtnKey,
+          title: 'Start AI Analysis — The Main Action!',
+          body: 'Tap the glowing green button to launch AI-powered stock analysis. GPT-4o scans the market and generates BUY/SELL setups with entry, target, and stop-loss.',
+          padding: const EdgeInsets.all(10),
+          radius: 40,
+        ),
+        VtTourStep(
+          targetKey: _tourBottomNavKey,
+          title: 'Quick Navigation',
+          body: 'Holdings: stocks you own.\nOrders: today\'s placed orders.\nGTTs: your protected stop-loss orders.\nPortfolio: full performance history.',
+          padding: const EdgeInsets.symmetric(vertical: 6),
+        ),
+        VtTourStep(
+          targetKey: _tourMenuBtnKey,
+          title: 'Side Menu',
+          body: 'Tap the ☰ icon to access Plans & Usage, Strategy Backtesting, Trade History, and toggle between Light and Dark mode.',
+          padding: const EdgeInsets.all(6),
+          radius: 8,
+        ),
+      ],
+    );
   }
 
   @override
@@ -259,9 +316,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                       if (dash.error != null && dash.dashboard == null)
                         _buildErrorCard(dash.error!).animate(delay: 80.ms).fadeIn()
                       else ...[
-                        _buildBalanceCard(dash.dashboard)
-                            .animate(delay: 80.ms).fadeIn(duration: 300.ms)
-                            .slideY(begin: 0.04, end: 0, duration: 300.ms),
+                        KeyedSubtree(
+                          key: _tourBalanceKey,
+                          child: _buildBalanceCard(dash.dashboard)
+                              .animate(delay: 80.ms).fadeIn(duration: 300.ms)
+                              .slideY(begin: 0.04, end: 0, duration: 300.ms),
+                        ),
                         const SizedBox(height: Sp.md),
 
                         // Add funds nudge
@@ -271,13 +331,19 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                       ],
 
                       // Performance overview
-                      _buildPerformanceOverviewCard(dash.dashboard)
-                          .animate(delay: 120.ms).fadeIn(duration: 300.ms)
-                          .slideY(begin: 0.04, end: 0, duration: 300.ms),
+                      KeyedSubtree(
+                        key: _tourPerfKey,
+                        child: _buildPerformanceOverviewCard(dash.dashboard)
+                            .animate(delay: 120.ms).fadeIn(duration: 300.ms)
+                            .slideY(begin: 0.04, end: 0, duration: 300.ms),
+                      ),
                       const SizedBox(height: Sp.md),
 
                       // Daily market insight
-                      _buildInsightCard(),
+                      KeyedSubtree(
+                        key: _tourInsightKey,
+                        child: _buildInsightCard(),
+                      ),
                       const SizedBox(height: Sp.md),
 
                       // Positions
@@ -327,6 +393,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
     return AppBar(
       backgroundColor: vt.surface0,
       leading: IconButton(
+        key: _tourMenuBtnKey,
         icon: Icon(Icons.menu_rounded, color: vt.textPrimary),
         onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         tooltip: 'Menu',
@@ -1401,6 +1468,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
       ),
       child: SafeArea(
         child: SizedBox(
+          key: _tourBottomNavKey,
           height: 68,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -1421,6 +1489,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: GestureDetector(
+                  key: _tourAiBtnKey,
                   onTap: () => Navigator.push(context,
                       MaterialPageRoute(builder: (_) => const AnalysisInputScreen())),
                   child: Container(

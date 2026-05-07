@@ -7,6 +7,7 @@ import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/vantrade_logo.dart';
 import '../widgets/vt_button.dart';
+import '../widgets/vt_tour.dart';
 import 'login_webview_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -21,6 +22,12 @@ class _LoginScreenState extends State<LoginScreen>
   late final AnimationController _glowCtrl;
   late final Animation<double> _glowAnim;
 
+  // Tour keys
+  final _tourLogoKey      = GlobalKey();
+  final _tourFeaturesKey  = GlobalKey();
+  final _tourConnectKey   = GlobalKey();
+  final _tourDemoKey      = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -30,6 +37,43 @@ class _LoginScreenState extends State<LoginScreen>
     )..repeat(reverse: true);
     _glowAnim = Tween<double>(begin: 0.08, end: 0.22).animate(
       CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startTour());
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'login',
+      steps: [
+        VtTourStep(
+          targetKey: _tourLogoKey,
+          title: 'Welcome to VanTrade!',
+          body: 'Your AI-powered stock trading assistant. We use GPT-4o to analyse NSE markets and generate trade setups — so you trade smarter, not harder.',
+          padding: const EdgeInsets.all(20),
+          radius: 60,
+        ),
+        VtTourStep(
+          targetKey: _tourFeaturesKey,
+          title: 'Three Superpowers in One App',
+          body: 'AI Picks: GPT-4o scans 100+ stocks and picks the best setups.\nAuto Trade: Place orders on Zerodha with one tap.\nReal-time: Live prices, P&L, and order tracking.',
+        ),
+        VtTourStep(
+          targetKey: _tourConnectKey,
+          title: 'Connect Your Zerodha Account',
+          body: 'Tap here to log in via Zerodha\'s official OAuth. Your password is NEVER shared with VanTrade — we only receive a secure access token.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 10,
+        ),
+        VtTourStep(
+          targetKey: _tourDemoKey,
+          title: 'Not Ready Yet? Try Demo Mode',
+          body: 'Explore all of VanTrade\'s features with realistic sample data — no Zerodha account needed. Perfect for getting familiar before going live.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 10,
+        ),
+      ],
     );
   }
 
@@ -60,6 +104,7 @@ class _LoginScreenState extends State<LoginScreen>
 
                       // Logo with pulsing glow ring
                       AnimatedBuilder(
+                        key: _tourLogoKey,
                         animation: _glowAnim,
                         builder: (context, child) {
                           return Stack(
@@ -102,6 +147,7 @@ class _LoginScreenState extends State<LoginScreen>
 
                       // Feature pills row
                       Row(
+                        key: _tourFeaturesKey,
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           _FeaturePill(
@@ -163,6 +209,7 @@ class _LoginScreenState extends State<LoginScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           VtButton(
+                            key: _tourConnectKey,
                             label: 'Connect Zerodha',
                             icon: const Icon(Icons.link_rounded,
                                 size: 18, color: Colors.white),
@@ -170,6 +217,7 @@ class _LoginScreenState extends State<LoginScreen>
                           ),
                           SizedBox(height: Sp.sm),
                           VtButton(
+                            key: _tourDemoKey,
                             label: 'Try Demo Mode',
                             icon: Icon(Icons.science_outlined,
                                 size: 18, color: context.vt.textSecondary),

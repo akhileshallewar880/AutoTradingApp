@@ -1,5 +1,6 @@
 import '../theme/vt_color_scheme.dart';
 import 'dart:convert';
+import '../widgets/vt_tour.dart';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -34,10 +35,16 @@ class _PerformanceScreenState extends State<PerformanceScreen>
 
   late TabController _tabController;
 
-  // Today / Monthly state
-  bool _isLoading = false;
-  String? _error;
-  Map<String, dynamic>? _data;
+  // Today state
+  bool _todayLoading = false;
+  String? _todayError;
+  Map<String, dynamic>? _todayData;
+
+  // Monthly state
+  bool _monthlyLoading = false;
+  String? _monthlyError;
+  Map<String, dynamic>? _monthlyData;
+
   bool _chargesExpanded = false;
   int _streakDays = 0;
 
@@ -49,6 +56,10 @@ class _PerformanceScreenState extends State<PerformanceScreen>
   bool _histLoading = false;
   String? _histError;
   Map<String, dynamic>? _histData;
+
+  // Tour keys
+  final _tourTabBarKey  = GlobalKey();
+  final _tourBodyKey    = GlobalKey();
 
   @override
   void initState() {
@@ -63,7 +74,30 @@ class _PerformanceScreenState extends State<PerformanceScreen>
       StreakService.instance.currentStreak().then(
         (v) { if (mounted) setState(() => _streakDays = v); },
       );
+      _startTour();
     });
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'performance',
+      steps: [
+        VtTourStep(
+          targetKey: _tourTabBarKey,
+          title: 'Switch Between Time Periods',
+          body: 'Today: today\'s P&L and trade summary.\nMonthly: pick any month to see its performance.\nAll Time: 12-month trend chart, total P&L, and all-time statistics.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        ),
+        VtTourStep(
+          targetKey: _tourBodyKey,
+          title: 'Track Your Trading Performance',
+          body: 'Each tab shows your P&L, win rate, number of trades, and commission costs. Use this data to understand which strategies are working and improve over time.',
+          padding: const EdgeInsets.all(8),
+        ),
+      ],
+    );
   }
 
   @override
@@ -74,7 +108,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
 
   void _onTabChanged(int index) {
     if (index == _kTabAllTime) {
-      if (_histData == null && !_histLoading) _fetchHistory();
+      if (!_histLoading) _fetchHistory();
     } else {
       _fetchPeriodData(index);
     }
@@ -86,7 +120,11 @@ class _PerformanceScreenState extends State<PerformanceScreen>
     final auth = context.read<AuthProvider>();
     if (auth.user == null) return;
 
-    setState(() { _isLoading = true; _error = null; });
+    if (tabIndex == _kTabToday) {
+      setState(() { _todayLoading = true; _todayError = null; });
+    } else {
+      setState(() { _monthlyLoading = true; _monthlyError = null; });
+    }
 
     try {
       final Map<String, String> params = {
@@ -108,16 +146,34 @@ class _PerformanceScreenState extends State<PerformanceScreen>
       final response = await http.get(uri).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
-        setState(() => _data = jsonDecode(response.body));
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        if (tabIndex == _kTabToday) {
+          setState(() => _todayData = decoded);
+        } else {
+          setState(() => _monthlyData = decoded);
+        }
       } else {
         final body = jsonDecode(response.body);
-        setState(() => _error = body['detail'] ?? 'Failed to load performance');
+        final msg = body['detail'] as String? ?? 'Failed to load performance';
+        if (tabIndex == _kTabToday) {
+          setState(() => _todayError = msg);
+        } else {
+          setState(() => _monthlyError = msg);
+        }
       }
     } catch (e) {
-      setState(() => _error =
-          'Network error: ${e.toString().replaceFirst('Exception: ', '')}');
+      final msg = 'Network error: ${e.toString().replaceFirst('Exception: ', '')}';
+      if (tabIndex == _kTabToday) {
+        setState(() => _todayError = msg);
+      } else {
+        setState(() => _monthlyError = msg);
+      }
     } finally {
-      setState(() => _isLoading = false);
+      if (tabIndex == _kTabToday) {
+        setState(() => _todayLoading = false);
+      } else {
+        setState(() => _monthlyLoading = false);
+      }
     }
   }
 
@@ -132,6 +188,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
         queryParameters: {
           'access_token': auth.user!.accessToken,
           'api_key':      auth.user!.apiKey,
+          'user_id':      auth.user!.userId,
           'months':       '12',
         },
       );
@@ -161,6 +218,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         title: Text('Performance', style: AppTextStyles.h2),
         bottom: TabBar(
+          key: _tourTabBarKey,
           controller: _tabController,
           labelStyle: AppTextStyles.caption
               .copyWith(fontWeight: FontWeight.w700, fontSize: 12),
@@ -178,6 +236,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
         ),
       ),
       body: TabBarView(
+        key: _tourBodyKey,
         controller: _tabController,
         children: [
           _buildPeriodTab(_kTabToday),
@@ -191,12 +250,16 @@ class _PerformanceScreenState extends State<PerformanceScreen>
   // ── Today / Monthly tab ────────────────────────────────────────────────────
 
   Widget _buildPeriodTab(int tabIndex) {
-    if (_isLoading) {
+    final isLoading = tabIndex == _kTabToday ? _todayLoading   : _monthlyLoading;
+    final error     = tabIndex == _kTabToday ? _todayError     : _monthlyError;
+    final data      = tabIndex == _kTabToday ? _todayData      : _monthlyData;
+
+    if (isLoading) {
       return Center(
           child: CircularProgressIndicator(color: context.vt.accentGreen));
     }
-    if (_error != null) return _buildError(_error!, () => _fetchPeriodData(tabIndex));
-    if (_data == null) {
+    if (error != null) return _buildError(error, () => _fetchPeriodData(tabIndex));
+    if (data == null) {
       return Center(child: Text('No data', style: AppTextStyles.bodySecondary));
     }
 
@@ -204,12 +267,12 @@ class _PerformanceScreenState extends State<PerformanceScreen>
       color: context.vt.accentGreen,
       backgroundColor: context.vt.surface1,
       onRefresh: () => _fetchPeriodData(tabIndex),
-      child: _buildPeriodContent(tabIndex),
+      child: _buildPeriodContent(tabIndex, data),
     );
   }
 
-  Widget _buildPeriodContent(int tabIndex) {
-    final d = _data!;
+  Widget _buildPeriodContent(int tabIndex, Map<String, dynamic> data) {
+    final d = data;
     final totalPnl = (d['total_pnl'] as num).toDouble();
     final netPnl   = (d['net_pnl']   as num).toDouble();
     final isProfit = netPnl >= 0;
@@ -322,7 +385,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
           SizedBox(height: Sp.base),
 
           // ── Milestones ───────────────────────────────────────────────────
-          _buildMilestonesSection(_data!),
+          _buildMilestonesSection(data),
         ],
       ),
     );
@@ -351,7 +414,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
               } else {
                 _selectedMonth--;
               }
-              _data = null;
+              _monthlyData = null;
             });
             _fetchPeriodData(_kTabMonthly);
           },
@@ -387,7 +450,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
                     } else {
                       _selectedMonth++;
                     }
-                    _data = null;
+                    _monthlyData = null;
                   });
                   _fetchPeriodData(_kTabMonthly);
                 },

@@ -7,6 +7,7 @@ import '../providers/auth_provider.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/vt_button.dart';
+import '../widgets/vt_tour.dart';
 
 class ApiSettingsScreen extends StatefulWidget {
   const ApiSettingsScreen({super.key});
@@ -25,6 +26,12 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
   bool _keyFilled = false;
   bool _secretFilled = false;
 
+  // Tour keys
+  final _tourSecurityKey = GlobalKey();
+  final _tourApiKeyKey   = GlobalKey();
+  final _tourApiSecretKey = GlobalKey();
+  final _tourSaveKey     = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -36,6 +43,43 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
     _apiSecretController.addListener(
         () => setState(() => _secretFilled = _apiSecretController.text.isNotEmpty));
     _loadSavedCredentials();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startTour());
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'api_settings',
+      steps: [
+        VtTourStep(
+          targetKey: _tourSecurityKey,
+          title: 'Your Credentials Stay Private',
+          body: 'VanTrade encrypts your API key and secret and stores them only on your device. They are never uploaded to our servers.',
+        ),
+        VtTourStep(
+          targetKey: _tourApiKeyKey,
+          title: 'Enter Your Zerodha API Key',
+          body: 'Go to kite.trade → Create App → copy the API Key. It looks like a long alphanumeric string. Tap the "Setup Guide" tab above for step-by-step instructions.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 8,
+        ),
+        VtTourStep(
+          targetKey: _tourApiSecretKey,
+          title: 'Enter Your API Secret',
+          body: 'The API Secret is shown once on the Zerodha Developer Console. Keep it confidential — it authorises trade actions on your behalf.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 8,
+        ),
+        VtTourStep(
+          targetKey: _tourSaveKey,
+          title: 'Save & Log In',
+          body: 'Once both fields are filled, tap here to save your credentials and proceed to Zerodha\'s login page. You\'re one step away from live trading!',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 10,
+        ),
+      ],
+    );
   }
 
   Future<void> _loadSavedCredentials() async {
@@ -138,6 +182,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
               children: [
                 // Security badge
                 Container(
+                  key: _tourSecurityKey,
                   padding: const EdgeInsets.symmetric(
                       horizontal: Sp.md, vertical: Sp.sm),
                   decoration: BoxDecoration(
@@ -166,6 +211,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
                 Text('API Key', style: AppTextStyles.bodyLarge),
                 SizedBox(height: Sp.sm),
                 TextField(
+                  key: _tourApiKeyKey,
                   controller: _apiKeyController,
                   style: AppTextStyles.mono.copyWith(fontSize: 14),
                   decoration: InputDecoration(
@@ -185,6 +231,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
                 Text('API Secret', style: AppTextStyles.bodyLarge),
                 SizedBox(height: Sp.sm),
                 TextField(
+                  key: _tourApiSecretKey,
                   controller: _apiSecretController,
                   obscureText: !_showPassword,
                   style: AppTextStyles.mono.copyWith(fontSize: 14),
@@ -244,6 +291,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               VtButton(
+                key: _tourSaveKey,
                 label: 'Save & Continue',
                 onPressed: bothFilled ? _validateAndSaveCredentials : null,
                 loading: _isValidating,
