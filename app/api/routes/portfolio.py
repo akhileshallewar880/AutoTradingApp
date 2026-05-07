@@ -806,7 +806,7 @@ async def create_gtt(request: GttCreateRequest):
         raw_result = await loop.run_in_executor(
             None,
             lambda: kite.place_gtt(
-                trigger_type=kite.GTT_TYPE_TWO_LEG,
+                trigger_type=kite.GTT_TYPE_OCO,
                 tradingsymbol=request.symbol.upper(),
                 exchange=request.exchange.upper(),
                 trigger_values=trigger_values,
