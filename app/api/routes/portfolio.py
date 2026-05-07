@@ -269,6 +269,42 @@ async def get_holdings(
         raise HTTPException(status_code=500, detail=f"Holdings fetch failed: {e}")
 
 
+# ── GTT cancellation helper ───────────────────────────────────────────────────
+
+async def _cancel_gtts_for_symbols(kite, symbols: set, loop) -> tuple[dict, dict]:
+    """
+    Fetch all active GTTs and delete any whose tradingsymbol is in `symbols`.
+    Returns (cancelled, errors) where each is {SYMBOL: info}.
+    Never raises — failures are reported in the errors dict.
+    """
+    cancelled: dict = {}
+    errors: dict    = {}
+    try:
+        raw_gtts = await loop.run_in_executor(None, kite.get_gtts)
+    except Exception as e:
+        logger.warning(f"[GTT Cancel] Could not fetch GTTs: {e}")
+        return cancelled, errors
+
+    upper_symbols = {s.upper() for s in symbols}
+    for g in (raw_gtts or []):
+        if str(g.get("status", "")).lower() not in ("active",):
+            continue
+        sym    = (g.get("condition") or {}).get("tradingsymbol", "").upper()
+        gtt_id = g.get("id")
+        if sym not in upper_symbols or not gtt_id:
+            continue
+        try:
+            _id = gtt_id  # capture for lambda
+            await loop.run_in_executor(None, lambda: kite.delete_gtt(_id))
+            cancelled[sym] = str(gtt_id)
+            logger.info(f"[GTT Cancel] Deleted GTT {gtt_id} for {sym}")
+        except Exception as e:
+            errors[sym] = str(e)
+            logger.warning(f"[GTT Cancel] Failed to delete GTT {gtt_id} for {sym}: {e}")
+
+    return cancelled, errors
+
+
 # ── POST /portfolio/exit/{symbol} ────────────────────────────────────────────
 
 @router.post("/exit/{symbol}")
@@ -331,15 +367,28 @@ async def exit_holding(
         ))
 
         logger.info(f"[Exit] {symbol} SELL LIMIT qty={qty} price={limit_price} order_id={order_id}")
+
+        # Cancel any active GTT for this symbol (best-effort — don't fail the exit)
+        cancelled, gtt_errors = await _cancel_gtts_for_symbols(kite, {symbol}, loop)
+        gtt_cancelled = symbol.upper() in cancelled
+
+        msg = f"Exit order placed for {qty} shares of {symbol} @ ₹{limit_price}"
+        if gtt_cancelled:
+            msg += f" | GTT cancelled (ID: {cancelled[symbol.upper()]})"
+        elif gtt_errors.get(symbol.upper()):
+            msg += f" | GTT cancellation failed: {gtt_errors[symbol.upper()]}"
+
         return {
-            "success": True,
-            "order_id": str(order_id),
-            "symbol": symbol.upper(),
-            "quantity": qty,
-            "t1_quantity": t1_qty,
-            "exchange": exch,
-            "price": limit_price,
-            "message": f"Exit order placed for {qty} shares of {symbol} @ ₹{limit_price}",
+            "success":       True,
+            "order_id":      str(order_id),
+            "symbol":        symbol.upper(),
+            "quantity":      qty,
+            "t1_quantity":   t1_qty,
+            "exchange":      exch,
+            "price":         limit_price,
+            "gtt_cancelled": gtt_cancelled,
+            "gtt_id":        cancelled.get(symbol.upper()),
+            "message":       msg,
         }
     except HTTPException:
         raise
@@ -369,8 +418,21 @@ async def exit_all_holdings(
         loop = asyncio.get_event_loop()
         holdings = await loop.run_in_executor(None, kite.holdings)
 
+        # Build symbol → [gtt_id] map from active GTTs upfront (one API call for all)
+        gtt_symbol_map: dict = {}
+        try:
+            raw_gtts = await loop.run_in_executor(None, kite.get_gtts)
+            for g in (raw_gtts or []):
+                if str(g.get("status", "")).lower() != "active":
+                    continue
+                sym = (g.get("condition") or {}).get("tradingsymbol", "").upper()
+                if sym:
+                    gtt_symbol_map.setdefault(sym, []).append(g.get("id"))
+        except Exception as e:
+            logger.warning(f"[ExitAll] GTT prefetch failed: {e} — GTTs will not be cancelled")
+
         results = []
-        errors = []
+        errors  = []
 
         for h in (holdings or []):
             # Only sell settled shares — skip T+1 pending settlement
@@ -381,35 +443,54 @@ async def exit_all_holdings(
                 if t1_qty > 0:
                     errors.append({"symbol": sym, "error": f"{t1_qty} share(s) pending T+1 settlement — available tomorrow"})
                 continue
-            exch = h.get("exchange", "NSE")
-            ltp  = float(h.get("last_price") or 0)
+            exch        = h.get("exchange", "NSE")
+            ltp         = float(h.get("last_price") or 0)
             if ltp <= 0:
                 errors.append({"symbol": sym, "error": "LTP unavailable — refresh and retry"})
                 continue
             limit_price = round(ltp, 2)
             try:
+                _sym = sym; _exch = exch; _qty = qty; _price = limit_price
                 order_id = await loop.run_in_executor(None, lambda: kite.place_order(
                     variety=kite.VARIETY_REGULAR,
-                    exchange=exch,
-                    tradingsymbol=sym,
+                    exchange=_exch,
+                    tradingsymbol=_sym,
                     transaction_type=kite.TRANSACTION_TYPE_SELL,
-                    quantity=qty,
+                    quantity=_qty,
                     product=kite.PRODUCT_CNC,
                     order_type=kite.ORDER_TYPE_LIMIT,
-                    price=limit_price,
+                    price=_price,
                 ))
-                results.append({"symbol": sym, "quantity": qty, "order_id": str(order_id), "price": limit_price})
                 logger.info(f"[ExitAll] {sym} SELL LIMIT qty={qty} price={limit_price} order_id={order_id}")
+
+                # Cancel all active GTTs for this symbol
+                gtt_cancelled_ids = []
+                for gtt_id in gtt_symbol_map.get(sym.upper(), []):
+                    try:
+                        _gid = gtt_id
+                        await loop.run_in_executor(None, lambda: kite.delete_gtt(_gid))
+                        gtt_cancelled_ids.append(str(gtt_id))
+                        logger.info(f"[ExitAll] Deleted GTT {gtt_id} for {sym}")
+                    except Exception as ge:
+                        logger.warning(f"[ExitAll] GTT delete failed for {sym} gtt={gtt_id}: {ge}")
+
+                results.append({
+                    "symbol":    sym,
+                    "quantity":  qty,
+                    "order_id":  str(order_id),
+                    "price":     limit_price,
+                    "gtt_cancelled": gtt_cancelled_ids,
+                })
             except Exception as e:
                 errors.append({"symbol": sym, "error": str(e)})
                 logger.error(f"[ExitAll] {sym}: {e}")
 
         return {
-            "success": len(results) > 0,
+            "success":       len(results) > 0,
             "orders_placed": len(results),
             "orders_failed": len(errors),
-            "results": results,
-            "errors": errors,
+            "results":       results,
+            "errors":        errors,
         }
     except Exception as e:
         _check_permission_error(e)
