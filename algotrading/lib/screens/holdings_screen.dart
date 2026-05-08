@@ -34,7 +34,8 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   // this session so we don't spam the user on every refresh.
   final Set<String> _notifiedHoldEnded = {};
 
-  final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
+  final _currency      = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2);
+  final _currencyRound = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
 
   @override
   void initState() {
@@ -1225,8 +1226,8 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                     const SizedBox(height: Sp.xs),
                     Text(
                       '${h.symbol} · ${h.exchange} · $qty shares · '
-                      'Avg ₹${avgPrice.toStringAsFixed(2)} · '
-                      'LTP ₹${ltp.toStringAsFixed(2)}',
+                      'Avg ${_currency.format(avgPrice)} · '
+                      'LTP ${_currency.format(ltp)}',
                       style: AppTextStyles.caption,
                     ),
                     const SizedBox(height: Sp.md),
@@ -1271,7 +1272,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                 if (atr > 0) ...[
                                   const SizedBox(width: Sp.sm),
                                   Text(
-                                    'ATR ₹${atr.toStringAsFixed(2)}',
+                                    'ATR ${_currency.format(atr)}',
                                     style: AppTextStyles.caption
                                         .copyWith(fontSize: 10),
                                   ),
@@ -1307,7 +1308,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                 decoration: fieldDecor(
                                   context.vt.danger,
                                   sl > 0 && sl >= avgPrice
-                                      ? 'Below ₹${avgPrice.toStringAsFixed(0)}'
+                                      ? 'Below ${_currencyRound.format(avgPrice)}'
                                       : null,
                                 ),
                               ),
@@ -1334,7 +1335,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                 decoration: fieldDecor(
                                   context.vt.accentGreen,
                                   tgt > 0 && tgt <= avgPrice
-                                      ? 'Above ₹${avgPrice.toStringAsFixed(0)}'
+                                      ? 'Above ${_currencyRound.format(avgPrice)}'
                                       : null,
                                 ),
                               ),
@@ -1364,7 +1365,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                           color: context.vt.accentGreen,
                                           fontSize: 10)),
                                   Text(
-                                    '+₹${maxProfit.toStringAsFixed(0)}',
+                                    '+${_currencyRound.format(maxProfit)}',
                                     style: AppTextStyles.monoSm.copyWith(
                                         color: context.vt.accentGreen,
                                         fontWeight: FontWeight.w700),
@@ -1381,7 +1382,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                           color: context.vt.danger,
                                           fontSize: 10)),
                                   Text(
-                                    '₹${maxLoss.toStringAsFixed(0)}',
+                                    _currencyRound.format(maxLoss),
                                     style: AppTextStyles.monoSm.copyWith(
                                         color: context.vt.danger,
                                         fontWeight: FontWeight.w700),
@@ -1520,16 +1521,16 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           ..showSnackBar(SnackBar(
             content: Text(
               'GTT set for ${h.symbol} — '
-              'SL: ₹${sl.toStringAsFixed(2)}, '
-              'Target: ₹${target.toStringAsFixed(2)}',
+              'SL: ${_currency.format(sl)}, '
+              'Target: ${_currency.format(target)}',
             ),
             backgroundColor: accentGreen,
             duration: const Duration(seconds: 5),
           ));
         NotificationService.instance.showOrderUpdate(
           stockSymbol: h.symbol,
-          message: 'GTT created — SL: ₹${sl.toStringAsFixed(2)}, '
-              'Target: ₹${target.toStringAsFixed(2)}'
+          message: 'GTT created — SL: ${_currency.format(sl)}, '
+              'Target: ${_currency.format(target)}'
               '${gttId.isNotEmpty ? ' (ID: $gttId)' : ''}',
           updateType: 'GTT_CREATED',
         );

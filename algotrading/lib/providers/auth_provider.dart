@@ -111,7 +111,6 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      // Get user's saved API credentials
       final creds = await getSavedApiCredentials();
       if (creds == null) {
         throw Exception('API credentials not found. Please set them up first.');
@@ -121,10 +120,16 @@ class AuthProvider with ChangeNotifier {
         requestToken,
         apiKey: creds['apiKey']!,
         apiSecret: creds['apiSecret']!,
+        vtUserId: _vtUserId,
       );
       _user = user;
       await SessionManager.saveSession(user);
       _error = null;
+    } on ZerodhaAccountConflictException catch (e) {
+      // Surface the conflict as a clear, actionable message — don't let it be
+      // buried in a generic "Exception: ..." string.
+      _error = e.message;
+      rethrow;
     } catch (e) {
       _error = e.toString();
       rethrow;

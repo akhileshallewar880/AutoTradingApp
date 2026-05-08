@@ -9,11 +9,13 @@ class SessionRequest(BaseModel):
     request_token: str = Field(..., description="Request token received from Kite login callback")
     api_key: str = Field(..., description="User's Zerodha API key")
     api_secret: str = Field(..., description="User's Zerodha API secret")
+    vt_user_id: Optional[str] = Field(None, description="VanTrade user UUID from phone auth — used to bind Zerodha account to one app user")
 
 class SessionResponse(BaseModel):
     access_token: str
     api_key: str = Field(..., description="User's Zerodha API key (needed for dashboard API calls)")
     user_id: str
+    zerodha_user_id: str = Field("", description="Zerodha client code (e.g. AB1234) — canonical account identifier")
     user_name: str
     email: str
     user_type: str

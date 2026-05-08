@@ -6,6 +6,14 @@ import '../models/dashboard_model.dart';
 import '../models/live_trading_model.dart';
 import '../utils/api_config.dart';
 
+/// Thrown when the Zerodha account is already bound to a different VanTrade profile.
+class ZerodhaAccountConflictException implements Exception {
+  final String message;
+  const ZerodhaAccountConflictException(this.message);
+  @override
+  String toString() => message;
+}
+
 class ApiService {
   // Authentication
   static Future<String> getLoginUrl({required String apiKey}) async {
@@ -26,20 +34,26 @@ class ApiService {
     String requestToken, {
     required String apiKey,
     required String apiSecret,
+    String? vtUserId,
   }) async {
+    final body = <String, dynamic>{
+      'request_token': requestToken,
+      'api_key': apiKey,
+      'api_secret': apiSecret,
+      if (vtUserId != null && vtUserId.isNotEmpty) 'vt_user_id': vtUserId,
+    };
     final response = await http.post(
       Uri.parse(ApiConfig.sessionUrl),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'request_token': requestToken,
-        'api_key': apiKey,
-        'api_secret': apiSecret,
-      }),
+      body: jsonEncode(body),
     ).timeout(const Duration(seconds: 20));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       return UserModel.fromJson(data);
+    } else if (response.statusCode == 409) {
+      final detail = (jsonDecode(response.body) as Map)['detail'] ?? 'Account conflict';
+      throw ZerodhaAccountConflictException(detail.toString());
     } else {
       throw Exception('Failed to create session: ${response.body}');
     }

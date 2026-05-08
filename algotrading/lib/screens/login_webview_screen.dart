@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../providers/auth_provider.dart';
+import '../services/api_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
@@ -102,6 +103,25 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
       await authProvider.createSession(requestToken);
       if (mounted) {
         Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+      }
+    } on ZerodhaAccountConflictException catch (e) {
+      if (mounted) {
+        setState(() { _isCreatingSession = false; _sessionCreated = false; });
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => AlertDialog(
+            title: const Text('Account Already Linked'),
+            content: Text(e.message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        if (mounted) Navigator.of(context).pop();
       }
     } catch (e) {
       if (mounted) {

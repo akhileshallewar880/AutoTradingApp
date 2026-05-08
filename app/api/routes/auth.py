@@ -96,6 +96,8 @@ async def create_session(request: Request, session_request: SessionRequest):
     POST that request_token (along with api_key and api_secret) here to get the access_token and user details.
 
     The access_token should be stored securely and used for all subsequent API calls.
+    If vt_user_id is provided (from phone auth), this Zerodha account is permanently bound
+    to that VanTrade profile — a second phone number cannot reuse the same Zerodha account.
     """
     try:
         session_data = await zerodha_service.generate_session_with_credentials(
@@ -103,27 +105,45 @@ async def create_session(request: Request, session_request: SessionRequest):
             session_request.api_key,
             session_request.api_secret
         )
-
-        # Derive a stable user_id from the api_key (no DB needed)
-        user_id = hashlib.sha256(session_request.api_key.encode()).hexdigest()[:16]
-
-        return SessionResponse(
-            access_token=session_data["access_token"],
-            api_key=session_request.api_key,
-            user_id=user_id,
-            user_name=session_data["user_name"],
-            email=session_data["email"],
-            user_type=session_data["user_type"],
-            broker=session_data["broker"],
-            exchanges=session_data["exchanges"],
-            products=session_data["products"]
-        )
     except Exception as e:
         logger.error(f"Session creation failed: {e}")
         raise HTTPException(
             status_code=400,
             detail=f"Failed to create session. Invalid or expired request_token. Error: {str(e)}"
         )
+
+    # Zerodha client code (e.g. "AB1234") — the canonical account identifier
+    zerodha_uid: str = session_data.get("user_id", "")
+
+    # Enforce one-to-one: bind this Zerodha account to the caller's VanTrade profile.
+    # If it's already bound to a different profile, reject immediately to prevent
+    # data fragmentation across multiple phone users sharing one Zerodha account.
+    if session_request.vt_user_id and zerodha_uid:
+        from app.storage.database import db as _db
+        try:
+            await _db.link_zerodha_to_user(zerodha_uid, session_request.vt_user_id)
+        except ValueError as conflict_err:
+            logger.warning(
+                f"[SessionCreate] Zerodha account conflict: zerodha={zerodha_uid} "
+                f"vt_user={session_request.vt_user_id} — {conflict_err}"
+            )
+            raise HTTPException(status_code=409, detail=str(conflict_err))
+
+    # Derive a stable user_id from the api_key for backwards-compatibility
+    user_id = hashlib.sha256(session_request.api_key.encode()).hexdigest()[:16]
+
+    return SessionResponse(
+        access_token=session_data["access_token"],
+        api_key=session_request.api_key,
+        user_id=user_id,
+        zerodha_user_id=zerodha_uid,
+        user_name=session_data["user_name"],
+        email=session_data["email"],
+        user_type=session_data["user_type"],
+        broker=session_data["broker"],
+        exchanges=session_data["exchanges"],
+        products=session_data["products"]
+    )
 
 @router.get("/profile")
 async def get_user_profile():

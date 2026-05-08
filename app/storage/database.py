@@ -1050,4 +1050,59 @@ class Database:
         )
 
 
+    def _sync_link_zerodha_to_user(self, zerodha_user_id: str, vt_user_id: str) -> None:
+        """
+        Enforce one-to-one: one Zerodha account ↔ one VanTrade user.
+        Raises ValueError with a 'CONFLICT:' prefix when the Zerodha account
+        is already bound to a different vt_user_id.
+        """
+        from sqlalchemy import text
+        sql_lookup = text(
+            "SELECT vt_user_id FROM vantrade_users WHERE zerodha_user_id = :z"
+        )
+        sql_link = text(
+            "UPDATE vantrade_users SET zerodha_user_id = :z, updated_at = GETUTCDATE() "
+            "WHERE vt_user_id = :v"
+        )
+        with self._engine.connect() as conn:
+            row = conn.execute(sql_lookup, {"z": zerodha_user_id}).fetchone()
+            if row is not None:
+                if row[0] != vt_user_id:
+                    raise ValueError(
+                        f"CONFLICT: Zerodha account '{zerodha_user_id}' is already linked "
+                        f"to a different VanTrade account. Each Zerodha account can only be "
+                        f"connected to one VanTrade profile. Please log in with the original "
+                        f"phone number used to register this Zerodha account."
+                    )
+                # Same user — already linked, nothing to do
+                return
+            # Not yet linked — bind zerodha_user_id to this vt_user_id
+            result = conn.execute(sql_link, {"z": zerodha_user_id, "v": vt_user_id})
+            conn.commit()
+            if result.rowcount == 0:
+                logger.warning(
+                    f"[ZerodhaLink] vt_user_id={vt_user_id} not found in DB — "
+                    f"link skipped (phone auth may not have completed yet)"
+                )
+            else:
+                logger.info(
+                    f"[ZerodhaLink] Bound zerodha_user_id={zerodha_user_id} "
+                    f"→ vt_user_id={vt_user_id}"
+                )
+
+    async def link_zerodha_to_user(self, zerodha_user_id: str, vt_user_id: str) -> None:
+        """Async wrapper for _sync_link_zerodha_to_user. Raises ValueError on conflict."""
+        self._ensure_engine()
+        if not self._ready:
+            logger.warning("[ZerodhaLink] DB not ready — skipping link enforcement")
+            return
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            self._sync_link_zerodha_to_user,
+            zerodha_user_id,
+            vt_user_id,
+        )
+
+
 db = Database()

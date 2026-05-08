@@ -19,7 +19,8 @@ class LiveTradingScreen extends StatefulWidget {
 
 class _LiveTradingScreenState extends State<LiveTradingScreen>
     with SingleTickerProviderStateMixin {
-  final _currency = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
+  final _currency      = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2);
+  final _currencyRound = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
   final _capitalController = TextEditingController();
 
   bool _isInitializing = false;
@@ -430,7 +431,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                       fontWeight: FontWeight.bold, color: accentColor)),
             ),
             const Spacer(),
-            Text('₹${ltp.toStringAsFixed(2)}',
+            Text(_currency.format(ltp),
                 style: AppTextStyles.mono.copyWith(
                     fontWeight: FontWeight.w600, fontSize: 13)),
           ]),
@@ -545,8 +546,8 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                     ),
                     const SizedBox(width: Sp.sm),
                     Text(
-                      '× ₹${entry.toStringAsFixed(2)} = '
-                      '₹${((int.tryParse(qtyCtrl?.text ?? '') ?? 0) * entry).toStringAsFixed(0)}',
+                      '× ${_currency.format(entry)} = '
+                      '${_currencyRound.format((int.tryParse(qtyCtrl?.text ?? '') ?? 0) * entry)}',
                       style: AppTextStyles.caption,
                     ),
                   ]),
@@ -562,7 +563,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
   Widget _candidatePrice(String label, double value, Color color) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(label, style: AppTextStyles.caption),
-      Text('₹${value.toStringAsFixed(2)}',
+      Text(_currency.format(value),
           style: AppTextStyles.mono.copyWith(
               fontSize: 11, fontWeight: FontWeight.w600, color: color)),
     ]);
@@ -1328,7 +1329,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       '${s.maxDailyLossPct}% loss cap',
       if (s.leverage > 1) '${s.leverage}x leverage',
       if (s.capitalToUse > 0)
-        '₹${(s.capitalToUse / 1000).toStringAsFixed(0)}k capital',
+        '${_currencyRound.format(s.capitalToUse / 1000)}k capital',
     ];
     return Wrap(
       spacing: Sp.sm,
@@ -1397,9 +1398,9 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             ]),
             const SizedBox(height: 4),
             Text(
-              'Limit ₹${order.limitPrice.toStringAsFixed(2)} · '
-              'SL ₹${order.stopLoss.toStringAsFixed(2)} · '
-              'Tgt ₹${order.target.toStringAsFixed(2)} · '
+              'Limit ${_currency.format(order.limitPrice)} · '
+              'SL ${_currency.format(order.stopLoss)} · '
+              'Tgt ${_currency.format(order.target)} · '
               'qty ${order.quantity}',
               style: AppTextStyles.caption,
             ),

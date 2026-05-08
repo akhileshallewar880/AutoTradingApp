@@ -1,5 +1,6 @@
 import '../theme/vt_color_scheme.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../theme/app_text_styles.dart';
 
 /// Animated price widget: counts up from old to new value on change.
@@ -39,17 +40,25 @@ class PriceText extends StatefulWidget {
 class _PriceTextState extends State<PriceText> with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
   late Animation<double> _anim;
+  late NumberFormat _fmt;
   double _from = 0;
 
   @override
   void initState() {
     super.initState();
     _from = widget.value;
+    _fmt = _buildFmt(widget.decimals);
     _ctrl = AnimationController(vsync: this, duration: widget.duration);
     _anim = Tween<double>(begin: widget.value, end: widget.value).animate(
       CurvedAnimation(parent: _ctrl, curve: Curves.easeOut),
     );
   }
+
+  static NumberFormat _buildFmt(int decimals) => NumberFormat.currency(
+        locale: 'en_IN',
+        symbol: '',
+        decimalDigits: decimals,
+      );
 
   @override
   void didUpdateWidget(PriceText old) {
@@ -95,8 +104,8 @@ class _PriceTextState extends State<PriceText> with SingleTickerProviderStateMix
       animation: _anim,
       builder: (context, _) {
         final v = _anim.value;
-        final sign = widget.showSign && v > 0 ? '+' : '';
-        final formatted = '${widget.prefix}$sign${v.toStringAsFixed(widget.decimals)}';
+        final sign = v < 0 ? '-' : (widget.showSign && v > 0 ? '+' : '');
+        final formatted = '${widget.prefix}$sign${_fmt.format(v.abs()).trim()}';
         return Text(formatted, style: baseStyle);
       },
     );
@@ -122,9 +131,10 @@ class PnlPill extends StatelessWidget {
     final color = isPos ? context.vt.accentGreen : context.vt.danger;
     final bg = isPos ? context.vt.accentGreenDim : context.vt.dangerDim;
     final sign = isPos ? '+' : '';
+    final absStr = NumberFormat('#,##,##0', 'en_IN').format(pnl.abs());
     final label = compact
         ? '$sign${pnlPct.toStringAsFixed(1)}%'
-        : '$sign₹${pnl.abs().toStringAsFixed(0)} ($sign${pnlPct.toStringAsFixed(1)}%)';
+        : '$sign₹$absStr ($sign${pnlPct.toStringAsFixed(1)}%)';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

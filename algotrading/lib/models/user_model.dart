@@ -11,6 +11,8 @@ class UserModel {
   // Phone auth additions — optional, backward-compatible with stored sessions
   final String? phoneNumber;
   final String? vtAccessToken;
+  /// Zerodha client code (e.g. "AB1234") returned by Kite OAuth — canonical account ID.
+  final String zerodhaUserId;
 
   UserModel({
     required this.accessToken,
@@ -24,6 +26,7 @@ class UserModel {
     required this.products,
     this.phoneNumber,
     this.vtAccessToken,
+    this.zerodhaUserId = '',
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
@@ -39,6 +42,7 @@ class UserModel {
       products: List<String>.from((json['products'] as List?) ?? []),
       phoneNumber: json['phone_number'] as String?,
       vtAccessToken: json['vt_access_token'] as String?,
+      zerodhaUserId: json['zerodha_user_id'] as String? ?? '',
     );
   }
 
@@ -55,6 +59,7 @@ class UserModel {
       'products': products,
       if (phoneNumber != null) 'phone_number': phoneNumber,
       if (vtAccessToken != null) 'vt_access_token': vtAccessToken,
+      if (zerodhaUserId.isNotEmpty) 'zerodha_user_id': zerodhaUserId,
     };
   }
 }
