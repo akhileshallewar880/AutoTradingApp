@@ -539,6 +539,8 @@ class NotificationService {
         return _colorRed;
       case 'SQUAREDOFF':
         return _colorTeal;
+      case 'ORDER_PENDING':
+        return _colorOrange;
       case 'SQUAREOFF_FAILED':
       case 'HOLD_ENDED':
         return _colorOrange;
@@ -565,6 +567,8 @@ class NotificationService {
       case 'SQUAREOFF_FAILED':
         return '⚠️';
       case 'MARKET_CLOSED':
+        return '🕐';
+      case 'ORDER_PENDING':
         return '🕐';
       case 'HOLD_ENDED':
         return '⏰';

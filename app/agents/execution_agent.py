@@ -184,53 +184,12 @@ class ExecutionAgent:
                     execution_log["error"] = msg
                     return execution_log
 
-                # ── TIMEOUT: try cancel then verify actual status ──────────
+                # ── TIMEOUT: cancel then verify actual status ─────────────
                 # Race condition: the order may have filled in the 2-second gap
                 # between the last poll and now. Zerodha rejects cancel requests
                 # on already-filled orders with an exception — if we just catch
                 # that and return, the position is open with NO GTT protecting it.
                 # Solution: always re-fetch status after the cancel attempt.
-                # Swing CNC: leave order open, park as AMO_PENDING for background GTT
-                if not is_intraday:
-                    logger.info(
-                        f"{stock_symbol}: CNC LIMIT not filled in 5 min — "
-                        f"leaving order open, parking as AMO_PENDING"
-                    )
-                    if hold_duration_days > 0:
-                        try:
-                            from app.storage.database import db
-                            await db.save_swing_position({
-                                "user_id":            str(user_id or ""),
-                                "analysis_id":        str(analysis_id),
-                                "stock_symbol":       stock_symbol,
-                                "action":             action,
-                                "quantity":           quantity,
-                                "entry_price":        float(entry_price),
-                                "stop_loss":          float(stop_loss),
-                                "target_price":       float(target),
-                                "fill_price":         0.0,
-                                "gtt_id":             None,
-                                "entry_order_id":     str(entry_order_id),
-                                "hold_duration_days": int(hold_duration_days),
-                                "api_key":            api_key,
-                                "status":             "AMO_PENDING",
-                            })
-                        except Exception as db_err:
-                            logger.warning(f"[ExecutionAgent] AMO_PENDING save failed: {db_err}")
-                    msg = (
-                        f"Order placed (ID: {entry_order_id}) — waiting for price to reach "
-                        f"₹{entry_price:.2f}. The order is live on Zerodha and will fill "
-                        f"automatically. GTT (SL ₹{stop_loss:.2f} / Target ₹{target:.2f}) "
-                        f"will be set automatically once filled."
-                    )
-                    await self._send_update(
-                        analysis_id, stock_symbol, "ORDER_PLACED",
-                        msg, update_callback, order_id=entry_order_id,
-                    )
-                    execution_log["status"] = "AMO_PLACED"
-                    return execution_log
-
-                # Intraday timeout: cancel and abort
                 try:
                     await self.zs.cancel_order(entry_order_id)
                     logger.info(f"{stock_symbol}: cancel request sent for {entry_order_id}")

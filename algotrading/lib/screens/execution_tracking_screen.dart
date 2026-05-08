@@ -7,7 +7,6 @@ import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/analysis_provider.dart';
 import '../models/analysis_model.dart';
-import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/animated_completion_widget.dart';
@@ -127,6 +126,7 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
           failedCount: execStatus.failedStocks,
         );
       }
+
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -145,7 +145,8 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
     final status = context.watch<AnalysisProvider>().executionStatus;
     final isDone = status?.overallStatus == 'COMPLETED' ||
         status?.overallStatus == 'FAILED' ||
-        status?.overallStatus == 'GTT_FAILED';
+        status?.overallStatus == 'GTT_FAILED' ||
+        status?.overallStatus == 'TIMEOUT';
     final isSuccess = status?.overallStatus == 'COMPLETED' ||
         status?.overallStatus == 'GTT_FAILED';
 
@@ -335,7 +336,8 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
   // ── Update tile ────────────────────────────────────────────────────────────
 
   Widget _buildUpdateTile(ExecutionUpdateModel update, int index) {
-    final isOrder = update.updateType == 'ORDER_PLACED';
+    final isOrder   = update.updateType == 'ORDER_PLACED';
+    final isPending = update.updateType == 'ORDER_PENDING';
     final isError =
         update.updateType == 'ERROR' || update.updateType == 'FAILED';
     final isMarketClosed = update.updateType == 'MARKET_CLOSED';
@@ -351,9 +353,9 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
     if (isSquareOffFailed || isGttFailed) {
       tileColor = context.vt.danger;
       icon = Icons.warning_amber_rounded;
-    } else if (isAmo) {
-      tileColor = context.vt.accentPurple;
-      icon = Icons.schedule_rounded;
+    } else if (isAmo || isPending) {
+      tileColor = context.vt.warning;
+      icon = Icons.hourglass_top_rounded;
     } else if (isMarketClosed) {
       tileColor = context.vt.warning;
       icon = Icons.access_time_rounded;
