@@ -32,6 +32,7 @@ import 'open_orders_screen.dart';
 import 'holdings_screen.dart';
 import 'performance_screen.dart';
 import '../main.dart' show routeObserver;
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -675,7 +676,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(label, style: AppTextStyles.monoSm.copyWith(
-                    color: context.vt.textSecondary, fontSize: 11)),
+                    color: context.vt.textSecondary, fontSize: 11.sp)),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -693,7 +694,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                         ),
                         Text(
                           '${change.abs().toStringAsFixed(2)}%',
-                          style: AppTextStyles.label.copyWith(color: color, fontSize: 9),
+                          style: AppTextStyles.label.copyWith(color: color, fontSize: 9.sp),
                         ),
                       ],
                     ),
@@ -767,7 +768,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                           ? 'In Profit'
                           : 'In Loss',
                   style: AppTextStyles.caption.copyWith(
-                      color: pnlColor, fontSize: 11),
+                      color: pnlColor, fontSize: 11.sp),
                 ),
               ],
             ),
@@ -806,7 +807,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                       children: [
                         Text("Today's P&L",
                             style: AppTextStyles.caption
-                                .copyWith(fontSize: 10)),
+                                .copyWith(fontSize: 10.sp)),
                         const SizedBox(height: 4),
                         data == null
                             ? const SkeletonBox(
@@ -834,7 +835,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                       children: [
                         Text('Positions',
                             style: AppTextStyles.caption
-                                .copyWith(fontSize: 10, color: vt.textSecondary)),
+                                .copyWith(fontSize: 10.sp, color: vt.textSecondary)),
                         const SizedBox(height: 4),
                         Row(
                           children: [
@@ -865,7 +866,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                           const SizedBox(height: 2),
                           Text('$gttCount GTTs set',
                               style: AppTextStyles.caption
-                                  .copyWith(fontSize: 10, color: vt.textTertiary)),
+                                  .copyWith(fontSize: 10.sp, color: vt.textTertiary)),
                         ],
                       ],
                     ),
@@ -1031,7 +1032,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
           Text(label,
               textAlign: TextAlign.center,
               style: AppTextStyles.caption
-                  .copyWith(color: vt.textTertiary, fontSize: 9)),
+                  .copyWith(color: vt.textTertiary, fontSize: 9.sp)),
           const SizedBox(height: 3),
           isLoading
               ? SkeletonBox(width: 44, height: 13, radius: Rad.sm)
@@ -1040,7 +1041,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                   style: AppTextStyles.mono.copyWith(
                       color: color,
                       fontWeight: FontWeight.w700,
-                      fontSize: 11),
+                      fontSize: 11.sp),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis),
         ],
@@ -1520,7 +1521,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware, WidgetsBinding
                         Text('AI',
                             style: AppTextStyles.label.copyWith(
                               color: Colors.white,
-                              fontSize: 9,
+                              fontSize: 9.sp,
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0.5,
                             )),
@@ -1671,7 +1672,7 @@ class _NavItem extends StatelessWidget {
               label,
               style: AppTextStyles.label.copyWith(
                 color: vt.textTertiary,
-                fontSize: 10,
+                fontSize: 10.sp,
                 letterSpacing: 0,
               ),
             ),

@@ -8,6 +8,7 @@ import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/vt_button.dart';
 import '../widgets/vt_tour.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class ApiSettingsScreen extends StatefulWidget {
   const ApiSettingsScreen({super.key});
@@ -213,7 +214,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
                 TextField(
                   key: _tourApiKeyKey,
                   controller: _apiKeyController,
-                  style: AppTextStyles.mono.copyWith(fontSize: 14),
+                  style: AppTextStyles.mono.copyWith(fontSize: 14.sp),
                   decoration: InputDecoration(
                     hintText: 'Enter your Zerodha API key',
                     prefixIcon: Icon(Icons.vpn_key_outlined,
@@ -234,7 +235,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
                   key: _tourApiSecretKey,
                   controller: _apiSecretController,
                   obscureText: !_showPassword,
-                  style: AppTextStyles.mono.copyWith(fontSize: 14),
+                  style: AppTextStyles.mono.copyWith(fontSize: 14.sp),
                   decoration: InputDecoration(
                     hintText: 'Enter your Zerodha API secret',
                     prefixIcon: Icon(Icons.lock_outline,
@@ -503,12 +504,12 @@ class _AppFormBox extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Redirect URL',
-                        style: AppTextStyles.label.copyWith(fontSize: 10)),
+                        style: AppTextStyles.label.copyWith(fontSize: 10.sp)),
                     SizedBox(height: 2),
                     Text(
                       'https://api.vantrade.in/api/v1/auth/callback',
                       style: AppTextStyles.monoSm.copyWith(
-                          color: context.vt.textSecondary, fontSize: 11),
+                          color: context.vt.textSecondary, fontSize: 11.sp),
                     ),
                   ],
                 ),
@@ -539,11 +540,11 @@ class _AppFormBox extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style: AppTextStyles.label.copyWith(fontSize: 10)),
+            style: AppTextStyles.label.copyWith(fontSize: 10.sp)),
         SizedBox(height: 2),
         Text(value,
             style:
-                AppTextStyles.monoSm.copyWith(color: context.vt.textSecondary, fontSize: 12)),
+                AppTextStyles.monoSm.copyWith(color: context.vt.textSecondary, fontSize: 12.sp)),
       ],
     );
   }

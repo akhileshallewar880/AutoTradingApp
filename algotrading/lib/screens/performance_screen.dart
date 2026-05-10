@@ -16,6 +16,7 @@ import '../utils/api_config.dart';
 import '../widgets/section_header.dart';
 import '../widgets/vt_button.dart';
 import '../widgets/vt_card.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 // ── Tab index constants ────────────────────────────────────────────────────
 const int _kTabToday   = 0;
@@ -221,9 +222,9 @@ class _PerformanceScreenState extends State<PerformanceScreen>
           key: _tourTabBarKey,
           controller: _tabController,
           labelStyle: AppTextStyles.caption
-              .copyWith(fontWeight: FontWeight.w700, fontSize: 12),
+              .copyWith(fontWeight: FontWeight.w700, fontSize: 12.sp),
           unselectedLabelStyle:
-              AppTextStyles.caption.copyWith(fontSize: 12),
+              AppTextStyles.caption.copyWith(fontSize: 12.sp),
           labelColor: context.vt.accentGreen,
           unselectedLabelColor: context.vt.textSecondary,
           indicatorColor: context.vt.accentGreen,
@@ -516,7 +517,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
                 Text(
                   '${isProfit ? '+' : ''}${_currency.format(allTimePnl)}',
                   style: AppTextStyles.display.copyWith(
-                      color: heroColor, fontSize: 36),
+                      color: heroColor, fontSize: 36.sp),
                 ),
                 SizedBox(height: Sp.base),
                 Divider(color: context.vt.divider, height: 1),
@@ -683,7 +684,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
                                         ? context.vt.accentGreen
                                         : context.vt.danger,
                                     fontWeight: FontWeight.w700,
-                                    fontSize: 10,
+                                    fontSize: 10.sp,
                                   ),
                                 ),
                               ),
@@ -723,7 +724,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
           Text(
             '${isProfit ? '+' : ''}${_currency.format(netPnl)}',
             style: AppTextStyles.display
-                .copyWith(color: heroColor, fontSize: 36),
+                .copyWith(color: heroColor, fontSize: 36.sp),
           ),
           SizedBox(height: Sp.base),
           Divider(color: context.vt.divider, height: 1),
@@ -800,7 +801,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
           padding: const EdgeInsets.only(bottom: Sp.md),
           child: Text('Milestones',
               style: TextStyle(
-                fontSize: 14,
+                fontSize: 14.sp,
                 fontWeight: FontWeight.w600,
                 color: context.vt.textSecondary,
               )),
@@ -854,7 +855,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
                       color: col, fontWeight: FontWeight.w700)),
               Text(b.subtitle,
                   style: AppTextStyles.caption.copyWith(
-                      color: context.vt.textTertiary, fontSize: 10),
+                      color: context.vt.textTertiary, fontSize: 10.sp),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis),
             ],
@@ -897,7 +898,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
                   style: AppTextStyles.mono.copyWith(
                       color: winColor,
                       fontWeight: FontWeight.w800,
-                      fontSize: 16),
+                      fontSize: 16.sp),
                 ),
               ],
             ),
@@ -1044,7 +1045,7 @@ class _PerformanceScreenState extends State<PerformanceScreen>
         const SizedBox(height: 4),
         Text(value,
             style: AppTextStyles.mono.copyWith(
-                color: color, fontWeight: FontWeight.w700, fontSize: 13)),
+                color: color, fontWeight: FontWeight.w700, fontSize: 13.sp)),
       ],
     );
   }
@@ -1070,12 +1071,12 @@ class _PerformanceScreenState extends State<PerformanceScreen>
             const SizedBox(width: Sp.xs),
             Text(label,
                 style: AppTextStyles.caption
-                    .copyWith(color: color, fontSize: 10)),
+                    .copyWith(color: color, fontSize: 10.sp)),
           ]),
           const SizedBox(height: Sp.xs),
           Text(value,
               style: AppTextStyles.mono.copyWith(
-                  color: color, fontWeight: FontWeight.w700, fontSize: 13),
+                  color: color, fontWeight: FontWeight.w700, fontSize: 13.sp),
               maxLines: 1,
               overflow: TextOverflow.ellipsis),
         ],
@@ -1224,7 +1225,7 @@ class _BarChartPainter extends CustomPainter {
             text: label,
             style: TextStyle(
                 color: labelColor,
-                fontSize: 9,
+                fontSize: 9.sp,
                 fontWeight: FontWeight.w600)),
         textDirection: ui.TextDirection.ltr,
       )..layout(maxWidth: barW + barGap);
@@ -1375,7 +1376,7 @@ class _LinePainter extends CustomPainter {
             text: label,
             style: TextStyle(
                 color: labelColor,
-                fontSize: 9,
+                fontSize: 9.sp,
                 fontWeight: FontWeight.w600)),
         textDirection: ui.TextDirection.ltr,
       )..layout();

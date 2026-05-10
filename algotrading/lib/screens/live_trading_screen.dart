@@ -9,6 +9,7 @@ import '../models/live_trading_model.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class LiveTradingScreen extends StatefulWidget {
   const LiveTradingScreen({super.key});
@@ -433,7 +434,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             const Spacer(),
             Text(_currency.format(ltp),
                 style: AppTextStyles.mono.copyWith(
-                    fontWeight: FontWeight.w600, fontSize: 13)),
+                    fontWeight: FontWeight.w600, fontSize: 13.sp)),
           ]),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -520,7 +521,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                         ],
                         textAlign: TextAlign.center,
                         style: AppTextStyles.mono
-                            .copyWith(fontSize: 13, fontWeight: FontWeight.bold),
+                            .copyWith(fontSize: 13.sp, fontWeight: FontWeight.bold),
                         decoration: InputDecoration(
                           isDense: true,
                           filled: true,
@@ -565,7 +566,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       Text(label, style: AppTextStyles.caption),
       Text(_currency.format(value),
           style: AppTextStyles.mono.copyWith(
-              fontSize: 11, fontWeight: FontWeight.w600, color: color)),
+              fontSize: 11.sp, fontWeight: FontWeight.w600, color: color)),
     ]);
   }
 
@@ -760,7 +761,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                           style: AppTextStyles.body.copyWith(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
-                              fontSize: 16),
+                              fontSize: 16.sp),
                         ),
                         onPressed: live.isLoading || live.isAnalyzing
                             ? null
@@ -895,7 +896,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                       ? _currency.format(deployAmount)
                       : '${_deployPct.toInt()}%',
                   style: AppTextStyles.mono.copyWith(
-                      fontSize: 14,
+                      fontSize: 14.sp,
                       fontWeight: FontWeight.bold,
                       color: context.vt.accentPurple),
                   overflow: TextOverflow.ellipsis,
@@ -920,7 +921,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             ),
             Text('${_deployPct.toInt()}%',
                 style: AppTextStyles.mono.copyWith(
-                    fontSize: 13,
+                    fontSize: 13.sp,
                     fontWeight: FontWeight.bold,
                     color: context.vt.accentPurple)),
           ]),
@@ -1057,7 +1058,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       Text(label, style: AppTextStyles.caption),
       Text(value,
           style: AppTextStyles.mono.copyWith(
-              fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+              fontSize: 12.sp, fontWeight: FontWeight.bold, color: color)),
     ]);
   }
 
@@ -1105,7 +1106,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                     .copyWith(fontWeight: FontWeight.w600)),
             Text(displayLabel,
                 style: AppTextStyles.mono.copyWith(
-                    fontSize: 14,
+                    fontSize: 14.sp,
                     fontWeight: FontWeight.bold,
                     color: context.vt.accentPurple)),
           ]),
@@ -1206,7 +1207,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                               style: AppTextStyles.caption.copyWith(
                                   color: context.vt.danger,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 13)),
+                                  fontSize: 13.sp)),
                         ]),
                 ),
               ),
@@ -1312,7 +1313,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               style: AppTextStyles.mono.copyWith(
                   color: valueColor ?? context.vt.textPrimary,
                   fontWeight: FontWeight.bold,
-                  fontSize: 13),
+                  fontSize: 13.sp),
               maxLines: 1,
               overflow: TextOverflow.ellipsis),
         ]),
@@ -1418,7 +1419,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               style: AppTextStyles.caption.copyWith(
                   fontWeight: FontWeight.bold,
                   color: context.vt.warning,
-                  fontSize: 9,
+                  fontSize: 9.sp,
                   letterSpacing: 0.8)),
         ),
       ]),
@@ -1486,7 +1487,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
                       '${isProfit ? '+' : ''}${_currency.format(pos.currentPnl)}',
                       style: AppTextStyles.mono.copyWith(
                           fontWeight: FontWeight.bold,
-                          fontSize: 15,
+                          fontSize: 15.sp,
                           color: isProfit
                               ? context.vt.accentGreen
                               : context.vt.danger),
@@ -1521,7 +1522,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       Text(
         isQty ? value.toInt().toString() : _currency.format(value),
         style: AppTextStyles.mono.copyWith(
-            fontSize: 12,
+            fontSize: 12.sp,
             fontWeight: FontWeight.w600,
             color: color ?? context.vt.textPrimary),
       ),
@@ -1567,7 +1568,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(log.timestamp,
             style: AppTextStyles.caption
-                .copyWith(fontFamily: 'monospace', fontSize: 10)),
+                .copyWith(fontFamily: 'monospace', fontSize: 10.sp)),
         const SizedBox(width: Sp.sm),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1576,7 +1577,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
               borderRadius: BorderRadius.circular(Rad.sm)),
           child: Text(log.event,
               style: AppTextStyles.caption.copyWith(
-                  fontSize: 9, fontWeight: FontWeight.bold, color: color)),
+                  fontSize: 9.sp, fontWeight: FontWeight.bold, color: color)),
         ),
         const SizedBox(width: Sp.sm),
         Expanded(

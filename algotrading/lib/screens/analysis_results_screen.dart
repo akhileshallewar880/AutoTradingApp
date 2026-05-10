@@ -13,6 +13,7 @@ import '../widgets/trade_risk_disclaimer.dart';
 import '../widgets/vt_button.dart';
 import '../widgets/vt_tour.dart';
 import 'execution_tracking_screen.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class AnalysisResultsScreen extends StatefulWidget {
   const AnalysisResultsScreen({super.key});
@@ -138,7 +139,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                   child: Text(
                     'Not financial advice.',
                     style: AppTextStyles.caption
-                        .copyWith(color: context.vt.textTertiary, fontSize: 11),
+                        .copyWith(color: context.vt.textTertiary, fontSize: 11.sp),
                   ),
                 ),
                 GestureDetector(
@@ -326,7 +327,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
                             Text('AI CONF',
                                 style: AppTextStyles.caption.copyWith(
                                     color: vt.textTertiary,
-                                    fontSize: 9,
+                                    fontSize: 9.sp,
                                     letterSpacing: 0.5)),
                           ],
                         ),
@@ -384,7 +385,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
             Text(label,
                 style: AppTextStyles.caption.copyWith(
                     color: context.vt.textTertiary,
-                    fontSize: 9,
+                    fontSize: 9.sp,
                     letterSpacing: 0.5)),
           ],
         ),
@@ -413,7 +414,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
           style: AppTextStyles.caption.copyWith(
               color: context.vt.accentPurple,
               fontWeight: FontWeight.w600,
-              fontSize: 11),
+              fontSize: 11.sp),
         ),
       );
 
@@ -429,7 +430,7 @@ class _AnalysisResultsScreenState extends State<AnalysisResultsScreen> {
           style: AppTextStyles.caption.copyWith(
               color: context.vt.textSecondary,
               fontWeight: FontWeight.w600,
-              fontSize: 11),
+              fontSize: 11.sp),
         ),
       );
 

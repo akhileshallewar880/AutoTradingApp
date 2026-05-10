@@ -61,7 +61,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   void _goToSetup() {
     _markOnboardingComplete();
-    Navigator.pushReplacementNamed(context, '/api-settings');
+    Navigator.pushReplacementNamed(context, '/phone-auth');
   }
 
   @override

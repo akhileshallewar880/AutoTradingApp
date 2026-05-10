@@ -5,6 +5,7 @@ import '../models/dashboard_model.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import 'gtt_analysis_screen.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class GttPortfolioAnalysisScreen extends StatelessWidget {
   final List<GttModel> gtts;
@@ -195,7 +196,7 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
           const SizedBox(height: 4),
           Text(value,
               style: AppTextStyles.mono.copyWith(
-                  fontSize: 14, fontWeight: FontWeight.bold, color: vt.textPrimary)),
+                  fontSize: 14.sp, fontWeight: FontWeight.bold, color: vt.textPrimary)),
           if (note != null)
             Text(note, style: AppTextStyles.caption.copyWith(color: color)),
         ],
@@ -451,7 +452,7 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
           const SizedBox(height: 3),
           Text(value,
               style: AppTextStyles.mono.copyWith(
-                  fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+                  fontSize: 13.sp, fontWeight: FontWeight.bold, color: color)),
           Text(sub, style: AppTextStyles.caption.copyWith(color: color)),
         ],
       ),
@@ -497,7 +498,7 @@ class GttPortfolioAnalysisScreen extends StatelessWidget {
       child: Text(
         isTwoLeg ? 'TWO-LEG' : 'SINGLE',
         style: AppTextStyles.caption.copyWith(
-            fontSize: 9, fontWeight: FontWeight.bold, color: color),
+            fontSize: 9.sp, fontWeight: FontWeight.bold, color: color),
       ),
     );
   }

@@ -74,6 +74,9 @@ dependencies:
   pinput: ^5.0.0
   sms_autofill: ^2.4.0
 
+  # Responsive scaling — proportional font/size scaling across all screen sizes
+  flutter_screenutil: ^5.9.3
+
   # Local push notifications for order events and live commentary
   flutter_local_notifications: ^18.0.0
 

@@ -7,6 +7,7 @@ import '../models/analysis_model.dart';
 import '../providers/analysis_provider.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class StockCard extends StatefulWidget {
   final StockAnalysisModel stock;
@@ -192,16 +193,29 @@ class _StockCardState extends State<StockCard>
                                     ),
                                   ),
                                   const SizedBox(width: Sp.xs),
-                                  Text(widget.stock.stockSymbol,
-                                      style: AppTextStyles.h3),
-                                  const SizedBox(width: Sp.xs),
-                                  _ActionBadge(
-                                      isBuy: isBuy, accentColor: accentColor),
-                                  if (widget.stock.daysToTarget != null) ...[
-                                    const SizedBox(width: Sp.xs),
-                                    _DaysChip(days: widget.stock.daysToTarget!),
-                                  ],
-                                  const Spacer(),
+                                  // Flexible so badge row yields space to the
+                                  // entry price column on narrow screens.
+                                  Flexible(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(widget.stock.stockSymbol,
+                                            style: AppTextStyles.h3,
+                                            overflow: TextOverflow.ellipsis),
+                                        const SizedBox(width: Sp.xs),
+                                        _ActionBadge(
+                                            isBuy: isBuy,
+                                            accentColor: accentColor),
+                                        if (widget.stock.daysToTarget !=
+                                            null) ...[
+                                          const SizedBox(width: Sp.xs),
+                                          _DaysChip(
+                                              days: widget.stock.daysToTarget!),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: Sp.sm),
                                   Column(
                                     crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
@@ -483,7 +497,7 @@ class _StockCardState extends State<StockCard>
                                 'AI Reasoning',
                                 style: AppTextStyles.label.copyWith(
                                     color: context.vt.accentPurple,
-                                    fontSize: 11),
+                                    fontSize: 11.sp),
                               ),
                             ],
                           ),
@@ -781,7 +795,7 @@ class _ActionBadge extends StatelessWidget {
         isBuy ? 'BUY' : 'SHORT',
         style: AppTextStyles.label.copyWith(
           color: accentColor,
-          fontSize: 10,
+          fontSize: 10.sp,
           letterSpacing: 0.5,
         ),
       ),
@@ -815,7 +829,7 @@ class _DaysChip extends StatelessWidget {
           const SizedBox(width: 3),
           Text('~${days}d to target',
               style: AppTextStyles.caption
-                  .copyWith(color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+                  .copyWith(color: color, fontSize: 10.sp, fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -847,7 +861,7 @@ class _PnLTile extends StatelessWidget {
         children: [
           Text(label,
               style: AppTextStyles.caption
-                  .copyWith(color: color, fontSize: 10)),
+                  .copyWith(color: color, fontSize: 10.sp)),
           const SizedBox(height: 2),
           Text(value,
               style: AppTextStyles.monoSm
@@ -855,7 +869,7 @@ class _PnLTile extends StatelessWidget {
           if (pct != null)
             Text('${pct!.toStringAsFixed(1)}%',
                 style: AppTextStyles.caption
-                    .copyWith(color: color.withValues(alpha: 0.7), fontSize: 10)),
+                    .copyWith(color: color.withValues(alpha: 0.7), fontSize: 10.sp)),
         ],
       ),
     );

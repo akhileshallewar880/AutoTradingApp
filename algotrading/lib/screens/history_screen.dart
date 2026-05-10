@@ -8,6 +8,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/status_badge.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -209,7 +210,7 @@ class _HistoryTile extends StatelessWidget {
           const SizedBox(width: 4),
           Text(label,
               style: AppTextStyles.caption
-                  .copyWith(color: color, fontSize: 11)),
+                  .copyWith(color: color, fontSize: 11.sp)),
         ],
       ),
     );

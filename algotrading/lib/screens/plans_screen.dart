@@ -6,6 +6,7 @@ import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../theme/vt_color_scheme.dart';
 import '../widgets/vt_tour.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class PlansScreen extends StatefulWidget {
   const PlansScreen({super.key});
@@ -51,13 +52,13 @@ class _PlansScreenState extends State<PlansScreen> {
           targetKey: _tourPromoKey,
           title: 'Beta Launch — Everything is FREE!',
           body: 'During our beta, all paid plans are activated at ₹0/month. Upgrade to Pro or Elite for free to unlock more monthly analyses and executions.',
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         ),
         VtTourStep(
           targetKey: _tourPlansKey,
           title: 'Choose the Right Plan for You',
           body: 'Free: 10 analyses/month.\nPro: 30 analyses + 50 executions.\nElite: Unlimited analyses & executions.\n\nAll plans are currently 100% FREE — tap any plan card to activate it instantly!',
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          padding: EdgeInsets.symmetric(vertical: 6),
         ),
       ],
     );
@@ -74,29 +75,29 @@ class _PlansScreenState extends State<PlansScreen> {
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: Icon(Icons.refresh),
             onPressed: _load,
             tooltip: 'Refresh',
           ),
         ],
       ),
       body: sub.isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: () async => _load(),
               child: ListView(
-                padding: const EdgeInsets.all(Sp.base),
+                padding: EdgeInsets.all(Sp.base),
                 children: [
                   KeyedSubtree(
                     key: _tourUsageKey,
                     child: _UsageSummaryCard(status: sub.status),
                   ),
-                  const SizedBox(height: Sp.xl),
+                  SizedBox(height: Sp.xl),
 
                   // ── Limited-time promo banner ───────────────────────────
                   Container(
                     key: _tourPromoKey,
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                         horizontal: Sp.base, vertical: Sp.md),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -111,8 +112,8 @@ class _PlansScreenState extends State<PlansScreen> {
                     ),
                     child: Row(
                       children: [
-                        const Text('🎉', style: TextStyle(fontSize: 22)),
-                        const SizedBox(width: Sp.sm),
+                        Text('🎉', style: TextStyle(fontSize: 22.sp)),
+                        SizedBox(width: Sp.sm),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -132,14 +133,14 @@ class _PlansScreenState extends State<PlansScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: Sp.base),
+                  SizedBox(height: Sp.base),
 
                   Text('Available Plans', key: _tourPlansKey, style: AppTextStyles.h3),
-                  const SizedBox(height: Sp.sm),
+                  SizedBox(height: Sp.sm),
 
                   if (sub.status.allPlans.isEmpty) ...[
                     _PlanCard(
-                      plan: const PlanInfo(
+                      plan: PlanInfo(
                         planId: 'free',
                         name: 'Free',
                         priceMonthly: 0,
@@ -154,7 +155,7 @@ class _PlansScreenState extends State<PlansScreen> {
                       isCurrent: true,
                     ),
                     _PlanCard(
-                      plan: const PlanInfo(
+                      plan: PlanInfo(
                         planId: 'pro',
                         name: 'Pro',
                         priceMonthly: 99,
@@ -170,7 +171,7 @@ class _PlansScreenState extends State<PlansScreen> {
                       isCurrent: false,
                     ),
                     _PlanCard(
-                      plan: const PlanInfo(
+                      plan: PlanInfo(
                         planId: 'elite',
                         name: 'Elite',
                         priceMonthly: 499,
@@ -189,9 +190,9 @@ class _PlansScreenState extends State<PlansScreen> {
                           isCurrent: plan.planId == sub.status.plan.planId,
                         )),
 
-                  const SizedBox(height: Sp.xl),
+                  SizedBox(height: Sp.xl),
                   const _PaymentNote(),
-                  const SizedBox(height: Sp.xxl),
+                  SizedBox(height: Sp.xxl),
                 ],
               ),
             ),
@@ -210,7 +211,7 @@ class _UsageSummaryCard extends StatelessWidget {
     final vt = context.vt;
 
     return Container(
-      padding: const EdgeInsets.all(Sp.lg),
+      padding: EdgeInsets.all(Sp.lg),
       decoration: BoxDecoration(
         color: vt.surface1,
         borderRadius: BorderRadius.circular(Rad.lg),
@@ -219,7 +220,7 @@ class _UsageSummaryCard extends StatelessWidget {
           BoxShadow(
               color: Colors.black.withValues(alpha: 0.08),
               blurRadius: 12,
-              offset: const Offset(0, 4)),
+              offset: Offset(0, 4)),
         ],
       ),
       child: Column(
@@ -227,13 +228,13 @@ class _UsageSummaryCard extends StatelessWidget {
         children: [
           Row(children: [
             Icon(Icons.bar_chart_rounded, color: vt.accentGreen, size: 22),
-            const SizedBox(width: Sp.sm),
+            SizedBox(width: Sp.sm),
             Text('This Month — ${status.period}',
                 style: AppTextStyles.caption.copyWith(
                     color: vt.textSecondary)),
-            const Spacer(),
+            Spacer(),
             Container(
-              padding: const EdgeInsets.symmetric(
+              padding: EdgeInsets.symmetric(
                   horizontal: Sp.sm, vertical: 4),
               decoration: BoxDecoration(
                 color: vt.accentGreen.withValues(alpha: 0.15),
@@ -245,7 +246,7 @@ class _UsageSummaryCard extends StatelessWidget {
                       fontWeight: FontWeight.w700)),
             ),
           ]),
-          const SizedBox(height: Sp.lg),
+          SizedBox(height: Sp.lg),
           Row(children: [
             Expanded(
               child: _UsageMeter(
@@ -255,7 +256,7 @@ class _UsageSummaryCard extends StatelessWidget {
                 isOver: status.isOverAnalysisLimit,
               ),
             ),
-            const SizedBox(width: Sp.base),
+            SizedBox(width: Sp.base),
             Expanded(
               child: _UsageMeter(
                 label: 'Executions',
@@ -301,7 +302,7 @@ class _UsageMeter extends StatelessWidget {
           Row(children: [
             Text(label, style: AppTextStyles.caption.copyWith(
                 color: vt.textSecondary)),
-            const Spacer(),
+            Spacer(),
             Text(
               isUnlimited ? '$used / ∞' : '$used / $limit',
               style: AppTextStyles.caption.copyWith(
@@ -309,7 +310,7 @@ class _UsageMeter extends StatelessWidget {
                   fontWeight: FontWeight.w600),
             ),
           ]),
-          const SizedBox(height: 6),
+          SizedBox(height: 6),
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
@@ -332,7 +333,7 @@ class _PlanCard extends StatelessWidget {
 
   Color _accentFor(BuildContext context) {
     final vt = context.vt;
-    if (plan.planId == 'elite') return const Color(0xFFFFD700);
+    if (plan.planId == 'elite') return Color(0xFFFFD700);
     if (plan.planId == 'pro') return vt.accentGreen;
     return vt.textSecondary;
   }
@@ -344,8 +345,8 @@ class _PlanCard extends StatelessWidget {
     final isPaid = plan.planId != 'free';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: Sp.sm),
-      padding: const EdgeInsets.all(Sp.base),
+      margin: EdgeInsets.only(bottom: Sp.sm),
+      padding: EdgeInsets.all(Sp.base),
       decoration: BoxDecoration(
         color: vt.surface1,
         borderRadius: BorderRadius.circular(Rad.lg),
@@ -363,7 +364,7 @@ class _PlanCard extends StatelessWidget {
           Row(children: [
             Text(plan.name,
                 style: AppTextStyles.h3.copyWith(color: accentColor)),
-            const Spacer(),
+            Spacer(),
             if (isCurrent)
               _badge('Current', accentColor)
             else if (isPaid) ...[
@@ -375,7 +376,7 @@ class _PlanCard extends StatelessWidget {
                   decoration: TextDecoration.lineThrough,
                 ),
               ),
-              const SizedBox(width: 6),
+              SizedBox(width: 6),
               // Effective price: 100% off = ₹0
               Text(
                 '₹0/mo',
@@ -387,9 +388,9 @@ class _PlanCard extends StatelessWidget {
 
           // ── Discount badge for paid plans ────────────────────────────
           if (isPaid && !isCurrent) ...[
-            const SizedBox(height: 6),
+            SizedBox(height: 6),
             Container(
-              padding: const EdgeInsets.symmetric(
+              padding: EdgeInsets.symmetric(
                   horizontal: Sp.sm, vertical: 2),
               decoration: BoxDecoration(
                 color: vt.accentGreen.withValues(alpha: 0.12),
@@ -401,22 +402,22 @@ class _PlanCard extends StatelessWidget {
                 '🎉 100% OFF — Beta launch offer',
                 style: AppTextStyles.label.copyWith(
                     color: vt.accentGreen,
-                    fontSize: 10,
+                    fontSize: 10.sp,
                     fontWeight: FontWeight.w700),
               ),
             ),
           ],
 
-          const SizedBox(height: Sp.sm),
+          SizedBox(height: Sp.sm),
 
           // ── Features ────────────────────────────────────────────────
           ...plan.features.map((f) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
+                padding: EdgeInsets.only(bottom: 4),
                 child: Row(children: [
                   Icon(Icons.check_circle_outline,
                       size: 14,
                       color: accentColor.withValues(alpha: 0.8)),
-                  const SizedBox(width: 6),
+                  SizedBox(width: 6),
                   Text(f,
                       style: AppTextStyles.caption.copyWith(
                           color: vt.textSecondary)),
@@ -425,7 +426,7 @@ class _PlanCard extends StatelessWidget {
 
           // ── CTA ─────────────────────────────────────────────────────
           if (!isCurrent && isPaid) ...[
-            const SizedBox(height: Sp.md),
+            SizedBox(height: Sp.md),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -447,7 +448,7 @@ class _PlanCard extends StatelessWidget {
 
   Widget _badge(String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 3),
+      padding: EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 3),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(Rad.pill),
@@ -479,12 +480,12 @@ class _ActivateSheet extends StatelessWidget {
     final vt = context.vt;
     final isElite = plan.planId == 'elite';
     final accentColor =
-        isElite ? const Color(0xFFFFD700) : vt.accentGreen;
+        isElite ? Color(0xFFFFD700) : vt.accentGreen;
 
     return Container(
       decoration: BoxDecoration(
         color: vt.surface0,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.fromLTRB(
           24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 32),
@@ -503,21 +504,21 @@ class _ActivateSheet extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: Sp.base),
+          SizedBox(height: Sp.base),
 
           // Title row
           Row(children: [
             Text('Activate ${plan.name}',
                 style: AppTextStyles.h2.copyWith(color: accentColor)),
-            const Spacer(),
+            Spacer(),
             _Chip('100% OFF', accentColor),
           ]),
-          const SizedBox(height: 4),
+          SizedBox(height: 4),
           Text(
             'Beta launch — limited time free access.',
             style: AppTextStyles.caption.copyWith(color: vt.textSecondary),
           ),
-          const SizedBox(height: Sp.base),
+          SizedBox(height: Sp.base),
 
           // Price row
           Row(
@@ -527,11 +528,11 @@ class _ActivateSheet extends StatelessWidget {
               Text('₹0',
                   style: AppTextStyles.h1.copyWith(
                       color: accentColor, fontWeight: FontWeight.w900)),
-              const SizedBox(width: 6),
+              SizedBox(width: 6),
               Text('/ month',
                   style: AppTextStyles.caption.copyWith(
                       color: vt.textSecondary)),
-              const SizedBox(width: 12),
+              SizedBox(width: 12),
               Text(
                 '(was ₹${plan.priceMonthly.toStringAsFixed(0)}/mo)',
                 style: AppTextStyles.caption.copyWith(
@@ -541,22 +542,22 @@ class _ActivateSheet extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: Sp.base),
+          SizedBox(height: Sp.base),
 
           // Features
           ...plan.features.map((f) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
+                padding: EdgeInsets.only(bottom: 6),
                 child: Row(children: [
                   Icon(Icons.check_circle,
                       size: 16, color: accentColor),
-                  const SizedBox(width: 8),
+                  SizedBox(width: 8),
                   Text(f,
                       style: AppTextStyles.body.copyWith(
                           color: vt.textPrimary)),
                 ]),
               )),
 
-          const SizedBox(height: Sp.xl),
+          SizedBox(height: Sp.xl),
 
           // CTA button
           SizedBox(
@@ -566,14 +567,14 @@ class _ActivateSheet extends StatelessWidget {
                 backgroundColor: accentColor,
                 foregroundColor:
                     isElite ? Colors.black : Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                padding: EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(Rad.md)),
               ),
               onPressed: () => _activate(context),
               child: Text('Activate ${plan.name} for Free',
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.w700)),
+                  style: TextStyle(
+                      fontSize: 16.sp, fontWeight: FontWeight.w700)),
             ),
           ),
         ],
@@ -624,7 +625,7 @@ class _Chip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(Rad.pill),
@@ -632,7 +633,7 @@ class _Chip extends StatelessWidget {
       ),
       child: Text(label,
           style: AppTextStyles.label.copyWith(
-              color: color, fontWeight: FontWeight.w800, fontSize: 11)),
+              color: color, fontWeight: FontWeight.w800, fontSize: 11.sp)),
     );
   }
 }
@@ -646,7 +647,7 @@ class _PaymentNote extends StatelessWidget {
   Widget build(BuildContext context) {
     final vt = context.vt;
     return Container(
-      padding: const EdgeInsets.all(Sp.md),
+      padding: EdgeInsets.all(Sp.md),
       decoration: BoxDecoration(
         color: vt.surface1,
         borderRadius: BorderRadius.circular(Rad.md),
@@ -654,7 +655,7 @@ class _PaymentNote extends StatelessWidget {
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Icon(Icons.info_outline, size: 16, color: vt.textTertiary),
-        const SizedBox(width: 8),
+        SizedBox(width: 8),
         Expanded(
           child: Text(
             'During our beta, all plans are available at 100% discount. '

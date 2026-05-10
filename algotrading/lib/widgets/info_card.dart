@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 /// Professional, modern info/alert card widget
 class InfoCard extends StatelessWidget {
@@ -66,7 +67,7 @@ class InfoCard extends StatelessWidget {
                     Text(
                       title,
                       style: TextStyle(
-                        fontSize: 15,
+                        fontSize: 15.sp,
                         fontWeight: FontWeight.bold,
                         color: colors['title'],
                       ),
@@ -75,7 +76,7 @@ class InfoCard extends StatelessWidget {
                     Text(
                       message,
                       style: TextStyle(
-                        fontSize: 13,
+                        fontSize: 13.sp,
                         color: colors['text'],
                         height: 1.5,
                       ),

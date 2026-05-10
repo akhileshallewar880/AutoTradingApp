@@ -14,6 +14,7 @@ import '../theme/app_text_styles.dart';
 import '../utils/api_config.dart';
 import '../widgets/status_badge.dart';
 import '../widgets/vt_button.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class HoldingsScreen extends StatefulWidget {
   const HoldingsScreen({super.key});
@@ -230,7 +231,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               Text(
                 '⚠️ ${h.t1Quantity} T+1 share(s) bought today are pending settlement '
                 'and will NOT be included — they can be sold tomorrow.',
-                style: TextStyle(fontSize: 13, color: Colors.orange),
+                style: TextStyle(fontSize: 13.sp, color: Colors.orange),
               ),
             ],
             const SizedBox(height: 12),
@@ -512,7 +513,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           const SizedBox(height: Sp.xs),
           Text(
             _currency.format(s.totalCurrentValue),
-            style: AppTextStyles.display.copyWith(fontSize: 32),
+            style: AppTextStyles.display.copyWith(fontSize: 32.sp),
           ),
           SizedBox(height: Sp.md),
           Row(
@@ -593,13 +594,15 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: AppTextStyles.caption.copyWith(fontSize: 10)),
+            Text(label, style: AppTextStyles.caption.copyWith(fontSize: 10.sp)),
             const SizedBox(height: 2),
-            Text(value,
-                style: AppTextStyles.monoSm.copyWith(
-                    color: color, fontWeight: FontWeight.w700),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(value,
+                  style: AppTextStyles.monoSm.copyWith(
+                      color: color, fontWeight: FontWeight.w700)),
+            ),
           ],
         ),
       ),
@@ -613,7 +616,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
       children: [
         Text(label,
             style: AppTextStyles.caption
-                .copyWith(color: color, fontSize: 10)),
+                .copyWith(color: color, fontSize: 10.sp)),
         const SizedBox(height: 2),
         Text(value,
             style: AppTextStyles.monoSm
@@ -674,7 +677,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                 _currency.format(h.lastPrice),
                                 style: AppTextStyles.mono.copyWith(
                                     fontWeight: FontWeight.w700,
-                                    fontSize: 15),
+                                    fontSize: 15.sp),
                               ),
                               Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -689,7 +692,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                   Text(
                                     '${h.dayChangePct.abs().toStringAsFixed(2)}%',
                                     style: AppTextStyles.caption.copyWith(
-                                        color: dayColor, fontSize: 11),
+                                        color: dayColor, fontSize: 11.sp),
                                   ),
                                 ],
                               ),
@@ -727,7 +730,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                             style: AppTextStyles.label
                                                 .copyWith(
                                                     color: context.vt.danger,
-                                                    fontSize: 11),
+                                                    fontSize: 11.sp),
                                           ),
                                         ),
                                       ),
@@ -778,7 +781,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                               style: AppTextStyles.mono.copyWith(
                                   color: accentColor,
                                   fontWeight: FontWeight.w700,
-                                  fontSize: 13),
+                                  fontSize: 13.sp),
                             ),
                           ],
                         ),
@@ -864,7 +867,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           Text(label,
               style: AppTextStyles.caption.copyWith(
                   color: color,
-                  fontSize: 10,
+                  fontSize: 10.sp,
                   fontWeight: FontWeight.w600)),
         ],
       ),
@@ -922,7 +925,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               const SizedBox(width: 3),
               Text(label,
                   style: AppTextStyles.caption
-                      .copyWith(color: color, fontSize: 10)),
+                      .copyWith(color: color, fontSize: 10.sp)),
             ],
           ),
           SizedBox(height: 3),
@@ -934,7 +937,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           Text(
             '@ ${_currency.format(price)}',
             style: AppTextStyles.caption
-                .copyWith(color: context.vt.textTertiary, fontSize: 10),
+                .copyWith(color: context.vt.textTertiary, fontSize: 10.sp),
           ),
         ],
       ),
@@ -962,7 +965,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
             child: Text(
               'No GTT — set SL & target with AI',
               style: AppTextStyles.caption
-                  .copyWith(color: _purple, fontSize: 11),
+                  .copyWith(color: _purple, fontSize: 11.sp),
             ),
           ),
           if (!isDemo) ...[
@@ -994,7 +997,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                           Text(
                             'AI Suggest',
                             style: AppTextStyles.label
-                                .copyWith(color: _purple, fontSize: 10),
+                                .copyWith(color: _purple, fontSize: 10.sp),
                           ),
                         ],
                       ),
@@ -1066,7 +1069,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                     Text(
                       isExiting ? 'Exiting…' : 'Exit Position',
                       style: AppTextStyles.label
-                          .copyWith(color: color, fontSize: 11),
+                          .copyWith(color: color, fontSize: 11.sp),
                     ),
                   ],
                 ),
@@ -1264,7 +1267,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                     'Confidence ${(confidence * 100).toStringAsFixed(0)}%',
                                     style: AppTextStyles.caption.copyWith(
                                       color: context.vt.accentGreen,
-                                      fontSize: 10,
+                                      fontSize: 10.sp,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
@@ -1274,7 +1277,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                   Text(
                                     'ATR ${_currency.format(atr)}',
                                     style: AppTextStyles.caption
-                                        .copyWith(fontSize: 10),
+                                        .copyWith(fontSize: 10.sp),
                                   ),
                                 ],
                               ],
@@ -1303,7 +1306,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                     const TextInputType.numberWithOptions(
                                         decimal: true),
                                 style: AppTextStyles.mono
-                                    .copyWith(fontSize: 14),
+                                    .copyWith(fontSize: 14.sp),
                                 onChanged: (_) => setSheetState(() {}),
                                 decoration: fieldDecor(
                                   context.vt.danger,
@@ -1330,7 +1333,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                     const TextInputType.numberWithOptions(
                                         decimal: true),
                                 style: AppTextStyles.mono
-                                    .copyWith(fontSize: 14),
+                                    .copyWith(fontSize: 14.sp),
                                 onChanged: (_) => setSheetState(() {}),
                                 decoration: fieldDecor(
                                   context.vt.accentGreen,
@@ -1363,7 +1366,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                   Text('Max Profit',
                                       style: AppTextStyles.caption.copyWith(
                                           color: context.vt.accentGreen,
-                                          fontSize: 10)),
+                                          fontSize: 10.sp)),
                                   Text(
                                     '+${_currencyRound.format(maxProfit)}',
                                     style: AppTextStyles.monoSm.copyWith(
@@ -1380,7 +1383,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                   Text('Max Loss',
                                       style: AppTextStyles.caption.copyWith(
                                           color: context.vt.danger,
-                                          fontSize: 10)),
+                                          fontSize: 10.sp)),
                                   Text(
                                     _currencyRound.format(maxLoss),
                                     style: AppTextStyles.monoSm.copyWith(
@@ -1395,7 +1398,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                               children: [
                                 Text('R:R',
                                     style: AppTextStyles.caption
-                                        .copyWith(fontSize: 10)),
+                                        .copyWith(fontSize: 10.sp)),
                                 Text(
                                   '1:${rr.toStringAsFixed(1)}',
                                   style: AppTextStyles.monoSm.copyWith(
@@ -1568,10 +1571,10 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: AppTextStyles.caption.copyWith(fontSize: 10)),
+              style: AppTextStyles.caption.copyWith(fontSize: 10.sp)),
           Text(value,
               style: AppTextStyles.monoSm
-                  .copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
+                  .copyWith(fontWeight: FontWeight.w600, fontSize: 11.sp)),
         ],
       ),
     );

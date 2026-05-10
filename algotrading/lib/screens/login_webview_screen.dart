@@ -102,7 +102,11 @@ class _LoginWebViewScreenState extends State<LoginWebViewScreen> {
     try {
       await authProvider.createSession(requestToken);
       if (mounted) {
-        Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+        if (!authProvider.isPhoneVerified) {
+          Navigator.of(context).pushNamedAndRemoveUntil('/phone-auth', (route) => false);
+        } else {
+          Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+        }
       }
     } on ZerodhaAccountConflictException catch (e) {
       if (mounted) {

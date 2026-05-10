@@ -9,6 +9,7 @@ import '../widgets/vantrade_logo.dart';
 import '../widgets/vt_button.dart';
 import '../widgets/vt_tour.dart';
 import 'login_webview_screen.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -235,7 +236,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 '256-bit encrypted · Your credentials never leave your device',
                                 style: AppTextStyles.caption.copyWith(
                                     color: context.vt.textTertiary,
-                                    fontSize: 11),
+                                    fontSize: 11.sp),
                                 textAlign: TextAlign.center,
                               ),
                             ],
@@ -342,7 +343,7 @@ class _FeaturePill extends StatelessWidget {
             style: AppTextStyles.label.copyWith(
               color: context.vt.textPrimary,
               letterSpacing: 0.2,
-              fontSize: 11,
+              fontSize: 11.sp,
             ),
           ),
         ],

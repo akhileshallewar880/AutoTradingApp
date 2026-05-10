@@ -6,6 +6,7 @@ import '../models/dashboard_model.dart';
 import '../providers/dashboard_provider.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class GttAnalysisScreen extends StatelessWidget {
   final GttModel gtt;
@@ -166,7 +167,7 @@ class GttAnalysisScreen extends StatelessWidget {
                 children: [
                   Text(gtt.symbol,
                       style: AppTextStyles.display
-                          .copyWith(fontSize: 26, color: context.vt.textPrimary)),
+                          .copyWith(fontSize: 26.sp, color: context.vt.textPrimary)),
                   Text(gtt.exchange, style: AppTextStyles.caption),
                 ],
               ),
@@ -240,7 +241,7 @@ class GttAnalysisScreen extends StatelessWidget {
         Text(label, style: AppTextStyles.caption),
         Text(value,
             style: AppTextStyles.mono
-                .copyWith(color: context.vt.textPrimary, fontSize: 15)),
+                .copyWith(color: context.vt.textPrimary, fontSize: 15.sp)),
       ],
     );
   }
@@ -285,7 +286,7 @@ class GttAnalysisScreen extends StatelessWidget {
                     Text(
                       '${isPositive ? '+' : ''}${currency.format(value)}',
                       style: AppTextStyles.mono.copyWith(
-                          fontSize: 20, fontWeight: FontWeight.bold, color: color),
+                          fontSize: 20.sp, fontWeight: FontWeight.bold, color: color),
                     ),
                     const SizedBox(width: Sp.sm),
                     Container(
@@ -347,7 +348,7 @@ class GttAnalysisScreen extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text('Not available',
                     style: AppTextStyles.mono.copyWith(
-                        fontSize: 18,
+                        fontSize: 18.sp,
                         fontWeight: FontWeight.bold,
                         color: context.vt.textTertiary)),
                 const SizedBox(height: 4),
@@ -444,7 +445,7 @@ class GttAnalysisScreen extends StatelessWidget {
           const SizedBox(height: 4),
           Text(value,
               style: AppTextStyles.mono
-                  .copyWith(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+                  .copyWith(fontSize: 13.sp, fontWeight: FontWeight.bold, color: color)),
           if (note != null && note.isNotEmpty)
             Text(note,
                 style: AppTextStyles.caption.copyWith(color: color)),
@@ -500,7 +501,7 @@ class GttAnalysisScreen extends StatelessWidget {
               child: Text(label, style: AppTextStyles.body)),
           Text(value,
               style: AppTextStyles.mono.copyWith(
-                  fontSize: 14, fontWeight: FontWeight.bold, color: color)),
+                  fontSize: 14.sp, fontWeight: FontWeight.bold, color: color)),
         ],
       ),
     );

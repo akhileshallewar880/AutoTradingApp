@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../services/tour_service.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 // ── Data model for a single tour step ────────────────────────────────────────
 
@@ -11,7 +12,7 @@ class VtTourStep {
   final EdgeInsets padding;
   final double radius;
 
-  const VtTourStep({
+  VtTourStep({
     required this.targetKey,
     required this.title,
     required this.body,
@@ -78,13 +79,13 @@ class _VtTourOverlayState extends State<_VtTourOverlay>
 
     _fadeCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: Duration(milliseconds: 300),
     );
     _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut);
 
     _pulseCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1000),
+      duration: Duration(milliseconds: 1000),
     )..repeat(reverse: true);
     _pulseAnim = CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut);
 
@@ -150,7 +151,7 @@ class _VtTourOverlayState extends State<_VtTourOverlay>
 
   @override
   Widget build(BuildContext context) {
-    if (_step >= widget.steps.length) return const SizedBox.shrink();
+    if (_step >= widget.steps.length) return SizedBox.shrink();
     final currentStep = widget.steps[_step];
     final screenSize = MediaQuery.of(context).size;
 
@@ -223,7 +224,7 @@ class _VtTourOverlayState extends State<_VtTourOverlay>
   Widget _centeredTooltip(BuildContext context, VtTourStep step) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: EdgeInsets.symmetric(horizontal: 16),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () {},
@@ -287,7 +288,7 @@ class _SpotlightPainter extends CustomPainter {
           Radius.circular(borderRadius + expand * 0.5),
         ),
         Paint()
-          ..color = const Color(0xFF7B61FF).withValues(alpha: opacity)
+          ..color = Color(0xFF7B61FF).withValues(alpha: opacity)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.5,
       );
@@ -334,25 +335,25 @@ class _TourTooltip extends StatelessWidget {
     final isLast = step == totalSteps - 1;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+      padding: EdgeInsets.fromLTRB(20, 18, 20, 18),
       decoration: BoxDecoration(
-        color: const Color(0xFF131C2E),
+        color: Color(0xFF131C2E),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: const Color(0xFF7B61FF).withValues(alpha: 0.32),
+          color: Color(0xFF7B61FF).withValues(alpha: 0.32),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF7B61FF).withValues(alpha: 0.22),
+            color: Color(0xFF7B61FF).withValues(alpha: 0.22),
             blurRadius: 28,
             spreadRadius: -4,
-            offset: const Offset(0, 4),
+            offset: Offset(0, 4),
           ),
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.45),
             blurRadius: 20,
-            offset: const Offset(0, 6),
+            offset: Offset(0, 6),
           ),
         ],
       ),
@@ -366,29 +367,29 @@ class _TourTooltip extends StatelessWidget {
               // Step counter badge
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF7B61FF).withValues(alpha: 0.18),
+                  color: Color(0xFF7B61FF).withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: const Color(0xFF7B61FF).withValues(alpha: 0.45),
+                    color: Color(0xFF7B61FF).withValues(alpha: 0.45),
                     width: 1,
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.auto_awesome_rounded,
                       size: 9,
                       color: Color(0xFF7B61FF),
                     ),
-                    const SizedBox(width: 4),
+                    SizedBox(width: 4),
                     Text(
                       '${step + 1} of $totalSteps',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Color(0xFF7B61FF),
-                        fontSize: 11,
+                        fontSize: 11.sp,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.4,
                       ),
@@ -396,22 +397,22 @@ class _TourTooltip extends StatelessWidget {
                   ],
                 ),
               ),
-              const Spacer(),
+              Spacer(),
               // Skip button
               GestureDetector(
                 onTap: onSkip,
                 child: Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.06),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Text(
+                  child: Text(
                     'Skip tour',
                     style: TextStyle(
                       color: Color(0xFF8B9BB4),
-                      fontSize: 12,
+                      fontSize: 12.sp,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -420,23 +421,23 @@ class _TourTooltip extends StatelessWidget {
             ],
           ),
 
-          const SizedBox(height: 14),
+          SizedBox(height: 14),
 
           // ── Title ────────────────────────────────────────────────────
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
+              Padding(
                 padding: EdgeInsets.only(top: 1),
-                child: Text('✨', style: TextStyle(fontSize: 14)),
+                child: Text('✨', style: TextStyle(fontSize: 14.sp)),
               ),
-              const SizedBox(width: 6),
+              SizedBox(width: 6),
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Color(0xFFF0F4FF),
-                    fontSize: 15,
+                    fontSize: 15.sp,
                     fontWeight: FontWeight.w700,
                     height: 1.35,
                   ),
@@ -445,19 +446,19 @@ class _TourTooltip extends StatelessWidget {
             ],
           ),
 
-          const SizedBox(height: 9),
+          SizedBox(height: 9),
 
           // ── Body ─────────────────────────────────────────────────────
           Text(
             body,
-            style: const TextStyle(
+            style: TextStyle(
               color: Color(0xFF9AA5BA),
-              fontSize: 13,
+              fontSize: 13.sp,
               height: 1.6,
             ),
           ),
 
-          const SizedBox(height: 18),
+          SizedBox(height: 18),
 
           // ── Progress dots + Next button ───────────────────────────────
           Row(
@@ -466,29 +467,29 @@ class _TourTooltip extends StatelessWidget {
               ...List.generate(totalSteps, (i) {
                 final active = i == step;
                 return AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
+                  duration: Duration(milliseconds: 220),
                   curve: Curves.easeOut,
                   width: active ? 20 : 7,
                   height: 7,
-                  margin: const EdgeInsets.only(right: 5),
+                  margin: EdgeInsets.only(right: 5),
                   decoration: BoxDecoration(
                     color: active
-                        ? const Color(0xFF00D4AA)
-                        : const Color(0xFF2D3748),
+                        ? Color(0xFF00D4AA)
+                        : Color(0xFF2D3748),
                     borderRadius: BorderRadius.circular(4),
                   ),
                 );
               }),
-              const Spacer(),
+              Spacer(),
 
               // Next / Done button
               GestureDetector(
                 onTap: onNext,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                       horizontal: 20, vertical: 11),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
+                    gradient: LinearGradient(
                       colors: [Color(0xFF00D4AA), Color(0xFF0A9E6E)],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
@@ -496,9 +497,9 @@ class _TourTooltip extends StatelessWidget {
                     borderRadius: BorderRadius.circular(9),
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFF00D4AA).withValues(alpha: 0.35),
+                        color: Color(0xFF00D4AA).withValues(alpha: 0.35),
                         blurRadius: 12,
-                        offset: const Offset(0, 3),
+                        offset: Offset(0, 3),
                       ),
                     ],
                   ),
@@ -507,17 +508,17 @@ class _TourTooltip extends StatelessWidget {
                     children: [
                       Text(
                         isLast ? 'Got it!' : 'Next',
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: Colors.white,
-                          fontSize: 13,
+                          fontSize: 13.sp,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.3,
                         ),
                       ),
-                      const SizedBox(width: 5),
+                      SizedBox(width: 5),
                       isLast
-                          ? const Text('🎉', style: TextStyle(fontSize: 13))
-                          : const Icon(
+                          ? Text('🎉', style: TextStyle(fontSize: 13.sp))
+                          : Icon(
                               Icons.arrow_forward_rounded,
                               color: Colors.white,
                               size: 14,

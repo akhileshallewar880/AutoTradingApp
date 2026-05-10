@@ -10,6 +10,7 @@ import '../theme/app_text_styles.dart';
 import '../theme/vt_color_scheme.dart';
 import '../widgets/vantrade_logo.dart';
 import '../widgets/vt_button.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 enum _Phase { enterPhone, sendingCode, enterOtp, verifyingOtp }
 
@@ -45,7 +46,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
     super.initState();
     _glowCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2000),
+      duration: Duration(milliseconds: 2000),
     )..repeat(reverse: true);
     _glowAnim = Tween<double>(begin: 0.06, end: 0.20)
         .animate(CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut));
@@ -63,7 +64,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
       final digits = raw.replaceAll(RegExp(r'\D'), '');
       if (digits.length == 6) {
         setState(() => _otpCtrl.text = digits);
-        Future.delayed(const Duration(milliseconds: 400), _verifyOtp);
+        Future.delayed(Duration(milliseconds: 400), _verifyOtp);
       }
     });
   }
@@ -87,7 +88,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
   void _startResendTimer() {
     _resendSeconds = 30;
     _resendTimer?.cancel();
-    _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+    _resendTimer = Timer.periodic(Duration(seconds: 1), (t) {
       if (!mounted) { t.cancel(); return; }
       setState(() {
         if (_resendSeconds <= 1) { t.cancel(); _resendSeconds = 0; }
@@ -114,7 +115,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
         setState(() => _phase = _Phase.enterOtp);
         _startResendTimer();
         _startSmsListener();
-        Future.delayed(const Duration(milliseconds: 300),
+        Future.delayed(Duration(milliseconds: 300),
             () => _otpFocus.requestFocus());
       },
       onError: (msg) {
@@ -147,7 +148,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
     _otpCtrl.clear();
     setState(() => _phase = _Phase.enterPhone);
     // Small delay so the UI refreshes before re-firing
-    Future.delayed(const Duration(milliseconds: 200), _sendOtp);
+    Future.delayed(Duration(milliseconds: 200), _sendOtp);
   }
 
   void _navigateAfterAuth() {
@@ -166,7 +167,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
       content: Text(message),
       backgroundColor: context.vt.danger,
       behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 4),
+      duration: Duration(seconds: 4),
     ));
   }
 
@@ -190,14 +191,14 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
             children: [
               Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: Sp.xl),
+                  padding: EdgeInsets.symmetric(horizontal: Sp.xl),
                   child: Column(
                     children: [
-                      const SizedBox(height: Sp.xxxl),
+                      SizedBox(height: Sp.xxxl),
                       _buildLogo(vt),
-                      const SizedBox(height: Sp.xl),
+                      SizedBox(height: Sp.xl),
                       _buildHeading(),
-                      const SizedBox(height: Sp.xxxl),
+                      SizedBox(height: Sp.xxxl),
                       if (_phase == _Phase.enterPhone || _phase == _Phase.sendingCode)
                         _buildPhoneField(vt)
                       else if (_phase == _Phase.enterOtp || _phase == _Phase.verifyingOtp)
@@ -239,7 +240,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
           child!,
         ],
       ),
-      child: const VanTradeLogoWidget(size: 72),
+      child: VanTradeLogoWidget(size: 72),
     );
   }
 
@@ -254,7 +255,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
           style: AppTextStyles.h1,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: Sp.sm),
+        SizedBox(height: Sp.sm),
         Text(
           isOtpPhase
               ? 'A 6-digit OTP was sent to +91 ${_phoneCtrl.text}'
@@ -284,35 +285,35 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
           children: [
             Text('Mobile Number', style: AppTextStyles.caption),
             AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
+              duration: Duration(milliseconds: 200),
               child: _phoneComplete
                   ? Row(
-                      key: const ValueKey('complete'),
+                      key: ValueKey('complete'),
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(Icons.check_circle_rounded,
                             size: 12, color: vt.accentGreen),
-                        const SizedBox(width: 4),
+                        SizedBox(width: 4),
                         Text('Ready to send',
                             style: AppTextStyles.caption.copyWith(
-                                color: vt.accentGreen, fontSize: 11)),
+                                color: vt.accentGreen, fontSize: 11.sp)),
                       ],
                     )
                   : Text(
-                      key: const ValueKey('count'),
+                      key: ValueKey('count'),
                       '$digitCount / 10',
                       style: AppTextStyles.caption.copyWith(
                           color: digitCount > 0
                               ? vt.textSecondary
                               : vt.textTertiary,
-                          fontSize: 11),
+                          fontSize: 11.sp),
                     ),
             ),
           ],
         ),
-        const SizedBox(height: Sp.sm),
+        SizedBox(height: Sp.sm),
         AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
+          duration: Duration(milliseconds: 200),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(Rad.md),
             border: Border.all(
@@ -329,7 +330,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
               Container(
                 height: 52,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: Sp.md),
+                    EdgeInsets.symmetric(horizontal: Sp.md),
                 decoration: BoxDecoration(
                   border: Border(
                     right: BorderSide(color: borderColor),
@@ -339,8 +340,8 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('🇮🇳', style: TextStyle(fontSize: 18)),
-                    const SizedBox(width: 6),
+                    Text('🇮🇳', style: TextStyle(fontSize: 18.sp)),
+                    SizedBox(width: 6),
                     Text('+91',
                         style: AppTextStyles.body
                             .copyWith(color: vt.textPrimary)),
@@ -367,7 +368,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
                     border: InputBorder.none,
                     enabledBorder: InputBorder.none,
                     focusedBorder: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
+                    contentPadding: EdgeInsets.symmetric(
                         horizontal: Sp.md, vertical: 14),
                     suffixIcon: _phoneCtrl.text.isNotEmpty
                         ? GestureDetector(
@@ -394,7 +395,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
                     _autoSubmitTimer?.cancel();
                     if (_phoneComplete) {
                       _autoSubmitTimer = Timer(
-                          const Duration(milliseconds: 800), _sendOtp);
+                          Duration(milliseconds: 800), _sendOtp);
                     }
                   },
                 ),
@@ -402,11 +403,11 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
             ],
           ),
         ),
-        const SizedBox(height: Sp.xs),
+        SizedBox(height: Sp.xs),
         Text(
           'India (+91) only. SMS will be sent for verification.',
           style: AppTextStyles.caption
-              .copyWith(color: vt.textTertiary, fontSize: 11),
+              .copyWith(color: vt.textTertiary, fontSize: 11.sp),
         ),
       ],
     );
@@ -419,7 +420,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
       width: 48,
       height: 52,
       textStyle: AppTextStyles.mono.copyWith(
-          fontSize: 20, fontWeight: FontWeight.bold, color: vt.textPrimary),
+          fontSize: 20.sp, fontWeight: FontWeight.bold, color: vt.textPrimary),
       decoration: BoxDecoration(
         color: vt.surface2,
         borderRadius: BorderRadius.circular(Rad.md),
@@ -455,7 +456,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
           onCompleted: (_) => _verifyOtp(),
           onChanged: (_) => setState(() {}),
         ),
-        const SizedBox(height: Sp.base),
+        SizedBox(height: Sp.base),
         // Back + resend row
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -474,7 +475,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
                     color: vt.textSecondary),
               ),
             ),
-            const Spacer(),
+            Spacer(),
             TextButton(
               onPressed: (_resendSeconds > 0 || _phase == _Phase.verifyingOtp)
                   ? null
@@ -505,7 +506,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
         auth.isPhoneVerifying;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Sp.xl, Sp.base, Sp.xl, Sp.xl),
+      padding: EdgeInsets.fromLTRB(Sp.xl, Sp.base, Sp.xl, Sp.xl),
       child: isLoading
           ? Column(
               mainAxisSize: MainAxisSize.min,
@@ -518,7 +519,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
                     color: vt.accentPurple,
                   ),
                 ),
-                const SizedBox(height: Sp.sm),
+                SizedBox(height: Sp.sm),
                 Text(
                   _phase == _Phase.sendingCode
                       ? 'Sending OTP…'
@@ -533,19 +534,19 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
                 if (_phase == _Phase.enterPhone)
                   VtButton(
                     label: 'Send OTP',
-                    icon: const Icon(Icons.sms_outlined,
+                    icon: Icon(Icons.sms_outlined,
                         size: 18, color: Colors.white),
                     onPressed: _phoneComplete ? _sendOtp : null,
                   )
                 else if (_phase == _Phase.enterOtp)
                   VtButton(
                     label: 'Verify OTP',
-                    icon: const Icon(Icons.verified_outlined,
+                    icon: Icon(Icons.verified_outlined,
                         size: 18, color: Colors.white),
                     onPressed:
                         _otpCtrl.text.length == 6 ? _verifyOtp : null,
                   ),
-                const SizedBox(height: Sp.sm),
+                SizedBox(height: Sp.sm),
                 VtButton(
                   label: 'Try Demo Mode',
                   icon: Icon(Icons.science_outlined,
@@ -560,17 +561,17 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen>
                   },
                   variant: VtButtonVariant.ghost,
                 ),
-                const SizedBox(height: Sp.md),
+                SizedBox(height: Sp.md),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.lock_outline,
                         size: 11, color: vt.textTertiary),
-                    const SizedBox(width: 4),
+                    SizedBox(width: 4),
                     Text(
                       'Your number is only used to verify your identity',
                       style: AppTextStyles.caption.copyWith(
-                          color: vt.textTertiary, fontSize: 11),
+                          color: vt.textTertiary, fontSize: 11.sp),
                     ),
                   ],
                 ),

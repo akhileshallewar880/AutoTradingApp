@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
 import 'providers/auth_provider.dart';
@@ -53,7 +54,17 @@ void main() async {
   final themeProvider = ThemeProvider();
   await themeProvider.load();
 
-  runApp(AlgoTradingApp(themeProvider: themeProvider));
+  // ScreenUtilInit must wrap the entire app so ScreenUtil is initialized
+  // before ANY widget builds — including AppTheme.lightTheme which calls
+  // VtType.h1 / VtType.body etc. (all use .sp) during MaterialApp construction.
+  runApp(
+    ScreenUtilInit(
+      designSize: const Size(390, 844),
+      minTextAdapt: true,
+      splitScreenMode: false,
+      builder: (_, child) => AlgoTradingApp(themeProvider: themeProvider),
+    ),
+  );
 
   NotificationService.instance.initialize().then((_) {
     NotificationService.initializeTimezone().then((_) {

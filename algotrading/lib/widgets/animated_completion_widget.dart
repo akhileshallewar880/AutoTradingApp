@@ -2,6 +2,7 @@ import '../theme/vt_color_scheme.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../theme/app_text_styles.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 /// A stat item to display below the completion animation.
 class CompletionStatItem {

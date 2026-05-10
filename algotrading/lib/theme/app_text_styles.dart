@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'vt_typography.dart';
 
@@ -59,8 +60,8 @@ abstract final class AppTextStyles {
   static TextStyle get captionSecondary => caption;
 
   /// Heading alias — Inter 600.
-  static final TextStyle headingBold = GoogleFonts.inter(
-    fontSize: 17,
+  static TextStyle get headingBold => GoogleFonts.inter(
+    fontSize: 17.sp,
     fontWeight: FontWeight.w600,
     letterSpacing: -0.3,
     height: 1.3,

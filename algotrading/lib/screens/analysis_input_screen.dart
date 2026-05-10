@@ -14,6 +14,7 @@ import '../widgets/vt_button.dart';
 import '../widgets/vt_card.dart';
 import '../widgets/vt_tour.dart';
 import 'analysis_results_screen.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 // ── NSE stock catalogue used by the search feature ───────────────────────────
 const _kNseStocks = <(String, String)>[
@@ -231,7 +232,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           targetKey: _tourGenerateKey,
           title: 'Launch the AI Analysis',
           body: 'Tap here to send your request to GPT-4o. It will scan the market, apply technical indicators (VWAP, RSI, MACD, Bollinger Bands), and return trade setups in seconds.',
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           radius: 10,
         ),
       ],
@@ -284,9 +285,9 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
             title: Row(
               children: [
                 Text('AI Analysis', style: AppTextStyles.h2),
-                const SizedBox(width: Sp.sm),
+                SizedBox(width: Sp.sm),
                 Container(
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                       horizontal: Sp.sm, vertical: 3),
                   decoration: BoxDecoration(
                     color: context.vt.accentPurpleDim,
@@ -297,12 +298,12 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                     children: [
                       Icon(Icons.auto_awesome_rounded,
                           size: 11, color: context.vt.accentPurple),
-                      const SizedBox(width: 4),
+                      SizedBox(width: 4),
                       Text('GPT-4o',
                           style: AppTextStyles.caption.copyWith(
                               color: context.vt.accentPurple,
                               fontWeight: FontWeight.w700,
-                              fontSize: 11)),
+                              fontSize: 11.sp)),
                     ],
                   ),
                 ),
@@ -318,7 +319,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                   children: [
                     Expanded(
                       child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(Sp.base),
+                        padding: EdgeInsets.all(Sp.base),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
@@ -327,7 +328,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                               key: _tourSearchKey,
                               child: _buildStockSearchCard(),
                             ),
-                            const SizedBox(height: Sp.base),
+                            SizedBox(height: Sp.base),
 
                             // ── Hold Duration ─────────────────────────────
                             VtCard(
@@ -345,23 +346,23 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                                     style: AppTextStyles.caption.copyWith(
                                         color: context.vt.textSecondary),
                                   ),
-                                  const SizedBox(height: Sp.md),
+                                  SizedBox(height: Sp.md),
                                   _buildHoldDurationPicker(),
                                   if (_holdDurationDays == 0) ...[
-                                    const SizedBox(height: Sp.base),
+                                    SizedBox(height: Sp.base),
                                     _buildLeveragePicker(),
                                   ],
                                 ],
                               ),
                             ),
-                            const SizedBox(height: Sp.base),
+                            SizedBox(height: Sp.base),
 
                             // ── Capital ───────────────────────────────────
                             KeyedSubtree(
                               key: _tourCapitalKey,
                               child: _buildCapitalCard(),
                             ),
-                            const SizedBox(height: Sp.base),
+                            SizedBox(height: Sp.base),
 
                             // ── Parameters ────────────────────────────────
                             VtCard(
@@ -377,17 +378,17 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                                   if (_selectedSymbols.isEmpty)
                                     _buildStockCountStepper(),
                                   if (_selectedSymbols.isEmpty)
-                                    const SizedBox(height: Sp.base),
+                                    SizedBox(height: Sp.base),
                                   _buildDatePicker(),
                                 ],
                               ),
                             ),
-                            const SizedBox(height: Sp.base),
+                            SizedBox(height: Sp.base),
 
                             // ── Error ─────────────────────────────────────
                             if (analysisProvider.error != null)
                               Container(
-                                padding: const EdgeInsets.all(Sp.md),
+                                padding: EdgeInsets.all(Sp.md),
                                 decoration: BoxDecoration(
                                   color: context.vt.dangerDim,
                                   borderRadius:
@@ -400,7 +401,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                                   children: [
                                     Icon(Icons.error_outline,
                                         color: context.vt.danger, size: 16),
-                                    const SizedBox(width: Sp.sm),
+                                    SizedBox(width: Sp.sm),
                                     Expanded(
                                       child: Text(
                                         analysisProvider.error!,
@@ -412,7 +413,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                                 ),
                               ),
 
-                            const SizedBox(height: Sp.xxl),
+                            SizedBox(height: Sp.xxl),
                           ],
                         ),
                       ),
@@ -420,7 +421,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
 
                     // ── Fixed CTA ─────────────────────────────────────────
                     Container(
-                      padding: const EdgeInsets.fromLTRB(
+                      padding: EdgeInsets.fromLTRB(
                           Sp.base, Sp.sm, Sp.base, Sp.xl),
                       decoration: BoxDecoration(
                         color: context.vt.surface1,
@@ -432,7 +433,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                         label: _selectedSymbols.isNotEmpty
                             ? 'Analyse ${_selectedSymbols.length} Stock${_selectedSymbols.length == 1 ? '' : 's'}'
                             : 'Generate AI Analysis',
-                        icon: const Icon(Icons.auto_awesome_rounded,
+                        icon: Icon(Icons.auto_awesome_rounded,
                             size: 18, color: Colors.white),
                         onPressed: analysisProvider.isLoading
                             ? null
@@ -447,7 +448,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
         ),
 
         if (analysisProvider.isLoading)
-          const AnimatedLoadingOverlay(message: 'Analyzing markets…'),
+          AnimatedLoadingOverlay(message: 'Analyzing markets…'),
       ],
     );
   }
@@ -471,7 +472,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
             style: AppTextStyles.caption
                 .copyWith(color: context.vt.textSecondary),
           ),
-          const SizedBox(height: Sp.md),
+          SizedBox(height: Sp.md),
 
           // Search field
           Container(
@@ -488,7 +489,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
             child: Row(
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(left: Sp.md),
+                  padding: EdgeInsets.only(left: Sp.md),
                   child: Icon(Icons.search_rounded,
                       size: 18,
                       color: _searchFocused
@@ -507,7 +508,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                       border: InputBorder.none,
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
+                      contentPadding: EdgeInsets.symmetric(
                           horizontal: Sp.sm, vertical: Sp.md),
                       filled: false,
                     ),
@@ -522,7 +523,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                       setState(() => _searchQuery = '');
                     },
                     child: Padding(
-                      padding: const EdgeInsets.only(right: Sp.sm),
+                      padding: EdgeInsets.only(right: Sp.sm),
                       child: Icon(Icons.close_rounded,
                           size: 16, color: context.vt.textTertiary),
                     ),
@@ -533,7 +534,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
 
           // Search results dropdown
           if (_filteredStocks.isNotEmpty) ...[
-            const SizedBox(height: Sp.xs),
+            SizedBox(height: Sp.xs),
             Container(
               decoration: BoxDecoration(
                 color: context.vt.surface1,
@@ -549,7 +550,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                     onTap: () => _addSymbol(stock.$1),
                     borderRadius: BorderRadius.circular(Rad.md),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
+                      padding: EdgeInsets.symmetric(
                           horizontal: Sp.md, vertical: Sp.sm),
                       decoration: BoxDecoration(
                         border: isLast
@@ -561,7 +562,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                       child: Row(
                         children: [
                           Container(
-                            padding: const EdgeInsets.symmetric(
+                            padding: EdgeInsets.symmetric(
                                 horizontal: Sp.sm, vertical: 3),
                             decoration: BoxDecoration(
                               color: context.vt.surface2,
@@ -573,7 +574,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                                   fontWeight: FontWeight.w700),
                             ),
                           ),
-                          const SizedBox(width: Sp.sm),
+                          SizedBox(width: Sp.sm),
                           Expanded(
                             child: Text(
                               stock.$2,
@@ -596,13 +597,13 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
 
           // Selected chips
           if (_selectedSymbols.isNotEmpty) ...[
-            const SizedBox(height: Sp.md),
+            SizedBox(height: Sp.md),
             Wrap(
               spacing: Sp.sm,
               runSpacing: Sp.sm,
               children: _selectedSymbols.map((sym) {
                 return Container(
-                  padding: const EdgeInsets.only(
+                  padding: EdgeInsets.only(
                       left: Sp.sm, top: 5, bottom: 5, right: 4),
                   decoration: BoxDecoration(
                     color: context.vt.accentGreenDim,
@@ -619,9 +620,9 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                         style: AppTextStyles.label.copyWith(
                             color: context.vt.accentGreen,
                             fontWeight: FontWeight.w700,
-                            fontSize: 12),
+                            fontSize: 12.sp),
                       ),
-                      const SizedBox(width: 4),
+                      SizedBox(width: 4),
                       GestureDetector(
                         onTap: () => _removeSymbol(sym),
                         child: Icon(Icons.close_rounded,
@@ -654,9 +655,9 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
               });
             },
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              margin: const EdgeInsets.only(right: Sp.sm),
-              padding: const EdgeInsets.symmetric(
+              duration: Duration(milliseconds: 200),
+              margin: EdgeInsets.only(right: Sp.sm),
+              padding: EdgeInsets.symmetric(
                   horizontal: Sp.md, vertical: Sp.sm),
               decoration: BoxDecoration(
                 color: selected
@@ -693,14 +694,14 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
         Row(
           children: [
             Icon(Icons.bolt_rounded, color: context.vt.warning, size: 15),
-            const SizedBox(width: Sp.xs),
+            SizedBox(width: Sp.xs),
             Text('MIS Leverage',
                 style: AppTextStyles.label
                     .copyWith(color: context.vt.textSecondary)),
-            const SizedBox(width: Sp.sm),
+            SizedBox(width: Sp.sm),
             Container(
               padding:
-                  const EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 2),
+                  EdgeInsets.symmetric(horizontal: Sp.sm, vertical: 2),
               decoration: BoxDecoration(
                 color: context.vt.warning.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(Rad.pill),
@@ -715,22 +716,22 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
             ),
           ],
         ),
-        const SizedBox(height: Sp.xs),
+        SizedBox(height: Sp.xs),
         Text(
           'Higher leverage = higher risk. Effective capital is multiplied.',
           style:
               AppTextStyles.caption.copyWith(color: context.vt.textSecondary),
         ),
-        const SizedBox(height: Sp.sm),
+        SizedBox(height: Sp.sm),
         Row(
           children: [1, 2, 3, 4, 5].map((lev) {
             final selected = _leverage == lev;
             return GestureDetector(
               onTap: () => setState(() => _leverage = lev),
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                margin: const EdgeInsets.only(right: Sp.sm),
-                padding: const EdgeInsets.symmetric(
+                duration: Duration(milliseconds: 150),
+                margin: EdgeInsets.only(right: Sp.sm),
+                padding: EdgeInsets.symmetric(
                     horizontal: Sp.md, vertical: Sp.sm),
                 decoration: BoxDecoration(
                   color: selected
@@ -781,17 +782,17 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
             Text(
               currency.format(_availableBalance),
               style: AppTextStyles.mono.copyWith(
-                  color: context.vt.accentGreen, fontSize: 22),
+                  color: context.vt.accentGreen, fontSize: 22.sp),
             ),
             Text('available balance',
                 style: AppTextStyles.caption
                     .copyWith(color: context.vt.textSecondary)),
-            const SizedBox(height: Sp.md),
+            SizedBox(height: Sp.md),
           ],
           TextFormField(
             controller: _capitalController,
             keyboardType: TextInputType.number,
-            style: AppTextStyles.mono.copyWith(fontSize: 18),
+            style: AppTextStyles.mono.copyWith(fontSize: 18.sp),
             decoration: InputDecoration(
               prefixText: '₹ ',
               prefixStyle: AppTextStyles.mono
@@ -814,7 +815,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
             },
           ),
           if (_availableBalance > 0) ...[
-            const SizedBox(height: Sp.md),
+            SizedBox(height: Sp.md),
             Row(
               children: pcts.map((pct) {
                 final amount =
@@ -828,7 +829,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
                     child: Container(
                       margin: EdgeInsets.only(
                           right: pct == 100 ? 0 : Sp.sm),
-                      padding: const EdgeInsets.symmetric(vertical: Sp.sm),
+                      padding: EdgeInsets.symmetric(vertical: Sp.sm),
                       decoration: BoxDecoration(
                         color: context.vt.surface2,
                         borderRadius: BorderRadius.circular(Rad.sm),
@@ -876,11 +877,11 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           onTap: _numStocks > 1 ? () => setState(() => _numStocks--) : null,
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: Sp.md),
+          padding: EdgeInsets.symmetric(horizontal: Sp.md),
           child: Text(
             '$_numStocks',
             style: AppTextStyles.mono.copyWith(
-                fontSize: 20, fontWeight: FontWeight.w700),
+                fontSize: 20.sp, fontWeight: FontWeight.w700),
           ),
         ),
         _StepperButton(
@@ -900,11 +901,11 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
         Text('Analysis Date',
             style: AppTextStyles.body
                 .copyWith(color: context.vt.textPrimary)),
-        const SizedBox(height: Sp.sm),
+        SizedBox(height: Sp.sm),
         GestureDetector(
           onTap: _selectDate,
           child: Container(
-            padding: const EdgeInsets.symmetric(
+            padding: EdgeInsets.symmetric(
                 horizontal: Sp.md, vertical: Sp.md),
             decoration: BoxDecoration(
               color: context.vt.surface2,
@@ -932,7 +933,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
     final picked = await showDatePicker(
       context: context,
       initialDate: _selectedDate,
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      firstDate: DateTime.now().subtract(Duration(days: 365)),
       lastDate: DateTime.now(),
     );
     if (picked != null) setState(() => _selectedDate = picked);
@@ -989,7 +990,7 @@ class _AnalysisInputScreenState extends State<AnalysisInputScreen> {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => const AnalysisResultsScreen(),
+              builder: (context) => AnalysisResultsScreen(),
             ),
           );
         }
@@ -1052,7 +1053,7 @@ class _UpgradeSheet extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: vt.surface0,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.fromLTRB(
           24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 32),
@@ -1070,20 +1071,20 @@ class _UpgradeSheet extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 20),
+          SizedBox(height: 20),
 
           // Limit reached message
           Row(children: [
             Container(
-              padding: const EdgeInsets.all(10),
+              padding: EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: Colors.orangeAccent.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.lock_outline_rounded,
+              child: Icon(Icons.lock_outline_rounded,
                   color: Colors.orangeAccent, size: 22),
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1099,20 +1100,20 @@ class _UpgradeSheet extends StatelessWidget {
             ),
           ]),
 
-          const SizedBox(height: 20),
+          SizedBox(height: 20),
 
           // Promo badge
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+            padding: EdgeInsets.symmetric(vertical: 10, horizontal: 14),
             decoration: BoxDecoration(
               color: vt.accentGreen.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(Rad.md),
               border: Border.all(color: vt.accentGreen.withValues(alpha: 0.35)),
             ),
             child: Row(children: [
-              const Text('🎉', style: TextStyle(fontSize: 18)),
-              const SizedBox(width: 10),
+              Text('🎉', style: TextStyle(fontSize: 18.sp)),
+              SizedBox(width: 10),
               Expanded(
                 child: Text(
                   'Beta launch — 100% OFF on all plans. Upgrade free today!',
@@ -1123,7 +1124,7 @@ class _UpgradeSheet extends StatelessWidget {
             ]),
           ),
 
-          const SizedBox(height: 20),
+          SizedBox(height: 20),
 
           // Plan options
           _PlanOption(
@@ -1133,16 +1134,16 @@ class _UpgradeSheet extends StatelessWidget {
             color: vt.accentGreen,
             planId: 'pro',
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: 10),
           _PlanOption(
             name: 'Elite',
             originalPrice: _kElitePrice,
             analyses: 'Unlimited analyses',
-            color: const Color(0xFFFFD700),
+            color: Color(0xFFFFD700),
             planId: 'elite',
           ),
 
-          const SizedBox(height: 20),
+          SizedBox(height: 20),
           Center(
             child: TextButton(
               onPressed: () => Navigator.pop(context),
@@ -1179,7 +1180,7 @@ class _PlanOption extends StatelessWidget {
       onTap: () => _activate(context),
       borderRadius: BorderRadius.circular(Rad.md),
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.06),
           borderRadius: BorderRadius.circular(Rad.md),

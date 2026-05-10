@@ -12,6 +12,7 @@ import '../theme/app_text_styles.dart';
 import '../widgets/animated_completion_widget.dart';
 import '../widgets/vt_button.dart';
 import '../services/notification_service.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class ExecutionTrackingScreen extends StatefulWidget {
   final String analysisId;
@@ -322,7 +323,7 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
                   '${status.completedStocks}/${status.totalStocks}',
                   style: AppTextStyles.caption.copyWith(
                       color: color,
-                      fontSize: 9,
+                      fontSize: 9.sp,
                       fontWeight: FontWeight.w700),
                 ),
               ],
@@ -426,7 +427,7 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
                       Text(
                         DateFormat('HH:mm:ss').format(update.timestamp),
                         style: AppTextStyles.caption
-                            .copyWith(fontSize: 10),
+                            .copyWith(fontSize: 10.sp),
                       ),
                     ],
                   ),
@@ -441,7 +442,7 @@ class _ExecutionTrackingScreenState extends State<ExecutionTrackingScreen>
                     Text(
                       'ID: ${update.orderId}',
                       style: AppTextStyles.monoSm.copyWith(
-                          color: context.vt.textTertiary, fontSize: 10),
+                          color: context.vt.textTertiary, fontSize: 10.sp),
                     ),
                   ],
                 ],

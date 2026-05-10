@@ -7,6 +7,7 @@ import '../providers/dashboard_provider.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../theme/vt_color_scheme.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class OpenOrdersScreen extends StatefulWidget {
   const OpenOrdersScreen({super.key});
@@ -199,7 +200,7 @@ class _OrderTile extends StatelessWidget {
                     style: AppTextStyles.label.copyWith(
                       color: sideColor,
                       fontWeight: FontWeight.w800,
-                      fontSize: 10,
+                      fontSize: 10.sp,
                     ),
                   ),
                 ),
@@ -218,7 +219,7 @@ class _OrderTile extends StatelessWidget {
                     statusInfo.label,
                     style: AppTextStyles.label.copyWith(
                       color: statusInfo.color,
-                      fontSize: 10,
+                      fontSize: 10.sp,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -289,7 +290,7 @@ class _OrderTile extends StatelessWidget {
           Text(
             value,
             style: AppTextStyles.mono.copyWith(
-              fontSize: 13,
+              fontSize: 13.sp,
               fontWeight: FontWeight.w600,
               color: color ?? vt.textPrimary,
             ),
@@ -311,7 +312,7 @@ class _OrderTile extends StatelessWidget {
       child: Text(
         label,
         style: AppTextStyles.label.copyWith(
-          fontSize: 10,
+          fontSize: 10.sp,
           color: c,
           fontWeight: FontWeight.w600,
         ),

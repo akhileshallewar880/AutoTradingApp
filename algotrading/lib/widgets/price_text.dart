@@ -2,6 +2,7 @@ import '../theme/vt_color_scheme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../theme/app_text_styles.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 /// Animated price widget: counts up from old to new value on change.
 /// Always renders in Space Grotesk mono. Color follows sign.
@@ -145,7 +146,7 @@ class PnlPill extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: AppTextStyles.monoSm.copyWith(color: color, fontSize: 12),
+        style: AppTextStyles.monoSm.copyWith(color: color, fontSize: 12.sp),
       ),
     );
   }

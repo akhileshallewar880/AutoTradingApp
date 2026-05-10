@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 /// Full-screen immersive loading overlay for AI analysis.
 /// Features: animated candlestick chart, orbiting particle system,
@@ -7,7 +8,7 @@ import 'package:flutter/material.dart';
 class AnimatedLoadingOverlay extends StatefulWidget {
   final String message;
 
-  const AnimatedLoadingOverlay({
+  AnimatedLoadingOverlay({
     super.key,
     this.message = 'Analyzing markets…',
   });
@@ -56,12 +57,12 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
 
     _orbitController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 6),
+      duration: Duration(seconds: 6),
     )..repeat();
 
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1400),
+      duration: Duration(milliseconds: 1400),
     )..repeat(reverse: true);
 
     _pulseAnim = Tween<double>(begin: 0.88, end: 1.12).animate(
@@ -70,7 +71,7 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
 
     _glowController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1800),
+      duration: Duration(milliseconds: 1800),
     )..repeat(reverse: true);
 
     _glowAnim = Tween<double>(begin: 0.3, end: 1.0).animate(
@@ -79,7 +80,7 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
 
     _textController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 500),
+      duration: Duration(milliseconds: 500),
     );
 
     _textOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -88,17 +89,17 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
 
     _candleController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2500),
+      duration: Duration(milliseconds: 2500),
     )..repeat();
 
     _progressController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 28),
+      duration: Duration(seconds: 28),
     )..forward();
 
     _particleController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 4),
+      duration: Duration(seconds: 4),
     )..repeat();
 
     _textController.forward();
@@ -120,7 +121,7 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
 
   void _cycleSteps() async {
     while (mounted) {
-      await Future.delayed(const Duration(milliseconds: 2800));
+      await Future.delayed(Duration(milliseconds: 2800));
       if (!mounted) break;
       await _textController.reverse();
       if (!mounted) break;
@@ -155,7 +156,7 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
       child: Container(
         width: double.infinity,
         height: double.infinity,
-        color: const Color(0xFFF4F6FA),
+        color: Color(0xFFF4F6FA),
         child: Stack(
           children: [
             // ── Background particle field ──────────────────────────────
@@ -212,36 +213,36 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
                     ),
                   ),
 
-                  const SizedBox(height: 32),
+                  SizedBox(height: 32),
 
                   // Title
                   ShaderMask(
-                    shaderCallback: (bounds) => const LinearGradient(
+                    shaderCallback: (bounds) => LinearGradient(
                       colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
                     ).createShader(bounds),
-                    child: const Text(
+                    child: Text(
                       'AI ANALYSIS ENGINE',
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 22,
+                        fontSize: 22.sp,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 3,
                       ),
                     ),
                   ),
 
-                  const SizedBox(height: 6),
+                  SizedBox(height: 6),
 
-                  const Text(
+                  Text(
                     'Powered by Deep Learning',
                     style: TextStyle(
                       color: Color(0xFF8E9BB5),
-                      fontSize: 12,
+                      fontSize: 12.sp,
                       letterSpacing: 1.5,
                     ),
                   ),
 
-                  const SizedBox(height: 36),
+                  SizedBox(height: 36),
 
                   // Step icon + message
                   FadeTransition(
@@ -250,24 +251,24 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
                       children: [
                         Text(
                           step['icon'] as String,
-                          style: const TextStyle(fontSize: 40),
+                          style: TextStyle(fontSize: 40.sp),
                         ),
-                        const SizedBox(height: 10),
+                        SizedBox(height: 10),
                         Text(
                           step['msg'] as String,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Color(0xFF0D1421),
-                            fontSize: 18,
+                            fontSize: 18.sp,
                             fontWeight: FontWeight.bold,
                           ),
                           textAlign: TextAlign.center,
                         ),
-                        const SizedBox(height: 6),
+                        SizedBox(height: 6),
                         Text(
                           step['sub'] as String,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Color(0xFF536080),
-                            fontSize: 13,
+                            fontSize: 13.sp,
                           ),
                           textAlign: TextAlign.center,
                         ),
@@ -275,11 +276,11 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
                     ),
                   ),
 
-                  const SizedBox(height: 40),
+                  SizedBox(height: 40),
 
                   // Progress bar
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 48),
+                    padding: EdgeInsets.symmetric(horizontal: 48),
                     child: Column(
                       children: [
                         AnimatedBuilder(
@@ -292,30 +293,30 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
                                   child: LinearProgressIndicator(
                                     value: _progressController.value,
                                     minHeight: 6,
-                                    backgroundColor: const Color(0xFFD8DFEC),
+                                    backgroundColor: Color(0xFFD8DFEC),
                                     valueColor:
-                                        const AlwaysStoppedAnimation<Color>(
+                                        AlwaysStoppedAnimation<Color>(
                                       Color(0xFF4F46E5),
                                     ),
                                   ),
                                 ),
-                                const SizedBox(height: 8),
+                                SizedBox(height: 8),
                                 Row(
                                   mainAxisAlignment:
                                       MainAxisAlignment.spaceBetween,
                                   children: [
-                                    const Text(
+                                    Text(
                                       'Processing…',
                                       style: TextStyle(
                                         color: Color(0xFF8E9BB5),
-                                        fontSize: 11,
+                                        fontSize: 11.sp,
                                       ),
                                     ),
                                     Text(
                                       '${(_progressController.value * 100).toInt()}%',
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         color: Color(0xFF4F46E5),
-                                        fontSize: 11,
+                                        fontSize: 11.sp,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
@@ -329,7 +330,7 @@ class _AnimatedLoadingOverlayState extends State<AnimatedLoadingOverlay>
                     ),
                   ),
 
-                  const SizedBox(height: 32),
+                  SizedBox(height: 32),
 
                   // Step dots
                   _StepDots(
@@ -381,18 +382,18 @@ class _AIBrainPainter extends CustomPainter {
 
     // Outer glow ring
     final glowPaint = Paint()
-      ..color = const Color(0xFF4F46E5).withValues(alpha: 0.10 * glow)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 30)
+      ..color = Color(0xFF4F46E5).withValues(alpha: 0.10 * glow)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 30)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(Offset(cx, cy), r * 0.85, glowPaint);
 
     // Outer dashed orbit ring
     _drawDashedCircle(canvas, Offset(cx, cy), r * 0.88, 28,
-        const Color(0xFF4F46E5).withValues(alpha: 0.20), 2);
+        Color(0xFF4F46E5).withValues(alpha: 0.20), 2);
 
     // Mid orbit ring
     _drawDashedCircle(canvas, Offset(cx, cy), r * 0.62, 20,
-        const Color(0xFF0A9E6E).withValues(alpha: 0.25), 1.5);
+        Color(0xFF0A9E6E).withValues(alpha: 0.25), 1.5);
 
     // 5 outer orbiting particles
     for (int i = 0; i < 5; i++) {
@@ -402,15 +403,15 @@ class _AIBrainPainter extends CustomPainter {
       final progress = i / 5;
       final dotPaint = Paint()
         ..color = Color.lerp(
-          const Color(0xFF4F46E5),
-          const Color(0xFF0A9E6E),
+          Color(0xFF4F46E5),
+          Color(0xFF0A9E6E),
           progress,
         )!
         ..style = PaintingStyle.fill;
       // Glow
       final dotGlow = Paint()
         ..color = dotPaint.color.withValues(alpha: 0.35)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 8);
       canvas.drawCircle(Offset(px, py), 7, dotGlow);
       canvas.drawCircle(Offset(px, py), 5, dotPaint);
     }
@@ -421,11 +422,11 @@ class _AIBrainPainter extends CustomPainter {
       final px = cx + r * 0.62 * math.cos(angle);
       final py = cy + r * 0.62 * math.sin(angle);
       final dotPaint = Paint()
-        ..color = const Color(0xFFD97706).withValues(alpha: 0.9)
+        ..color = Color(0xFFD97706).withValues(alpha: 0.9)
         ..style = PaintingStyle.fill;
       final dotGlow = Paint()
-        ..color = const Color(0xFFD97706).withValues(alpha: 0.25)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+        ..color = Color(0xFFD97706).withValues(alpha: 0.25)
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 6);
       canvas.drawCircle(Offset(px, py), 5, dotGlow);
       canvas.drawCircle(Offset(px, py), 3.5, dotPaint);
     }
@@ -435,9 +436,9 @@ class _AIBrainPainter extends CustomPainter {
     final corePaint = Paint()
       ..shader = RadialGradient(
         colors: [
-          const Color(0xFF4F46E5),
-          const Color(0xFF4338CA),
-          const Color(0xFF3730A3),
+          Color(0xFF4F46E5),
+          Color(0xFF4338CA),
+          Color(0xFF3730A3),
         ],
       ).createShader(Rect.fromCircle(
           center: Offset(cx, cy), radius: coreRadius));
@@ -445,8 +446,8 @@ class _AIBrainPainter extends CustomPainter {
 
     // Core glow
     final coreGlow = Paint()
-      ..color = const Color(0xFF4F46E5).withValues(alpha: 0.20 * glow)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20);
+      ..color = Color(0xFF4F46E5).withValues(alpha: 0.20 * glow)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 20);
     canvas.drawCircle(Offset(cx, cy), coreRadius * 1.4, coreGlow);
 
     // Candlestick bars in core
@@ -465,7 +466,7 @@ class _AIBrainPainter extends CustomPainter {
 
     // Connecting lines between outer dots (neural net look)
     final linePaint = Paint()
-      ..color = const Color(0xFF4F46E5).withValues(alpha: 0.12)
+      ..color = Color(0xFF4F46E5).withValues(alpha: 0.12)
       ..strokeWidth = 1;
     for (int i = 0; i < 5; i++) {
       final a1 = orbit * 2 * math.pi + i * 2 * math.pi / 5;
@@ -549,8 +550,8 @@ class _CandleChartPainter extends CustomPainter {
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          const Color(0xFF4F46E5).withValues(alpha: 0.08),
-          const Color(0xFF4F46E5).withValues(alpha: 0.0),
+          Color(0xFF4F46E5).withValues(alpha: 0.08),
+          Color(0xFF4F46E5).withValues(alpha: 0.0),
         ],
       ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
     canvas.drawPath(closePath, areaPaint);
@@ -579,8 +580,8 @@ class _CandleChartPainter extends CustomPainter {
           size.height * 0.05;
 
       final color = isBull
-          ? const Color(0xFF0A9E6E).withValues(alpha: 0.85)
-          : const Color(0xFFD63848).withValues(alpha: 0.85);
+          ? Color(0xFF0A9E6E).withValues(alpha: 0.85)
+          : Color(0xFFD63848).withValues(alpha: 0.85);
 
       final paint = Paint()
         ..color = color
@@ -604,7 +605,7 @@ class _CandleChartPainter extends CustomPainter {
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(x, bodyTop, candleWidth, bodyH * revealProgress),
-          const Radius.circular(1),
+          Radius.circular(1),
         ),
         bodyPaint,
       );
@@ -612,7 +613,7 @@ class _CandleChartPainter extends CustomPainter {
 
     // Grid lines
     final gridPaint = Paint()
-      ..color = const Color(0xFF0D1421).withValues(alpha: 0.06)
+      ..color = Color(0xFF0D1421).withValues(alpha: 0.06)
       ..strokeWidth = 1;
     for (int i = 1; i < 4; i++) {
       final y = size.height * i / 4;
@@ -652,7 +653,7 @@ class _ParticleFieldPainter extends CustomPainter {
       final y = (p.y - progress * p.speed * 10) % 1.0;
       final twinkle = (math.sin((progress + p.phase) * 2 * math.pi) + 1) / 2;
       final paint = Paint()
-        ..color = const Color(0xFF4F46E5)
+        ..color = Color(0xFF4F46E5)
             .withValues(alpha: p.opacity * 0.35 * (0.4 + 0.6 * twinkle));
       canvas.drawCircle(
         Offset(p.x * size.width, y * size.height),
@@ -693,17 +694,17 @@ class _StepDots extends StatelessWidget {
         final isActive = i == current;
         final isPast = i < current;
         return AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          margin: const EdgeInsets.symmetric(horizontal: 3),
+          duration: Duration(milliseconds: 300),
+          margin: EdgeInsets.symmetric(horizontal: 3),
           width: isActive ? 20 : 6,
           height: 6,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(3),
             color: isActive
-                ? const Color(0xFF4F46E5)
+                ? Color(0xFF4F46E5)
                 : isPast
-                    ? const Color(0xFF4F46E5).withValues(alpha: 0.4)
-                    : const Color(0xFFD8DFEC),
+                    ? Color(0xFF4F46E5).withValues(alpha: 0.4)
+                    : Color(0xFFD8DFEC),
           ),
         );
       }),
@@ -740,7 +741,7 @@ class _TickerStripState extends State<_TickerStrip>
     super.initState();
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 20),
+      duration: Duration(seconds: 20),
     )..repeat();
     _offset = Tween<double>(begin: 0, end: -1).animate(_ctrl);
   }
@@ -755,7 +756,7 @@ class _TickerStripState extends State<_TickerStrip>
   Widget build(BuildContext context) {
     return Container(
       height: 32,
-      color: const Color(0xFFEDF0F7),
+      color: Color(0xFFEDF0F7),
       child: AnimatedBuilder(
         animation: _offset,
         builder: (_, _) {
@@ -773,35 +774,35 @@ class _TickerStripState extends State<_TickerStrip>
                     ..._tickers,
                   ].map((t) {
                     return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: EdgeInsets.symmetric(horizontal: 16),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
                             t.$1,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: Color(0xFF536080),
-                              fontSize: 11,
+                              fontSize: 11.sp,
                               fontWeight: FontWeight.w600,
                               letterSpacing: 0.5,
                             ),
                           ),
-                          const SizedBox(width: 4),
+                          SizedBox(width: 4),
                           Text(
                             t.$2,
                             style: TextStyle(
                               color: t.$3
-                                  ? const Color(0xFF0A9E6E)
-                                  : const Color(0xFFD63848),
-                              fontSize: 11,
+                                  ? Color(0xFF0A9E6E)
+                                  : Color(0xFFD63848),
+                              fontSize: 11.sp,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(width: 12),
+                          SizedBox(width: 12),
                           Container(
                             width: 1,
                             height: 12,
-                            color: const Color(0xFFD8DFEC),
+                            color: Color(0xFFD8DFEC),
                           ),
                         ],
                       ),
