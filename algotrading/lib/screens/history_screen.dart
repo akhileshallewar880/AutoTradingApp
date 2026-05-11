@@ -8,6 +8,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/status_badge.dart';
+import '../widgets/vt_tour.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -18,6 +19,8 @@ class HistoryScreen extends StatefulWidget {
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
+  final _tourListKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -25,7 +28,30 @@ class _HistoryScreenState extends State<HistoryScreen> {
       final authProvider = context.read<AuthProvider>();
       final analysisProvider = context.read<AnalysisProvider>();
       analysisProvider.loadHistory(authProvider.user!.accessToken);
+      _startTour();
     });
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'history',
+      steps: [
+        VtTourStep(
+          targetKey: _tourListKey,
+          title: 'Analysis History',
+          body: 'Every AI analysis you run is saved here — date, hold duration, number of stocks picked, and capital deployed. Your full trading track record in one place.',
+          padding: const EdgeInsets.all(8),
+        ),
+        VtTourStep(
+          targetKey: _tourListKey,
+          title: 'Re-run Any Analysis',
+          body: 'Each entry shows the strategy type (Intraday / Swing) and status. Go back to the AI tab anytime to run a fresh analysis with updated market data.',
+          padding: const EdgeInsets.all(8),
+        ),
+      ],
+    );
   }
 
   @override
@@ -44,6 +70,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           : analysisProvider.history.isEmpty
               ? _buildEmpty()
               : ListView.builder(
+                  key: _tourListKey,
                   padding: const EdgeInsets.fromLTRB(
                       Sp.base, Sp.sm, Sp.base, Sp.xxl),
                   itemCount: analysisProvider.history.length,

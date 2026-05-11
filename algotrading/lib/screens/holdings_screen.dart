@@ -14,6 +14,7 @@ import '../theme/app_text_styles.dart';
 import '../utils/api_config.dart';
 import '../widgets/status_badge.dart';
 import '../widgets/vt_button.dart';
+import '../widgets/vt_tour.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class HoldingsScreen extends StatefulWidget {
@@ -38,12 +39,45 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   final _currency      = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2);
   final _currencyRound = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
 
+  final _tourSummaryKey = GlobalKey();
+  final _tourCardKey    = GlobalKey();
+  final _tourExitAllKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
     _fetchHoldings();
-    _ltpTimer =
-        Timer.periodic(Duration(seconds: 30), (_) => _refreshLtps());
+    _ltpTimer = Timer.periodic(Duration(seconds: 30), (_) => _refreshLtps());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startTour());
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'holdings',
+      steps: [
+        VtTourStep(
+          targetKey: _tourSummaryKey,
+          title: 'Portfolio Overview',
+          body: 'Your total current value, amount invested, and overall P&L are shown here. The glow colour reflects whether you\'re in profit (green) or loss (red).',
+          padding: const EdgeInsets.all(12),
+        ),
+        VtTourStep(
+          targetKey: _tourCardKey,
+          title: 'Per-Stock P&L Card',
+          body: 'Each card shows live LTP (auto-refreshed every 30 s), day change %, running P&L, and GTT protection status. Tap "AI Suggest" to generate a stop-loss & target with GPT-4o instantly.',
+          padding: const EdgeInsets.all(8),
+        ),
+        VtTourStep(
+          targetKey: _tourExitAllKey,
+          title: 'Exit All Holdings',
+          body: 'Places SELL orders for every CNC holding at once. Only settled shares can be sold immediately — T+1 shares (bought today) settle the next trading day.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 10,
+        ),
+      ],
+    );
   }
 
   @override
@@ -455,6 +489,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                                   sliver: SliverList(
                                     delegate: SliverChildBuilderDelegate(
                                       (ctx, i) => Padding(
+                                        key: i == 0 ? _tourCardKey : null,
                                         padding: const EdgeInsets.only(
                                             bottom: Sp.sm),
                                         child: _buildHoldingCard(
@@ -497,6 +532,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     final gttCount = gttHoldings.length;
 
     return Container(
+      key: _tourSummaryKey,
       margin: const EdgeInsets.all(Sp.base),
       padding: EdgeInsets.all(Sp.base),
       decoration: BoxDecoration(
@@ -1585,6 +1621,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
   Widget _buildExitAllBar() {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     return Container(
+      key: _tourExitAllKey,
       padding: EdgeInsets.fromLTRB(
           Sp.base, Sp.sm, Sp.base, Sp.sm + bottomPadding),
       decoration: BoxDecoration(

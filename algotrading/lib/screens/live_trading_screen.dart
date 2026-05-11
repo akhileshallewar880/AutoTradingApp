@@ -9,6 +9,7 @@ import '../models/live_trading_model.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
+import '../widgets/vt_tour.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class LiveTradingScreen extends StatefulWidget {
@@ -27,6 +28,10 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
   bool _isInitializing = false;
   String _overlayMessage = 'Processing...';
   late AnimationController _pulseController;
+
+  final _tourStatusKey  = GlobalKey();
+  final _tourConfigKey  = GlobalKey();
+  final _tourAnalyzeKey = GlobalKey();
 
   // Config state
   String _orderType = 'LIMIT';
@@ -48,7 +53,39 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
       vsync: this,
       duration: const Duration(seconds: 1),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadStatus());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadStatus();
+      _startTour();
+    });
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'live_trading',
+      steps: [
+        VtTourStep(
+          targetKey: _tourStatusKey,
+          title: 'Agent Status',
+          body: 'This card shows whether the AI trading agent is running or stopped, today\'s P&L, open positions count, and the last scan time.',
+          padding: const EdgeInsets.all(10),
+        ),
+        VtTourStep(
+          targetKey: _tourConfigKey,
+          title: 'Configure Your Session',
+          body: 'Set your capital to deploy, max simultaneous positions, per-trade risk %, and daily loss limit. The agent uses these to size every order automatically.',
+          padding: const EdgeInsets.all(10),
+        ),
+        VtTourStep(
+          targetKey: _tourAnalyzeKey,
+          title: 'Step 1 — Scan the Market',
+          body: 'Tap "Analyze Market" to let GPT-4o scan Nifty 50 live data for BUY/SELL signals. You\'ll then review each candidate and choose which trades to execute.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 10,
+        ),
+      ],
+    );
   }
 
   @override
@@ -707,7 +744,7 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildStatusCard(status, live.isLoading, isRunning),
+                KeyedSubtree(key: _tourStatusKey, child: _buildStatusCard(status, live.isLoading, isRunning)),
                 SizedBox(height: Sp.base),
 
                 if (live.error != null)
@@ -743,9 +780,10 @@ class _LiveTradingScreenState extends State<LiveTradingScreen>
 
                 if (!isRunning) ...[
                   if (!_showCandidateSelection) ...[
-                    _buildConfigCard(),
+                    KeyedSubtree(key: _tourConfigKey, child: _buildConfigCard()),
                     SizedBox(height: Sp.base),
                     SizedBox(
+                      key: _tourAnalyzeKey,
                       width: double.infinity,
                       height: 56,
                       child: ElevatedButton.icon(

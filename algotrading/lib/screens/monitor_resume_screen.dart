@@ -8,6 +8,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../utils/api_config.dart';
+import '../widgets/vt_tour.dart';
 
 /// Shown after a server restart when the user has an open trade.
 /// Lets them re-attach AI monitoring by entering their Zerodha order details.
@@ -35,6 +36,37 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
   bool _isLoading = false;
   String? _error;
   String? _success;
+
+  final _tourBannerKey = GlobalKey();
+  final _tourFormKey2  = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startTour());
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'monitor_resume',
+      steps: [
+        VtTourStep(
+          targetKey: _tourBannerKey,
+          title: 'Re-attach AI Monitoring',
+          body: 'Use this screen after a server restart if the AI agent lost track of your open trade. Enter your existing Zerodha order IDs to resume automated SL & target monitoring.',
+          padding: const EdgeInsets.all(10),
+        ),
+        VtTourStep(
+          targetKey: _tourFormKey2,
+          title: 'Order Details Required',
+          body: 'You\'ll need the order IDs for your entry, stop-loss, and target orders from Zerodha. Find them in the Zerodha Orders tab or your broker SMS confirmations.',
+          padding: const EdgeInsets.all(10),
+        ),
+      ],
+    );
+  }
 
   @override
   void dispose() {
@@ -116,6 +148,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
             children: [
               // ── Info banner ──────────────────────────────────────────
               Container(
+                key: _tourBannerKey,
                 padding: EdgeInsets.all(Sp.md),
                 decoration: BoxDecoration(
                   color: context.vt.warning.withValues(alpha: 0.08),
@@ -144,6 +177,7 @@ class _MonitorResumeScreenState extends State<MonitorResumeScreen> {
               SizedBox(height: Sp.lg),
 
               // ── Symbol + option type ─────────────────────────────────
+              SizedBox(key: _tourFormKey2, height: 0),
               _section('Position Details', Icons.candlestick_chart_outlined),
               Row(
                 children: [

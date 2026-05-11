@@ -7,6 +7,7 @@ import '../providers/dashboard_provider.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../theme/vt_color_scheme.dart';
+import '../widgets/vt_tour.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class OpenOrdersScreen extends StatefulWidget {
@@ -19,11 +20,37 @@ class OpenOrdersScreen extends StatefulWidget {
 class _OpenOrdersScreenState extends State<OpenOrdersScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
+  final _tourTabsKey = GlobalKey();
+  final _tourOrderKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startTour());
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'open_orders',
+      steps: [
+        VtTourStep(
+          targetKey: _tourTabsKey,
+          title: 'Open Orders & AMO',
+          body: 'Open Orders shows trades placed today that are still pending execution. AMO (After Market Orders) are orders queued to execute at the next market open.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 8,
+        ),
+        VtTourStep(
+          targetKey: _tourOrderKey,
+          title: 'Order Details',
+          body: 'Each tile shows the symbol, side (BUY/SELL), quantity, limit price, fill status, and placement time. Orders placed by the AI agent appear here automatically.',
+          padding: const EdgeInsets.all(8),
+        ),
+      ],
+    );
   }
 
   @override
@@ -70,6 +97,7 @@ class _OpenOrdersScreenState extends State<OpenOrdersScreen>
             ),
         ],
         bottom: TabBar(
+          key: _tourTabsKey,
           controller: _tabs,
           labelColor: vt.accentGreen,
           unselectedLabelColor: vt.textSecondary,
@@ -82,6 +110,7 @@ class _OpenOrdersScreenState extends State<OpenOrdersScreen>
         ),
       ),
       body: TabBarView(
+        key: _tourOrderKey,
         controller: _tabs,
         children: [
           _OrderList(orders: openOrders, emptyLabel: 'No open orders'),

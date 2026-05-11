@@ -197,10 +197,12 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen>
                       Icon(Icons.lock_outline,
                           size: 16, color: context.vt.accentGreen),
                       SizedBox(width: Sp.sm),
-                      Text(
-                        'End-to-end encrypted · Stored locally on your device only',
-                        style: AppTextStyles.caption.copyWith(
-                            color: context.vt.accentGreen),
+                      Flexible(
+                        child: Text(
+                          'End-to-end encrypted · Stored locally on your device only',
+                          style: AppTextStyles.caption.copyWith(
+                              color: context.vt.accentGreen),
+                        ),
                       ),
                     ],
                   ),

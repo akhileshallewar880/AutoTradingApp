@@ -7,6 +7,7 @@ import '../theme/app_spacing.dart';
 import '../theme/app_text_styles.dart';
 import '../utils/api_config.dart';
 import '../widgets/vt_button.dart';
+import '../widgets/vt_tour.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class BacktestScreen extends StatefulWidget {
@@ -31,6 +32,38 @@ class _BacktestScreenState extends State<BacktestScreen> {
   bool                  _loading = false;
   String?               _error;
   Map<String, dynamic>? _report;
+
+  final _tourConfigKey = GlobalKey();
+  final _tourRunKey    = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startTour());
+  }
+
+  Future<void> _startTour() async {
+    if (!mounted) return;
+    await VtTour.showIfNew(
+      context: context,
+      screenId: 'backtest',
+      steps: [
+        VtTourStep(
+          targetKey: _tourConfigKey,
+          title: 'Backtest Parameters',
+          body: 'Choose a date range and tune the strategy: SL ATR multiplier (how wide your stop-loss is), target R:R ratio, minimum signal strength, and max hold days.',
+          padding: const EdgeInsets.all(10),
+        ),
+        VtTourStep(
+          targetKey: _tourRunKey,
+          title: 'Run the Backtest',
+          body: 'Tap to simulate the strategy on historical Nifty 50 data. Results show win rate, profit factor, max drawdown, and a per-symbol breakdown — takes up to 5 minutes.',
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          radius: 10,
+        ),
+      ],
+    );
+  }
 
   // ── API call ──────────────────────────────────────────────────────
   Future<void> _run() async {
@@ -105,9 +138,10 @@ class _BacktestScreenState extends State<BacktestScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _buildConfigCard(),
+                  KeyedSubtree(key: _tourConfigKey, child: _buildConfigCard()),
                   const SizedBox(height: Sp.md),
                   VtButton(
+                    key: _tourRunKey,
                     label: 'Run Backtest',
                     icon: const Icon(Icons.play_arrow_rounded,
                         size: 18, color: Colors.white),
