@@ -1,7 +1,7 @@
 # VanTrade - AI Algorithmic Trading Platform
 
 <div align="center">
-  <img src="algotrading/assets/vantrade_logo.png" alt="VanTrade Logo" width="120" />
+  <img src="algotrading/assets/vantrade_logo_padded.png" alt="VanTrade Logo" width="120" />
   <h1>VanTrade</h1>
   <p><strong>Next-Generation AI-Powered Trading Assistant</strong></p>
 </div>
